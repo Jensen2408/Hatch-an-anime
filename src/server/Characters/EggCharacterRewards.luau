@@ -1,8 +1,27 @@
-local library = game.ServerStorage:WaitForChild("BrainrotModels")
+--[[ ServerScriptService.EggCharacterRewards  (ModuleScript)
+Turns a hatch result into a character template and builds the holdable character Tool. Server only.
+
+API:
+  Rewards.Resolve(tool?, source) -> (template: Model?, kind: string)
+      Picks the character model for an egg. A golden egg tool always gives the "Golden Pirate" model
+      (kind "Pirate"). Otherwise the kind comes from tool.EggType, source.EggType or the tool's name
+      (with "Egg"/"egg" and surrounding spaces stripped), defaulting to "Pirate"; the template is
+      ServerStorage.BrainrotModels.<kind> if it is a Model with a CharacterId.
+  Rewards.Tool(template, id, stats?, mutation?) -> Tool
+      stats defaults to CharacterEconomy.Read(template, id) or a fresh Economy.Roll(id).
+      mutation: nil = roll one (unless the template is Golden), false = force no mutation, string = use it.
+      The Tool carries BrainrotId / CharacterId / Hatched / Mutation / GoldVariant / Golden + catalog and
+      economy attributes; its "Character" child is the visual welded to an invisible Handle.
+]]
+local brainrotModels = game.ServerStorage:WaitForChild("BrainrotModels")
 local Catalog = require(game.ReplicatedStorage.CharacterCatalog)
 local Economy = require(game.ReplicatedStorage.CharacterEconomy)
 local Mutations = require(script.Parent:WaitForChild("Mutations"))
+
+local DISPLAY_HEIGHT = 6 -- studs; held characters are scaled to this height
+
 local Rewards = {}
+
 function Rewards.Resolve(tool, source)
     if tool and tool:GetAttribute("GoldVariant") then
         return game.ServerStorage.FutureUpdateContent.Characters:FindFirstChild("Golden Pirate"), "Pirate"
@@ -13,12 +32,13 @@ function Rewards.Resolve(tool, source)
         or "Pirate"
     kind = tostring(kind):gsub("[Ee]gg", ""):gsub("^%s+", ""):gsub("%s+$", "")
 
-    local model = library:FindFirstChild(kind)
+    local model = brainrotModels:FindFirstChild(kind)
     if model and model:IsA("Model") and model:GetAttribute("CharacterId") then
         return model, kind
     end
     return nil, kind
 end
+
 function Rewards.Tool(template, id, stats, mutation)
     stats = stats or Economy.Read(template, id) or Economy.Roll(id)
     if mutation == nil and not template:GetAttribute("Golden") then
@@ -27,10 +47,12 @@ function Rewards.Tool(template, id, stats, mutation)
     if mutation == false then
         mutation = nil
     end
-    local mutated = mutation and Mutations.Model(id, mutation, template)
-    if mutated then
-        template = mutated
+    -- a mutated clone replaces the template for the visual and is destroyed at the end
+    local mutatedTemplate = mutation and Mutations.Model(id, mutation, template)
+    if mutatedTemplate then
+        template = mutatedTemplate
     end
+
     local tool = Instance.new("Tool")
     if mutation then
         tool:SetAttribute("Mutation", mutation)
@@ -65,12 +87,14 @@ function Rewards.Tool(template, id, stats, mutation)
             .. Economy.Format(stats.IncomePerSecond)
             .. "/sec"
     end
+
+    -- Visual: scaled copy centred on the tool origin, welded to an invisible massless Handle.
     local visual = template:Clone()
     visual.Name = "Character"
-    local _, bounds = visual:GetBoundingBox()
-    visual:ScaleTo(visual:GetScale() * 6 / math.max(bounds.Y, 0.01))
-    local box = visual:GetBoundingBox()
-    visual:PivotTo(visual:GetPivot() - box.Position)
+    local _, unscaledSize = visual:GetBoundingBox()
+    visual:ScaleTo(visual:GetScale() * DISPLAY_HEIGHT / math.max(unscaledSize.Y, 0.01))
+    local boundingBox = visual:GetBoundingBox()
+    visual:PivotTo(visual:GetPivot() - boundingBox.Position)
     visual.Parent = tool
     local handle = Instance.new("Part")
     handle.Name = "Handle"
@@ -80,19 +104,19 @@ function Rewards.Tool(template, id, stats, mutation)
     handle.CanTouch = false
     handle.Massless = true
     handle.Parent = tool
-    for _, p in visual:GetDescendants() do
-        if p:IsA("BasePart") then
-            p.Anchored = false
-            p.CanCollide = false
-            p.CanTouch = false
-            p.CanQuery = false
-            p.Massless = true
-            local w = Instance.new("WeldConstraint")
-            w.Part0 = handle
-            w.Part1 = p
-            w.Parent = handle
-        elseif p:IsA("BaseScript") or p:IsA("ProximityPrompt") or p:IsA("BillboardGui") then
-            p:Destroy()
+    for _, descendant in visual:GetDescendants() do
+        if descendant:IsA("BasePart") then
+            descendant.Anchored = false
+            descendant.CanCollide = false
+            descendant.CanTouch = false
+            descendant.CanQuery = false
+            descendant.Massless = true
+            local weld = Instance.new("WeldConstraint")
+            weld.Part0 = handle
+            weld.Part1 = descendant
+            weld.Parent = handle
+        elseif descendant:IsA("BaseScript") or descendant:IsA("ProximityPrompt") or descendant:IsA("BillboardGui") then
+            descendant:Destroy()
         end
     end
     if mutation then
@@ -102,10 +126,11 @@ function Rewards.Tool(template, id, stats, mutation)
     if mutation then
         Mutations.AddAura(visual, mutation)
     end
-    if mutated then
-        mutated:Destroy()
+    if mutatedTemplate then
+        mutatedTemplate:Destroy()
     end
     tool.Grip = CFrame.new(0, -0.35, 0) * CFrame.Angles(0, math.pi, 0)
     return tool
 end
+
 return Rewards

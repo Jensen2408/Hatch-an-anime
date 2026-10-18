@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 123 |
+| Pending | 113 |
 | Reviewed — No Changes Needed | 4 |
-| Refactored | 62 |
+| Refactored | 72 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -119,16 +119,16 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Characters/CharacterAnimator.client.luau` | LocalScript | 152 | 305 | Pending | — | — |
-| `client/Characters/CharacterInfoClient.client.luau` | LocalScript | 178 | 323 | Pending | — | — |
-| `client/Characters/FloatingCharacters.client.luau` | LocalScript | 116 | 175 | Pending | — | — |
-| `client/Characters/GoldenLuffyIdle.client.luau` | LocalScript | 30 | 60 | Pending | — | — |
-| `client/Characters/HatchedCharacterDisplay.client.luau` | LocalScript | 35 | 89 | Pending | — | — |
-| `server/Characters/BrainrotPlacement.server.luau` | Script | 110 | 181 | Pending | — | — |
-| `server/Characters/CharacterInventory/InventoryServer.server.luau` | Script | 2 | 2 | Pending | — | — |
-| `server/Characters/CharacterInventory/InventoryService.luau` | ModuleScript | 650 | 929 | Pending | — | — |
-| `server/Characters/CharacterSize.server.luau` | Script | 13 | 19 | Pending | — | — |
-| `server/Characters/EggCharacterRewards.luau` | ModuleScript | 50 | 111 | Pending | — | — |
+| `client/Characters/CharacterAnimator.client.luau` | LocalScript | 152 | 317 | Refactored | SAME | JOINT_POSITIONS/MAX_DISTANCE, computePose with documented pose fields, descriptive renames, cycle comments; all poses/speeds unchanged |
+| `client/Characters/CharacterInfoClient.client.luau` | LocalScript | 178 | 334 | Refactored | SAME | Style/characterInfoFolder names, kindConfig/billboard/uiScale/labelState renames, header on label instances, KINDS legend, why-comments |
+| `client/Characters/FloatingCharacters.client.luau` | LocalScript | 116 | 183 | Refactored | SAME | Header rewritten to match actual motion + attribute contract, unused helper prefixed _, descriptive renames, shadow/ring comments |
+| `client/Characters/GoldenLuffyIdle.client.luau` | LocalScript | 30 | 73 | Refactored | SAME | Header, IDLE_DISTANCE constant, descriptive renames (descendant, motor, restC0, now), state shape comment |
+| `client/Characters/HatchedCharacterDisplay.client.luau` | LocalScript | 35 | 111 | Refactored | SAME | Header with attribute contract, full service names, TAG/REVEAL_DISTANCE/ENTRANCE_SECONDS constants, descriptive renames, section comments |
+| `server/Characters/BrainrotPlacement.server.luau` | Script | 110 | 239 | Refactored | SAME | Header with entry points + attribute contract, named folded constants, descriptive renames (no shadowing), unused locals prefixed _, why-comments; deprecated Instance.new(parent) kept + documented |
+| `server/Characters/CharacterInventory/InventoryServer.server.luau` | Script | 2 | 3 | Refactored | SAME | One-line purpose comment added |
+| `server/Characters/CharacterInventory/InventoryService.luau` | ModuleScript | 650 | 973 | Refactored | SAME | Network-authority + remote contract header, ServerConfig alias, folded limit constants, descriptive renames; validation logic byte-identical (SAME) |
+| `server/Characters/CharacterSize.server.luau` | Script | 13 | 29 | Refactored | SAME | Header, DEFAULT_SIZE_MULTIPLIER constant (folded), scaleCharacter/setupPlayer renames |
+| `server/Characters/EggCharacterRewards.luau` | ModuleScript | 50 | 136 | Refactored | SAME | Header documenting Resolve/Tool API and mutation semantics, DISPLAY_HEIGHT constant, descriptive renames, section comments |
 
 ## Batch 09 — Characters — inventory client
 
@@ -913,93 +913,93 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Characters/CharacterAnimator.client.luau`
 
-- **Type:** LocalScript · **Batch:** 08 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 08 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.CharacterAnimator  (LocalScript)
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 28 dense one-line statements; 5 lines >160 chars; 15 one-letter locals
+- **Readability problems:** One-letter locals throughout pose math and rig setup (P, S, J, c, a, e, m, b, j, w, sw, u, n, d, g, lp, s, W, sc, cf); pose field meaning undocumented
 
 ### `client/Characters/CharacterInfoClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 08 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 08 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.CharacterInfoClient  (LocalScript)
 - **Dependencies:** Adapter, Style
 - **Public functions:** —
 - **Events:** Connect×13, RunService×1, PlayerAdded×1
-- **Readability problems:** 17 dense one-line statements; 4 lines >160 chars; 4 one-letter locals
+- **Readability problems:** S alias for Style; cryptic locals (k, bb, sc, st, upd, d, was, a, c, m, t0, cp, cf); KINDS fields undocumented
 
 ### `client/Characters/FloatingCharacters.client.luau`
 
-- **Type:** LocalScript · **Batch:** 08 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 08 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.FloatingCharacters  (LocalScript)
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 14 dense one-line statements; 8 one-letter locals
+- **Readability problems:** Header described a bob/6.6 s spin the code no longer does; unused easeIO and Config fields; cryptic locals (p, d, s, h, k, r, w, sel, cam)
 
 ### `client/Characters/GoldenLuffyIdle.client.luau`
 
-- **Type:** LocalScript · **Batch:** 08 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 08 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×1, RunService×1
-- **Readability problems:** 7 dense one-line statements; 1 one-letter locals
+- **Readability problems:** No header; v/t/joint/base names; magic distance 100
 
 ### `client/Characters/HatchedCharacterDisplay.client.luau`
 
-- **Type:** LocalScript · **Batch:** 08 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 08 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×2, RunService×1
-- **Readability problems:** 7 dense one-line statements; 5 lines >160 chars; 2 one-letter locals
+- **Readability problems:** No header; service aliases Collection/Tween; cryptic locals (r, t, e, m, root); repeated tag string; magic 130/0.75
 
 ### `server/Characters/BrainrotPlacement.server.luau`
 
-- **Type:** Script · **Batch:** 08 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 08 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** CharacterCatalog, CharacterEconomy, Mutations, TempleSlotUnlocks
 - **Public functions:** —
 - **Events:** Connect×3, PlayerAdded×1
-- **Readability problems:** 17 dense one-line statements; 4 lines >160 chars
+- **Readability problems:** No header; placement/income contract undocumented; magic numbers (12, 6, 0.65, 1.5); cryptic/shadowed locals (p, old, stats, stand, cash, base, root, rate); unused Catalog/old/cash
 
 ### `server/Characters/CharacterInventory/InventoryServer.server.luau`
 
-- **Type:** Script · **Batch:** 08 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 08 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ServerScriptService.CharacterInventory.InventoryServer  (Script)
 - **Dependencies:** InventoryService
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** Header did not say what the script does
 
 ### `server/Characters/CharacterInventory/InventoryService.luau`
 
-- **Type:** ModuleScript · **Batch:** 08 · **Priority:** High · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 08 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** ServerScriptService.CharacterInventory.InventoryService  (ModuleScript)
 - **Dependencies:** CharacterCatalog, CharacterEconomy, EggCharacterRewards, InventoryConfig, TempleSlotUnlocks
 - **Public functions:** Actions.Hold, Actions.PickUp, Actions.Place, Actions.PlaceBest, Actions.PutAway, Actions.Sell, Actions.SellBackpack, Actions.SellBackpackAll, Actions.Store, Service.Init
 - **Events:** Connect×15, OnServerInvoke×1, PlayerAdded×1, PlayerRemoving×1
-- **Readability problems:** 99 dense one-line statements; 1 lines >160 chars; 3 one-letter locals
+- **Readability problems:** Remote contract (actions, payload fields, replies, events) undocumented; S alias; cryptic locals (obj, alt, v, b, s, cap, hum, char, ls, d, c, conns, p, who, inst); magic limits 64/32/300/16
 
 ### `server/Characters/CharacterSize.server.luau`
 
-- **Type:** Script · **Batch:** 08 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 08 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×2, PlayerAdded×1
-- **Readability problems:** 2 dense one-line statements
+- **Readability problems:** No header; generic function names (scale, setup); magic default 1.2
 
 ### `server/Characters/EggCharacterRewards.luau`
 
-- **Type:** ModuleScript · **Batch:** 08 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 08 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** CharacterCatalog, CharacterEconomy, Mutations
 - **Public functions:** Rewards.Resolve, Rewards.Tool
 - **Events:** —
-- **Readability problems:** 19 dense one-line statements; 1 lines >160 chars; 1 one-letter locals
+- **Readability problems:** No header/API doc; mutation nil/false/string semantics implicit; cryptic locals (p, w, library, mutated, bounds, box)
 
 ### `client/Bootstrap/CustomInventoryBootstrap.client.luau`
 

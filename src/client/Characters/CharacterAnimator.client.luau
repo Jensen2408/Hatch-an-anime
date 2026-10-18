@@ -9,15 +9,16 @@ The model must contain the R6 groups exported by the page: "Torso", "Head", "Lef
 "Left Leg", "Right Leg" (Models or parts), plus optional "Acc_*" accessories.
 Works alongside FloatingCharacters: this script animates the limbs, that one moves the whole model.
 Import the GLB with 1 unit = 1 stud (character is 6 studs tall). Other scales are handled via the Scale attribute.
+Models farther than MAX_DISTANCE from the camera are not updated.
 ]]
 local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 
 local TAG = "AnimatedCharacter"
-local MAX_DIST = 120
+local MAX_DISTANCE = 120
 local LIMBS = { "Torso", "Head", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }
 -- joint positions in character space (studs), origin = between the feet
-local J = {
+local JOINT_POSITIONS = {
     Torso = Vector3.new(0, 2, 0),
     Head = Vector3.new(0, 4, 0),
     ["Left Arm"] = Vector3.new(1.5, 3.6, 0),
@@ -26,19 +27,23 @@ local J = {
     ["Right Leg"] = Vector3.new(-0.5, 2, 0),
 }
 
-local function pivotOf(x)
-    return x:IsA("Model") and x:GetPivot() or x.CFrame
+-- Limbs and accessories may be Models or BaseParts.
+local function pivotOf(target)
+    return target:IsA("Model") and target:GetPivot() or target.CFrame
 end
-local function setPivot(x, cf)
-    if x:IsA("Model") then
-        x:PivotTo(cf)
+local function setPivot(target, cframe)
+    if target:IsA("Model") then
+        target:PivotTo(cframe)
     else
-        x.CFrame = cf
+        target.CFrame = cframe
     end
 end
 
-local function pose(t, name)
-    local P = {
+-- Pose at `poseTime` for animation `name`. Fields (radians / studs before scaling):
+--   by = body Y offset, byaw/bpitch/broll = torso rotation,
+--   head/la/ra/ll/rl = { x, y, z } Euler angles for head, left/right arm, left/right leg.
+local function computePose(poseTime, name)
+    local pose = {
         by = 0,
         byaw = 0,
         bpitch = 0,
@@ -49,171 +54,174 @@ local function pose(t, name)
         ll = { 0, 0, 0 },
         rl = { 0, 0, 0 },
     }
-    local S = math.sin
+    local sin = math.sin
     if name == "Idle" then
-        P.by = 0.04 * S(t * 2)
-        P.head = { 0.03 * S(t * 2), 0.18 * S(t * 0.5), 0 }
-        P.la = { 0.03 * S(t * 2), 0, 0.05 + 0.02 * S(t * 2) }
-        P.ra = { 0.03 * S(t * 2 + 0.4), 0, -0.05 - 0.02 * S(t * 2) }
+        pose.by = 0.04 * sin(poseTime * 2)
+        pose.head = { 0.03 * sin(poseTime * 2), 0.18 * sin(poseTime * 0.5), 0 }
+        pose.la = { 0.03 * sin(poseTime * 2), 0, 0.05 + 0.02 * sin(poseTime * 2) }
+        pose.ra = { 0.03 * sin(poseTime * 2 + 0.4), 0, -0.05 - 0.02 * sin(poseTime * 2) }
     elseif name == "Hero" then
-        P.by = 0.03 * S(t * 1.6)
-        P.bpitch = -0.05
-        P.head = { -0.08, 0.1 * S(t * 0.4), 0 }
-        P.la = { 0.12, 0, 0.5 + 0.02 * S(t * 1.6) }
-        P.ra = { 0.12, 0, -0.5 - 0.02 * S(t * 1.6) }
-        P.ll = { 0, 0, 0.12 }
-        P.rl = { 0, 0, -0.12 }
+        pose.by = 0.03 * sin(poseTime * 1.6)
+        pose.bpitch = -0.05
+        pose.head = { -0.08, 0.1 * sin(poseTime * 0.4), 0 }
+        pose.la = { 0.12, 0, 0.5 + 0.02 * sin(poseTime * 1.6) }
+        pose.ra = { 0.12, 0, -0.5 - 0.02 * sin(poseTime * 1.6) }
+        pose.ll = { 0, 0, 0.12 }
+        pose.rl = { 0, 0, -0.12 }
     elseif name == "Cross" then
-        P.by = 0.03 * S(t * 1.8)
-        P.head = { 0.04, 0.22 * S(t * 0.35), 0.04 }
-        P.la = { -0.95, 0, -0.5 }
-        P.ra = { -1.05, 0, 0.5 }
-        P.byaw = 0.05 * S(t * 0.35)
+        pose.by = 0.03 * sin(poseTime * 1.8)
+        pose.head = { 0.04, 0.22 * sin(poseTime * 0.35), 0.04 }
+        pose.la = { -0.95, 0, -0.5 }
+        pose.ra = { -1.05, 0, 0.5 }
+        pose.byaw = 0.05 * sin(poseTime * 0.35)
     elseif name == "Look" then
-        local c = (t % 6) / 6
-        local look = c < 0.15 and 0
-            or c < 0.3 and (c - 0.15) / 0.15
-            or c < 0.5 and 1
-            or c < 0.65 and 1 - 2 * (c - 0.5) / 0.15
-            or c < 0.85 and -1
-            or -1 + (c - 0.85) / 0.15
-        local a = math.abs(look)
-        local e = look * look * (3 - 2 * a) * (look < 0 and -1 or 1)
-        P.by = 0.03 * S(t * 2)
-        P.head = { 0.02, 0.7 * e, 0 }
-        P.byaw = 0.12 * e
-        P.la = { 0.03, 0, 0.06 }
-        P.ra = { 0.03, 0, -0.06 }
+        -- 6 s cycle: hold centre, turn to one side, hold, sweep to the other side, hold, return
+        local cycle = (poseTime % 6) / 6
+        local look = cycle < 0.15 and 0
+            or cycle < 0.3 and (cycle - 0.15) / 0.15
+            or cycle < 0.5 and 1
+            or cycle < 0.65 and 1 - 2 * (cycle - 0.5) / 0.15
+            or cycle < 0.85 and -1
+            or -1 + (cycle - 0.85) / 0.15
+        local lookMagnitude = math.abs(look)
+        local eased = look * look * (3 - 2 * lookMagnitude) * (look < 0 and -1 or 1) -- signed smoothstep
+        pose.by = 0.03 * sin(poseTime * 2)
+        pose.head = { 0.02, 0.7 * eased, 0 }
+        pose.byaw = 0.12 * eased
+        pose.la = { 0.03, 0, 0.06 }
+        pose.ra = { 0.03, 0, -0.06 }
     elseif name == "Point" then
-        local m = t % 5
-        local e = math.min(1, m / 0.4)
-        local hold = m < 3.6 and e or math.max(0, 1 - (m - 3.6) / 0.5)
-        P.by = 0.03 * S(t * 2)
-        P.ra = { -1.5 * hold, 0.25 * hold, -0.15 }
-        P.la = { 0.1, 0, 0.45 * hold + 0.05 }
-        P.head = { 0, -0.2 * hold, 0 }
-        P.byaw = -0.12 * hold
+        local cycleTime = poseTime % 5
+        local raise = math.min(1, cycleTime / 0.4)
+        local hold = cycleTime < 3.6 and raise or math.max(0, 1 - (cycleTime - 3.6) / 0.5)
+        pose.by = 0.03 * sin(poseTime * 2)
+        pose.ra = { -1.5 * hold, 0.25 * hold, -0.15 }
+        pose.la = { 0.1, 0, 0.45 * hold + 0.05 }
+        pose.head = { 0, -0.2 * hold, 0 }
+        pose.byaw = -0.12 * hold
     elseif name == "Bow" then
-        local c = (t % 3.4) / 3.4
-        local b = c < 0.3 and S(c / 0.3 * math.pi / 2)
-            or c < 0.55 and 1
-            or c < 0.8 and math.cos((c - 0.55) / 0.25 * math.pi / 2)
+        local cycle = (poseTime % 3.4) / 3.4
+        local bowAmount = cycle < 0.3 and sin(cycle / 0.3 * math.pi / 2)
+            or cycle < 0.55 and 1
+            or cycle < 0.8 and math.cos((cycle - 0.55) / 0.25 * math.pi / 2)
             or 0
-        P.bpitch = 0.55 * b
-        P.by = -0.05 * b
-        P.head = { 0.2 * b, 0, 0 }
-        P.la = { 0.15 * b, 0, 0.04 }
-        P.ra = { 0.15 * b, 0, -0.04 }
+        pose.bpitch = 0.55 * bowAmount
+        pose.by = -0.05 * bowAmount
+        pose.head = { 0.2 * bowAmount, 0, 0 }
+        pose.la = { 0.15 * bowAmount, 0, 0.04 }
+        pose.ra = { 0.15 * bowAmount, 0, -0.04 }
     elseif name == "Power" then
-        local j = 0.012 * S(t * 41)
-        P.by = -0.18 + j
-        P.bpitch = 0.08
-        P.head = { 0.12, 0, 0 }
-        P.la = { -0.35, 0, 0.38 + j * 2 }
-        P.ra = { -0.35, 0, -0.38 - j * 2 }
-        P.ll = { 0, 0, 0.16 }
-        P.rl = { 0, 0, -0.16 }
+        local jitter = 0.012 * sin(poseTime * 41)
+        pose.by = -0.18 + jitter
+        pose.bpitch = 0.08
+        pose.head = { 0.12, 0, 0 }
+        pose.la = { -0.35, 0, 0.38 + jitter * 2 }
+        pose.ra = { -0.35, 0, -0.38 - jitter * 2 }
+        pose.ll = { 0, 0, 0.16 }
+        pose.rl = { 0, 0, -0.16 }
     elseif name == "Wave" then
-        P.by = 0.03 * S(t * 2)
-        P.broll = 0.04
-        P.head = { 0, -0.12, 0.1 }
-        P.ra = { 0, 0, -2.55 + 0.32 * S(t * 9) }
-        P.la = { 0, 0, 0.08 }
+        pose.by = 0.03 * sin(poseTime * 2)
+        pose.broll = 0.04
+        pose.head = { 0, -0.12, 0.1 }
+        pose.ra = { 0, 0, -2.55 + 0.32 * sin(poseTime * 9) }
+        pose.la = { 0, 0, 0.08 }
     elseif name == "Walk" then
-        local w = t * 6.5
-        local sw = S(w)
-        P.by = 0.1 * math.abs(math.cos(w))
-        P.byaw = 0.06 * sw
-        P.ll = { -0.6 * sw, 0, 0 }
-        P.rl = { 0.6 * sw, 0, 0 }
-        P.la = { 0.55 * sw, 0, 0.04 }
-        P.ra = { -0.55 * sw, 0, -0.04 }
-        P.head = { 0.04, -0.04 * sw, 0 }
+        local stridePhase = poseTime * 6.5
+        local swing = sin(stridePhase)
+        pose.by = 0.1 * math.abs(math.cos(stridePhase))
+        pose.byaw = 0.06 * swing
+        pose.ll = { -0.6 * swing, 0, 0 }
+        pose.rl = { 0.6 * swing, 0, 0 }
+        pose.la = { 0.55 * swing, 0, 0.04 }
+        pose.ra = { -0.55 * swing, 0, -0.04 }
+        pose.head = { 0.04, -0.04 * swing, 0 }
     elseif name == "Dance" then
-        local b = t * 7.5
-        P.by = 0.12 * math.abs(S(b))
-        P.byaw = 0.3 * S(b * 0.5)
-        P.broll = 0.08 * S(b * 0.5)
-        P.la = { -0.2, 0, 2.3 + 0.45 * S(b) }
-        P.ra = { -0.2, 0, -2.3 + 0.45 * S(b) }
-        P.ll = { -0.25 * math.max(0, S(b * 0.5)), 0, 0.05 }
-        P.rl = { -0.25 * math.max(0, -S(b * 0.5)), 0, -0.05 }
-        P.head = { 0.08 * S(b), 0, -0.1 * S(b * 0.5) }
+        local beat = poseTime * 7.5
+        pose.by = 0.12 * math.abs(sin(beat))
+        pose.byaw = 0.3 * sin(beat * 0.5)
+        pose.broll = 0.08 * sin(beat * 0.5)
+        pose.la = { -0.2, 0, 2.3 + 0.45 * sin(beat) }
+        pose.ra = { -0.2, 0, -2.3 + 0.45 * sin(beat) }
+        pose.ll = { -0.25 * math.max(0, sin(beat * 0.5)), 0, 0.05 }
+        pose.rl = { -0.25 * math.max(0, -sin(beat * 0.5)), 0, -0.05 }
+        pose.head = { 0.08 * sin(beat), 0, -0.1 * sin(beat * 0.5) }
     elseif name == "Victory" then
-        local c = (t % 2.2) / 2.2
+        -- 2.2 s cycle: crouch, jump (parabola), landing dip, rest
+        local cycle = (poseTime % 2.2) / 2.2
         local crouch, up = 0, 0
-        if c < 0.2 then
-            crouch = S(c / 0.2 * math.pi / 2)
-        elseif c < 0.62 then
-            local u = (c - 0.2) / 0.42
-            up = 4 * u * (1 - u) * 1.6
-            crouch = math.max(0, 1 - u * 4)
-        elseif c < 0.75 then
-            crouch = S((c - 0.62) / 0.13 * math.pi) * 0.6
+        if cycle < 0.2 then
+            crouch = sin(cycle / 0.2 * math.pi / 2)
+        elseif cycle < 0.62 then
+            local jumpProgress = (cycle - 0.2) / 0.42
+            up = 4 * jumpProgress * (1 - jumpProgress) * 1.6
+            crouch = math.max(0, 1 - jumpProgress * 4)
+        elseif cycle < 0.75 then
+            crouch = sin((cycle - 0.62) / 0.13 * math.pi) * 0.6
         end
         local air = up > 0.05 and 1 or 0
-        P.by = up - crouch * 0.35
-        P.bpitch = crouch * 0.12
-        P.ll = { -crouch * 0.5 - air * 0.25, 0, 0.05 }
-        P.rl = { -crouch * 0.5 + air * 0.15, 0, -0.05 }
-        P.la = { -0.3 * (air == 1 and 1 or math.min(1, crouch)), 0, 0.2 + 2.6 * (air == 1 and 1 or 0.15) }
-        P.ra = { -2.9 * (air == 1 and 1 or 0.1), 0, -0.15 }
-        P.head = { -0.15 * air, 0, 0 }
+        pose.by = up - crouch * 0.35
+        pose.bpitch = crouch * 0.12
+        pose.ll = { -crouch * 0.5 - air * 0.25, 0, 0.05 }
+        pose.rl = { -crouch * 0.5 + air * 0.15, 0, -0.05 }
+        pose.la = { -0.3 * (air == 1 and 1 or math.min(1, crouch)), 0, 0.2 + 2.6 * (air == 1 and 1 or 0.15) }
+        pose.ra = { -2.9 * (air == 1 and 1 or 0.1), 0, -0.15 }
+        pose.head = { -0.15 * air, 0, 0 }
     end
-    return P
+    return pose
 end
 
-local active = {}
+local active = {} -- [Model] = rig state (see `add`)
 
 local function add(model)
     if active[model] or not model:IsA("Model") then
         return
     end
     local rig = {}
-    for _, n in LIMBS do
-        rig[n] = model:FindFirstChild(n, true)
+    for _, limbName in LIMBS do
+        rig[limbName] = model:FindFirstChild(limbName, true)
     end
     if not rig.Torso then
         warn("[CharacterAnimator] " .. model.Name .. " has no Torso group")
         return
     end
-    for _, d in model:GetDescendants() do
-        if d:IsA("BasePart") then
-            d.Anchored = true
+    for _, descendant in model:GetDescendants() do
+        if descendant:IsA("BasePart") then
+            descendant.Anchored = true
         end
     end
     -- character space: origin between the feet, facing the model's front
-    local cf, size = model:GetBoundingBox()
+    local boxCFrame, size = model:GetBoundingBox()
     local scale = model:GetAttribute("Scale") or (size.Y / 6.2)
-    local origin = CFrame.new(cf.Position - Vector3.new(0, size.Y / 2, 0)) * cf.Rotation
-    local base, acc = {}, {}
-    for _, n in LIMBS do
-        if rig[n] then
-            base[n] = origin:ToObjectSpace(pivotOf(rig[n]))
+    local origin = CFrame.new(boxCFrame.Position - Vector3.new(0, size.Y / 2, 0)) * boxCFrame.Rotation
+    local basePivots, accessories = {}, {}
+    for _, limbName in LIMBS do
+        if rig[limbName] then
+            basePivots[limbName] = origin:ToObjectSpace(pivotOf(rig[limbName]))
         end
     end
-    for _, c in model:GetChildren() do
-        if c.Name:match("^Acc_") then
-            local accName = c.Name:gsub("_Glow$", "")
-            local p = pivotOf(c).Position
-            local lp = origin:PointToObjectSpace(p) / scale
-            local follow = accName:find("Hat") and "Head"
-                or accName:find("Book") and "Left Arm"
-                or (accName:find("Katana") and lp.X < -1.2 and lp.Y < 3) and "Right Arm"
+    -- accessories follow the limb they sit on (guessed from name and position)
+    for _, child in model:GetChildren() do
+        if child.Name:match("^Acc_") then
+            local accessoryName = child.Name:gsub("_Glow$", "")
+            local worldPosition = pivotOf(child).Position
+            local localPosition = origin:PointToObjectSpace(worldPosition) / scale
+            local follow = accessoryName:find("Hat") and "Head"
+                or accessoryName:find("Book") and "Left Arm"
+                or (accessoryName:find("Katana") and localPosition.X < -1.2 and localPosition.Y < 3) and "Right Arm"
                 or "Torso"
-            table.insert(acc, { inst = c, follow = follow, base = origin:ToObjectSpace(pivotOf(c)) })
+            table.insert(accessories, { inst = child, follow = follow, base = origin:ToObjectSpace(pivotOf(child)) })
         end
     end
-    for _, n in LIMBS do
-        local g = model:FindFirstChild(n .. "_Glow", true)
-        if g then
-            table.insert(acc, { inst = g, follow = n, base = origin:ToObjectSpace(pivotOf(g)) })
+    for _, limbName in LIMBS do
+        local glow = model:FindFirstChild(limbName .. "_Glow", true)
+        if glow then
+            table.insert(accessories, { inst = glow, follow = limbName, base = origin:ToObjectSpace(pivotOf(glow)) })
         end
     end
     active[model] = {
         rig = rig,
-        base = base,
-        acc = acc,
+        base = basePivots,
+        acc = accessories,
         origin = origin,
         scale = scale,
         seed = math.random() * 10,
@@ -221,84 +229,88 @@ local function add(model)
     }
 end
 
-local function reset(model, s)
-    local origin = model:GetPivot() * s.offset:Inverse()
-    for n, b in s.base do
-        if s.rig[n] and s.rig[n].Parent then
-            setPivot(s.rig[n], origin * b)
+-- Put every limb and accessory back in its rest pose relative to the model's current pivot.
+local function reset(model, state)
+    local origin = model:GetPivot() * state.offset:Inverse()
+    for limbName, basePivot in state.base do
+        if state.rig[limbName] and state.rig[limbName].Parent then
+            setPivot(state.rig[limbName], origin * basePivot)
         end
     end
-    for _, a in s.acc do
-        if a.inst.Parent then
-            setPivot(a.inst, origin * a.base)
+    for _, accessory in state.acc do
+        if accessory.inst.Parent then
+            setPivot(accessory.inst, origin * accessory.base)
         end
     end
 end
 local function remove(model)
-    local s = active[model]
-    if s then
+    local state = active[model]
+    if state then
         active[model] = nil
         if model.Parent then
-            reset(model, s)
+            reset(model, state)
         end
     end
 end
 
-for _, m in CollectionService:GetTagged(TAG) do
-    task.spawn(add, m)
+for _, model in CollectionService:GetTagged(TAG) do
+    task.spawn(add, model)
 end
 CollectionService:GetInstanceAddedSignal(TAG):Connect(add)
 CollectionService:GetInstanceRemovedSignal(TAG):Connect(remove)
 
-local function joint(name, ang, scale)
-    local j = J[name] * scale
-    return CFrame.new(j) * CFrame.fromEulerAnglesYXZ(ang[1], ang[2], ang[3]) * CFrame.new(-j)
+-- Rotation `angles` (YXZ Euler) around the named joint, in character space scaled by `scale`.
+local function joint(name, angles, scale)
+    local jointPosition = JOINT_POSITIONS[name] * scale
+    return CFrame.new(jointPosition)
+        * CFrame.fromEulerAnglesYXZ(angles[1], angles[2], angles[3])
+        * CFrame.new(-jointPosition)
 end
 
 RunService.RenderStepped:Connect(function()
-    local cam = workspace.CurrentCamera
-    local camPos = cam and cam.CFrame.Position or Vector3.zero
+    local camera = workspace.CurrentCamera
+    local cameraPosition = camera and camera.CFrame.Position or Vector3.zero
     local now = os.clock()
-    for model, s in active do
+    for model, state in active do
         if not model.Parent then
             active[model] = nil
             continue
         end
-        local anim = model:GetAttribute("Animation") or "Idle"
-        if anim == "Off" then
-            if not s.wasOff then
-                reset(model, s)
-                s.wasOff = true
+        local animation = model:GetAttribute("Animation") or "Idle"
+        if animation == "Off" then
+            if not state.wasOff then
+                reset(model, state)
+                state.wasOff = true
             end
             continue
         end
-        s.wasOff = false
+        state.wasOff = false
         -- FloatingCharacters may move the whole model: follow its current pivot
-        local origin = model:GetPivot() * s.offset:Inverse()
-        if (origin.Position - camPos).Magnitude > MAX_DIST then
+        local origin = model:GetPivot() * state.offset:Inverse()
+        if (origin.Position - cameraPosition).Magnitude > MAX_DISTANCE then
             continue
         end
-        local sc = s.scale
-        local P = pose(now + s.seed, anim)
-        local body = CFrame.new(0, P.by * sc, 0) * joint("Torso", { P.bpitch, P.byaw, P.broll }, sc)
-        local lift = CFrame.new(0, math.max(0, P.by) * sc, 0)
-        local W = {
+        local scale = state.scale
+        local pose = computePose(now + state.seed, animation)
+        local body = CFrame.new(0, pose.by * scale, 0) * joint("Torso", { pose.bpitch, pose.byaw, pose.broll }, scale)
+        local lift = CFrame.new(0, math.max(0, pose.by) * scale, 0) -- legs only follow the body upwards
+        local limbOffsets = {
             Torso = body,
-            Head = body * joint("Head", P.head, sc),
-            ["Left Arm"] = body * joint("Left Arm", P.la, sc),
-            ["Right Arm"] = body * joint("Right Arm", P.ra, sc),
-            ["Left Leg"] = lift * joint("Left Leg", P.ll, sc),
-            ["Right Leg"] = lift * joint("Right Leg", P.rl, sc),
+            Head = body * joint("Head", pose.head, scale),
+            ["Left Arm"] = body * joint("Left Arm", pose.la, scale),
+            ["Right Arm"] = body * joint("Right Arm", pose.ra, scale),
+            ["Left Leg"] = lift * joint("Left Leg", pose.ll, scale),
+            ["Right Leg"] = lift * joint("Right Leg", pose.rl, scale),
         }
-        for n, b in s.base do
-            local inst = s.rig[n]
-            if inst and inst.Parent then
-                setPivot(inst, origin * W[n] * b)
+        for limbName, basePivot in state.base do
+            local limb = state.rig[limbName]
+            if limb and limb.Parent then
+                setPivot(limb, origin * limbOffsets[limbName] * basePivot)
             end
         end
-        for _, a in s.acc do
-            if a.inst.Parent then
-                setPivot(a.inst, origin * W[a.follow] * a.base)
+        for _, accessory in state.acc do
+            if accessory.inst.Parent then
+                setPivot(accessory.inst, origin * limbOffsets[accessory.follow] * accessory.base)
             end
         end
     end

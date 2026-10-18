@@ -1,19 +1,29 @@
+--[[ ServerScriptService.CharacterSize  (Script)
+Scales every player's avatar once per spawn, after its appearance has loaded.
+Multiplier comes from this script's "SizeMultiplier" attribute (default 1.2). The avatar model is marked
+with "SizeApplied" so the same character is never scaled twice.
+]]
 local Players = game:GetService("Players")
-local function scale(character)
+
+local DEFAULT_SIZE_MULTIPLIER = 1.2
+
+local function scaleCharacter(character)
     if character:GetAttribute("SizeApplied") then
         return
     end
-    local multiplier = script:GetAttribute("SizeMultiplier") or 1.2
+    local multiplier = script:GetAttribute("SizeMultiplier") or DEFAULT_SIZE_MULTIPLIER
     character:ScaleTo(character:GetScale() * multiplier)
     character:SetAttribute("SizeApplied", true)
 end
-local function setup(player)
-    player.CharacterAppearanceLoaded:Connect(scale)
+
+local function setupPlayer(player)
+    player.CharacterAppearanceLoaded:Connect(scaleCharacter)
     if player.Character and player:HasAppearanceLoaded() then
-        scale(player.Character)
+        scaleCharacter(player.Character)
     end
 end
-Players.PlayerAdded:Connect(setup)
+
+Players.PlayerAdded:Connect(setupPlayer)
 for _, player in Players:GetPlayers() do
-    setup(player)
+    setupPlayer(player)
 end

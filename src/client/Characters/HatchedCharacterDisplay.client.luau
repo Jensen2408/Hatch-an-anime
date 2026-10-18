@@ -1,8 +1,23 @@
-local Collection = game:GetService("CollectionService")
+--[[ StarterPlayerScripts.HatchedCharacterDisplay  (LocalScript)
+Client-only presentation of a freshly hatched character standing in its incubator (tag "HatchRewardDisplay").
+On tag: a smoke puff + fading highlight (temporary "LocalHatchReveal" part in workspace, removed after 1 s),
+a permanent soft "RewardAura" Highlight and a PointLight on the Torso.
+Every frame (within REVEAL_DISTANCE of the camera): rises out of the platform with a half turn, then bobs
+while slowly turning.
+Reads attributes set by the server: RewardHome (CFrame, required) and RevealEpoch (server time, optional)
+so every client plays the entrance in sync.
+]]
+local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
-local Tween = game:GetService("TweenService")
+local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
-local active = {}
+
+local TAG = "HatchRewardDisplay"
+local REVEAL_DISTANCE = 130
+local ENTRANCE_SECONDS = 0.75
+
+local active = {} -- [Model] = { home = CFrame, epoch = server time the reveal started }
+
 local function add(model)
     if active[model] then
         return
@@ -12,16 +27,18 @@ local function add(model)
         return
     end
     active[model] = { home = home, epoch = model:GetAttribute("RevealEpoch") or workspace:GetServerTimeNow() }
-    local root = Instance.new("Part")
-    root.Name = "LocalHatchReveal"
-    root.Size = Vector3.one
-    root.Transparency = 1
-    root.Anchored = true
-    root.CanCollide = false
-    root.CanQuery = false
-    root.CanTouch = false
-    root.CFrame = home * CFrame.new(0, 1.8, 0)
-    root.Parent = workspace
+
+    -- one-shot reveal effects
+    local revealRoot = Instance.new("Part")
+    revealRoot.Name = "LocalHatchReveal"
+    revealRoot.Size = Vector3.one
+    revealRoot.Transparency = 1
+    revealRoot.Anchored = true
+    revealRoot.CanCollide = false
+    revealRoot.CanQuery = false
+    revealRoot.CanTouch = false
+    revealRoot.CFrame = home * CFrame.new(0, 1.8, 0)
+    revealRoot.Parent = workspace
     local puff = Instance.new("ParticleEmitter")
     puff.Texture = "rbxasset://textures/particles/smoke_main.dds"
     puff.Rate = 0
@@ -32,16 +49,18 @@ local function add(model)
     puff.SpreadAngle = Vector2.new(180, 180)
     puff.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.5), NumberSequenceKeypoint.new(1, 1.8) })
     puff.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(1, 1) })
-    puff.Parent = root
+    puff.Parent = revealRoot
     puff:Emit(12)
     local highlight = Instance.new("Highlight")
     highlight.Adornee = model
     highlight.FillColor = Color3.fromRGB(255, 237, 167)
     highlight.FillTransparency = 0.4
     highlight.OutlineTransparency = 0.2
-    highlight.Parent = root
-    Tween:Create(highlight, TweenInfo.new(0.5), { FillTransparency = 1, OutlineTransparency = 1 }):Play()
-    Debris:AddItem(root, 1)
+    highlight.Parent = revealRoot
+    TweenService:Create(highlight, TweenInfo.new(0.5), { FillTransparency = 1, OutlineTransparency = 1 }):Play()
+    Debris:AddItem(revealRoot, 1)
+
+    -- lasting glow (lives on the model, gone with it)
     local aura = Instance.new("Highlight")
     aura.Name = "RewardAura"
     aura.Adornee = model
@@ -61,28 +80,31 @@ local function add(model)
         lamp.Parent = torso
     end
 end
-Collection:GetInstanceAddedSignal("HatchRewardDisplay"):Connect(add)
-Collection:GetInstanceRemovedSignal("HatchRewardDisplay"):Connect(function(m)
-    active[m] = nil
+
+CollectionService:GetInstanceAddedSignal(TAG):Connect(add)
+CollectionService:GetInstanceRemovedSignal(TAG):Connect(function(model)
+    active[model] = nil
 end)
-for _, m in Collection:GetTagged("HatchRewardDisplay") do
-    add(m)
+for _, model in CollectionService:GetTagged(TAG) do
+    add(model)
 end
+
 RunService:BindToRenderStep("HatchedCharacterIdle", Enum.RenderPriority.Camera.Value + 2, function()
     local now = workspace:GetServerTimeNow()
-    for model, r in active do
+    for model, reveal in active do
         if not model:IsDescendantOf(workspace) then
             active[model] = nil
         elseif
-            workspace.CurrentCamera and (workspace.CurrentCamera.CFrame.Position - r.home.Position).Magnitude < 130
+            workspace.CurrentCamera
+            and (workspace.CurrentCamera.CFrame.Position - reveal.home.Position).Magnitude < REVEAL_DISTANCE
         then
-            local t = math.max(0, now - r.epoch)
+            local elapsed = math.max(0, now - reveal.epoch)
             -- entrance: rises out of the platform with a half turn, then eases into the idle bob
-            local e = 1 - (1 - math.clamp(t / 0.75, 0, 1)) ^ 3
+            local entrance = 1 - (1 - math.clamp(elapsed / ENTRANCE_SECONDS, 0, 1)) ^ 3 -- ease-out cubic
             model:PivotTo(
-                r.home
-                    * CFrame.new(0, -0.45 * (1 - e) + 0.16 * (1 - math.cos(t * 2)) * e, 0)
-                    * CFrame.Angles(0, t * 0.7 - math.pi * (1 - e), 0)
+                reveal.home
+                    * CFrame.new(0, -0.45 * (1 - entrance) + 0.16 * (1 - math.cos(elapsed * 2)) * entrance, 0)
+                    * CFrame.Angles(0, elapsed * 0.7 - math.pi * (1 - entrance), 0)
             )
         end
     end
