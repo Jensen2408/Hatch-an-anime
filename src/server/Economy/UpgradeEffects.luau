@@ -1,32 +1,57 @@
+--[[ ServerScriptService.UpgradeEffects  (ModuleScript, server)
+"Ground-rise" construction effect used when a temple / chamber model is swapped for its upgraded version.
+
+UpgradeEffects.Play(opts) -> Model?   (yields for the build duration + 0.2 s)
+  opts.swap(prepare)   required. Builds the new model, calls prepare(newModel) before it is visible and
+                       returns the new model (or nil to abort).
+  opts.anchor          BasePart whose Y position is the "ground" the parts rise from.
+  opts.radius          number, copied to the BuildRadius attribute.
+  opts.palette         UpgradeEffects.Palettes.Temple or .Chamber (Chamber uses name-based build phases).
+  opts.ownerUserId     optional, copied to BuildOwner.
+  opts.isValid()       optional; returning false aborts before anything happens.
+  opts.oldModel        currently ignored (part retention is disabled by `if false and ...`).
+
+Replication contract: the model gets the "UpgradeAssembly" tag plus Build* / UnderConstruction attributes and each
+animated part gets ConstructionDelay / ConstructionFinal, so clients (UpgradeCameraShake) can render the same
+animation locally. The server also tweens the parts itself.
+No remotes. Note: no active script in src/ requires this module at the moment (only archived versions do).
+]]
 local TweenService = game:GetService("TweenService")
-local Collection = game:GetService("CollectionService")
-local FX = {}
-FX.Palettes = { Temple = { glow = Color3.fromRGB(255, 196, 84) }, Chamber = { glow = Color3.fromRGB(214, 238, 160) } }
-local function signature(p)
-    local values = { p.ClassName, tostring(p.Color), p.Material.Name }
-    for _, v in { p.Size.X, p.Size.Y, p.Size.Z, p.CFrame:GetComponents() } do
-        table.insert(values, string.format("%.2f", v))
+local CollectionService = game:GetService("CollectionService")
+
+local UpgradeEffects = {}
+UpgradeEffects.Palettes =
+    { Temple = { glow = Color3.fromRGB(255, 196, 84) }, Chamber = { glow = Color3.fromRGB(214, 238, 160) } }
+
+-- Identity key of a part (class, look, size, CFrame), used to match old parts to new ones.
+local function partSignature(part)
+    local values = { part.ClassName, tostring(part.Color), part.Material.Name }
+    for _, component in { part.Size.X, part.Size.Y, part.Size.Z, part.CFrame:GetComponents() } do
+        table.insert(values, string.format("%.2f", component))
     end
-    if p:IsA("MeshPart") then
-        table.insert(values, p.MeshId)
-        table.insert(values, p.TextureID)
+    if part:IsA("MeshPart") then
+        table.insert(values, part.MeshId)
+        table.insert(values, part.TextureID)
     end
     return table.concat(values, "|")
 end
-function FX.Play(opts)
+
+function UpgradeEffects.Play(opts)
     if opts.isValid and not opts.isValid() then
         return
     end
+    -- [signature] = { oldPart, ... }. Retention of identical old parts is disabled (`if false`), so this stays empty.
     local oldParts = {}
     if false and opts.oldModel then
-        for _, p in opts.oldModel:GetDescendants() do
-            if p:IsA("BasePart") then
-                local k = signature(p)
-                oldParts[k] = oldParts[k] or {}
-                table.insert(oldParts[k], p)
+        for _, part in opts.oldModel:GetDescendants() do
+            if part:IsA("BasePart") then
+                local key = partSignature(part)
+                oldParts[key] = oldParts[key] or {}
+                table.insert(oldParts[key], part)
             end
         end
     end
+    -- records: one entry per animated part; controls: [prompt/light/gui/clickDetector] = original state
     local records, controls = {}, {}
     local duration = 3.4
     local function prepare(model)
@@ -36,50 +61,54 @@ function FX.Play(opts)
         model:SetAttribute("BuildGround", opts.anchor.Position.Y)
         model:SetAttribute("BuildOwner", opts.ownerUserId or 0)
         model:SetAttribute("BuildRadius", opts.radius)
-        model:SetAttribute("BuildKind", opts.palette == FX.Palettes.Temple and "Temple" or "Chamber")
+        model:SetAttribute("BuildKind", opts.palette == UpgradeEffects.Palettes.Temple and "Temple" or "Chamber")
         local retained = 0
-        for _, p in model:GetDescendants() do
-            if p:IsA("BasePart") then
-                local bucket = oldParts[signature(p)]
+        for _, part in model:GetDescendants() do
+            if part:IsA("BasePart") then
+                local bucket = oldParts[partSignature(part)]
                 local original = bucket and table.remove(bucket)
                 if original then
-                    original.Parent = p.Parent
-                    p:Destroy()
+                    original.Parent = part.Parent
+                    part:Destroy()
                     retained += 1
                 else
-                    p.Anchored = true
-                    table.insert(
-                        records,
-                        { part = p, cf = p.CFrame, collide = p.CanCollide, volume = p.Size.X * p.Size.Y * p.Size.Z }
-                    )
+                    part.Anchored = true
+                    table.insert(records, {
+                        part = part,
+                        cf = part.CFrame,
+                        collide = part.CanCollide,
+                        volume = part.Size.X * part.Size.Y * part.Size.Z,
+                    })
                 end
             end
         end
-        table.sort(records, function(a, b)
-            -- Structural masses before trim; height breaks ties.
-            local av, bv = a.volume >= 15, b.volume >= 15
-            if av ~= bv then
-                return av
+        table.sort(records, function(recordA, recordB)
+            -- Structural masses (volume >= 15) before trim; height breaks ties.
+            local aIsStructural, bIsStructural = recordA.volume >= 15, recordB.volume >= 15
+            if aIsStructural ~= bIsStructural then
+                return aIsStructural
             end
-            if math.abs(a.cf.Y - b.cf.Y) > 0.05 then
-                return a.cf.Y < b.cf.Y
+            if math.abs(recordA.cf.Y - recordB.cf.Y) > 0.05 then
+                return recordA.cf.Y < recordB.cf.Y
             end
-            return a.volume > b.volume
+            return recordA.volume > recordB.volume
         end)
         local box, size = model:GetBoundingBox()
         model:SetAttribute("BuildFootprint", Vector3.new(size.X, 0, size.Z))
         model:SetAttribute("BuildCenter", Vector3.new(box.X, opts.anchor.Position.Y, box.Z))
-        local riseDistance = math.max(3, box.Y + size.Y * 0.5 - opts.anchor.Position.Y + 0.5)
-        for i, r in records do
-            local layer = math.floor(math.clamp((r.cf.Y - (box.Y - size.Y * 0.5)) / math.max(size.Y, 1), 0, 1) * 12)
-            r.delay = layer / 12 * 1.8 + (i % 5) * 0.016
-            r.travel = r.volume >= 15 and 1.02 or 0.72
-            if r.volume < 15 then
-                r.delay += 0.2
+        local _riseDistance = math.max(3, box.Y + size.Y * 0.5 - opts.anchor.Position.Y + 0.5)
+        for i, record in records do
+            local layer =
+                math.floor(math.clamp((record.cf.Y - (box.Y - size.Y * 0.5)) / math.max(size.Y, 1), 0, 1) * 12)
+            record.delay = layer / 12 * 1.8 + (i % 5) * 0.016
+            record.travel = record.volume >= 15 and 1.02 or 0.72
+            if record.volume < 15 then
+                record.delay += 0.2
             end
-            if opts.palette == FX.Palettes.Chamber then
-                local category = r.part.Name:lower()
-                local ancestor = r.part.Parent
+            if opts.palette == UpgradeEffects.Palettes.Chamber then
+                -- chamber parts are phased by their own + ancestor names (base -> pipes -> glass -> roof)
+                local category = record.part.Name:lower()
+                local ancestor = record.part.Parent
                 while ancestor and ancestor ~= model do
                     category = category .. " " .. ancestor.Name:lower()
                     ancestor = ancestor.Parent
@@ -102,34 +131,44 @@ function FX.Play(opts)
                 then
                     phase = 0.9
                 end
-                r.delay = phase + math.clamp((r.cf.Y - opts.anchor.Position.Y) / math.max(size.Y, 1), 0, 1) * 0.18
-                r.travel = phase == 0 and 1.05 or 0.85
+                record.delay = phase
+                    + math.clamp((record.cf.Y - opts.anchor.Position.Y) / math.max(size.Y, 1), 0, 1) * 0.18
+                record.travel = phase == 0 and 1.05 or 0.85
             end
-            r.seat = opts.palette == FX.Palettes.Chamber and 0.08 or (r.volume >= 15 and 0.2 or 0.1)
-            r.part:SetAttribute("ConstructionDelay", r.delay)
-            r.part:SetAttribute("ConstructionFinal", r.cf)
-            local p = r.part
+            record.seat = opts.palette == UpgradeEffects.Palettes.Chamber and 0.08
+                or (record.volume >= 15 and 0.2 or 0.1)
+            record.part:SetAttribute("ConstructionDelay", record.delay)
+            record.part:SetAttribute("ConstructionFinal", record.cf)
+            local part = record.part
+            -- half the part's vertical extent in world space, so it starts fully below ground
             local extent = (
-                math.abs(p.CFrame.RightVector.Y) * p.Size.X
-                + math.abs(p.CFrame.UpVector.Y) * p.Size.Y
-                + math.abs(p.CFrame.LookVector.Y) * p.Size.Z
+                math.abs(part.CFrame.RightVector.Y) * part.Size.X
+                + math.abs(part.CFrame.UpVector.Y) * part.Size.Y
+                + math.abs(part.CFrame.LookVector.Y) * part.Size.Z
             ) * 0.5
-            local depth = math.max(2, r.cf.Y + extent - opts.anchor.Position.Y + 0.5)
+            local depth = math.max(2, record.cf.Y + extent - opts.anchor.Position.Y + 0.5)
             local side = (i % 2 == 0 and 1 or -1)
-            if opts.palette == FX.Palettes.Chamber then
-                p.CFrame = r.cf - Vector3.new(0, depth, 0)
+            if opts.palette == UpgradeEffects.Palettes.Chamber then
+                part.CFrame = record.cf - Vector3.new(0, depth, 0)
             else
-                p.CFrame = (r.cf - Vector3.new(side * 0.22, depth, 0)) * CFrame.Angles(0, math.rad(side * 1.5), 0)
+                part.CFrame = (record.cf - Vector3.new(side * 0.22, depth, 0))
+                    * CFrame.Angles(0, math.rad(side * 1.5), 0)
             end
-            p.CanCollide = false
+            part.CanCollide = false
         end
-        for _, v in model:GetDescendants() do
-            if v:IsA("ProximityPrompt") or v:IsA("Light") or v:IsA("BillboardGui") or v:IsA("SurfaceGui") then
-                controls[v] = v.Enabled
-                v.Enabled = false
-            elseif v:IsA("ClickDetector") then
-                controls[v] = v.MaxActivationDistance
-                v.MaxActivationDistance = 0
+        -- disable interaction / lights while under construction; restored after the build
+        for _, instance in model:GetDescendants() do
+            if
+                instance:IsA("ProximityPrompt")
+                or instance:IsA("Light")
+                or instance:IsA("BillboardGui")
+                or instance:IsA("SurfaceGui")
+            then
+                controls[instance] = instance.Enabled
+                instance.Enabled = false
+            elseif instance:IsA("ClickDetector") then
+                controls[instance] = instance.MaxActivationDistance
+                instance.MaxActivationDistance = 0
             end
         end
         model:SetAttribute("BuildNewParts", #records)
@@ -141,28 +180,29 @@ function FX.Play(opts)
     end
     local start = workspace:GetServerTimeNow() + 0.2
     model:SetAttribute("BuildStart", start)
-    Collection:AddTag(model, "UpgradeAssembly")
+    CollectionService:AddTag(model, "UpgradeAssembly")
     local tweens = {}
-    for _, r in records do
-        task.delay(0.2 + r.delay, function()
-            if not model.Parent or not r.part.Parent then
+    for _, record in records do
+        task.delay(0.2 + record.delay, function()
+            if not model.Parent or not record.part.Parent then
                 return
             end
+            -- rise slightly past the final position, then "seat" down into it
             local tween = TweenService:Create(
-                r.part,
-                TweenInfo.new(r.travel, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                { CFrame = r.cf + Vector3.new(0, r.seat, 0) }
+                record.part,
+                TweenInfo.new(record.travel, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                { CFrame = record.cf + Vector3.new(0, record.seat, 0) }
             )
             table.insert(tweens, tween)
             tween:Play()
-            task.delay(r.travel, function()
-                if not model.Parent or not r.part.Parent then
+            task.delay(record.travel, function()
+                if not model.Parent or not record.part.Parent then
                     return
                 end
                 local seat = TweenService:Create(
-                    r.part,
+                    record.part,
                     TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                    { CFrame = r.cf }
+                    { CFrame = record.cf }
                 )
                 table.insert(tweens, seat)
                 seat:Play()
@@ -170,28 +210,30 @@ function FX.Play(opts)
         end)
     end
     task.wait(duration + 0.2)
-    for _, t in tweens do
-        t:Cancel()
+    -- snap everything to its final state, whatever the tweens reached
+    for _, tween in tweens do
+        tween:Cancel()
     end
     if model.Parent then
-        for _, r in records do
-            if r.part.Parent then
-                r.part.CFrame = r.cf
-                r.part.CanCollide = r.collide
+        for _, record in records do
+            if record.part.Parent then
+                record.part.CFrame = record.cf
+                record.part.CanCollide = record.collide
             end
         end
-        for v, state in controls do
-            if v.Parent then
-                if v:IsA("ClickDetector") then
-                    v.MaxActivationDistance = state
+        for instance, state in controls do
+            if instance.Parent then
+                if instance:IsA("ClickDetector") then
+                    instance.MaxActivationDistance = state
                 else
-                    v.Enabled = state
+                    instance.Enabled = state
                 end
             end
         end
         model:SetAttribute("UnderConstruction", false)
-        Collection:RemoveTag(model, "UpgradeAssembly")
+        CollectionService:RemoveTag(model, "UpgradeAssembly")
     end
     return model
 end
-return FX
+
+return UpgradeEffects

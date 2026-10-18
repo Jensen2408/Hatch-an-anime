@@ -1,6 +1,9 @@
 --[[ StarterPlayerScripts.MoneyStandClient  (LocalScript)
 Cosmetic only: plate spring, shine, +$ text, gold squares, display countdown and sounds.
 Reads the server's Pressed / Stored attributes and MoneyCollected event. Never grants money.
+
+Remote (listen only): ReplicatedStorage.MoneyCollected.OnClientEvent(standModel, amount)  amount = 0 -> "EMPTY".
+Stands are models tagged "MoneyStand" (spawned by MoneyStandOwnership, collected by MoneyStandServer).
 ]]
 local CollectionService = game:GetService("CollectionService")
 local TweenService = game:GetService("TweenService")
@@ -8,160 +11,166 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local UISound = require(ReplicatedStorage:WaitForChild("UISound"))
-local player = Players.LocalPlayer
+local _player = Players.LocalPlayer
 local Debris = game:GetService("Debris")
 
 local Config = {
     PressDepth = 0.16,
 }
-local GOLD = Color3.fromRGB(255, 207, 85)
+local GOLD_COLOR = Color3.fromRGB(255, 207, 85)
 
-local function fmt(n)
-    return require(game:GetService("ReplicatedStorage").CharacterInventory.InventoryFormat).Money(n)
+local function formatMoney(amount)
+    return require(game:GetService("ReplicatedStorage").CharacterInventory.InventoryFormat).Money(amount)
 end
 
 -- A local spatial key press follows the server-authorized plate state.
-local function sound(model, name)
+local function playPlateSound(model, name)
     local plate = model:FindFirstChild("Plate")
     if plate and plate:IsA("BasePart") then
         UISound.PlayAt(name, plate)
     end
 end
 
+-- stands[model] = { model, plate, restCF, busy, pressed, amount, status, shineFrame?, shineGrad?, pressTween? }
 local stands = {}
 
-local function setStatus(st, text, dim)
-    if st.status then
-        st.status.Text = text
+local function setStatus(stand, text, isDim)
+    if stand.status then
+        stand.status.Text = text
     end
-    if st.amount then
-        st.amount.TextColor3 = dim and Color3.fromRGB(138, 124, 102) or Color3.fromRGB(255, 246, 220)
+    if stand.amount then
+        stand.amount.TextColor3 = isDim and Color3.fromRGB(138, 124, 102) or Color3.fromRGB(255, 246, 220)
     end
 end
 
-local function press(st, down)
-    if st.pressed == down then
+local function press(stand, isDown)
+    if stand.pressed == isDown then
         return
     end
-    st.pressed = down
-    if st.pressTween then
-        st.pressTween:Cancel()
+    stand.pressed = isDown
+    if stand.pressTween then
+        stand.pressTween:Cancel()
     end
-    local cf = down and st.restCF * CFrame.new(0, -Config.PressDepth, 0) or st.restCF
+    local targetCFrame = isDown and stand.restCF * CFrame.new(0, -Config.PressDepth, 0) or stand.restCF
     -- Back easing gives the small spring overshoot
-    st.pressTween = TweenService:Create(
-        st.plate,
-        TweenInfo.new(down and 0.14 or 0.26, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-        { CFrame = cf }
+    stand.pressTween = TweenService:Create(
+        stand.plate,
+        TweenInfo.new(isDown and 0.14 or 0.26, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        { CFrame = targetCFrame }
     )
-    st.pressTween:Play()
-    sound(st.model, down and "PlatePress" or "PlateRelease")
-    if down then
-        setStatus(st, "COLLECTED", false)
-    elseif not st.busy then
-        setStatus(st, (st.model:GetAttribute("Stored") or 0) >= 1 and "STEP TO COLLECT" or "EMPTY", false)
+    stand.pressTween:Play()
+    playPlateSound(stand.model, isDown and "PlatePress" or "PlateRelease")
+    if isDown then
+        setStatus(stand, "COLLECTED", false)
+    elseif not stand.busy then
+        setStatus(stand, (stand.model:GetAttribute("Stored") or 0) >= 1 and "STEP TO COLLECT" or "EMPTY", false)
     end
 end
 
-local function shine(st)
-    local g = st.shineGrad
-    if not g then
+-- Currently unused (never called); kept for the optional plate "Shine" > "Band" gradient sweep.
+local function _shine(stand)
+    local gradient = stand.shineGrad
+    if not gradient then
         return
     end
-    g.Offset = Vector2.new(-1, 0)
-    st.shineFrame.BackgroundTransparency = 0
-    local tw = TweenService:Create(
-        g,
+    gradient.Offset = Vector2.new(-1, 0)
+    stand.shineFrame.BackgroundTransparency = 0
+    local tween = TweenService:Create(
+        gradient,
         TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
         { Offset = Vector2.new(1, 0) }
     )
-    tw:Play()
-    tw.Completed:Once(function()
-        st.shineFrame.BackgroundTransparency = 1
+    tween:Play()
+    tween.Completed:Once(function()
+        stand.shineFrame.BackgroundTransparency = 1
     end)
 end
 
-local function popText(st, amount)
-    local a = Instance.new("Part")
-    a.Anchored, a.CanCollide, a.CanQuery, a.CanTouch, a.Transparency = true, false, false, false, 1
-    a.Size = Vector3.new(0.2, 0.2, 0.2)
-    a.CFrame = st.restCF * CFrame.new(0, 2.2, 0)
-    a.Parent = workspace
-    local bb = Instance.new("BillboardGui")
-    bb.Size, bb.AlwaysOnTop, bb.LightInfluence = UDim2.fromOffset(220, 56), true, 0
-    bb.Parent = a
-    local t = Instance.new("TextLabel")
-    t.Size, t.BackgroundTransparency = UDim2.fromScale(1, 1), 1
-    t.Font, t.TextScaled, t.Text, t.TextColor3 =
-        Enum.Font.FredokaOne, true, "+" .. fmt(amount), Color3.fromRGB(255, 224, 138)
+local function popText(stand, amount)
+    local anchor = Instance.new("Part")
+    anchor.Anchored, anchor.CanCollide, anchor.CanQuery, anchor.CanTouch, anchor.Transparency =
+        true, false, false, false, 1
+    anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+    anchor.CFrame = stand.restCF * CFrame.new(0, 2.2, 0)
+    anchor.Parent = workspace
+    local billboard = Instance.new("BillboardGui")
+    billboard.Size, billboard.AlwaysOnTop, billboard.LightInfluence = UDim2.fromOffset(220, 56), true, 0
+    billboard.Parent = anchor
+    local label = Instance.new("TextLabel")
+    label.Size, label.BackgroundTransparency = UDim2.fromScale(1, 1), 1
+    label.Font, label.TextScaled, label.Text, label.TextColor3 =
+        Enum.Font.FredokaOne, true, "+" .. formatMoney(amount), Color3.fromRGB(255, 224, 138)
     local stroke = Instance.new("UIStroke")
     stroke.Thickness = 3
     stroke.Color = Color3.fromRGB(12, 14, 13)
-    stroke.Parent = t
-    t.Parent = bb
+    stroke.Parent = label
+    label.Parent = billboard
     TweenService:Create(
-        a,
+        anchor,
         TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        { CFrame = a.CFrame * CFrame.new(0, 2.2, 0) }
+        { CFrame = anchor.CFrame * CFrame.new(0, 2.2, 0) }
     ):Play()
     task.delay(0.55, function()
-        TweenService:Create(t, TweenInfo.new(0.45), { TextTransparency = 1 }):Play()
+        TweenService:Create(label, TweenInfo.new(0.45), { TextTransparency = 1 }):Play()
         TweenService:Create(stroke, TweenInfo.new(0.45), { Transparency = 1 }):Play()
     end)
-    Debris:AddItem(a, 1.1)
+    Debris:AddItem(anchor, 1.1)
 end
 
-local function burst(st)
+local function burst(stand)
     for i = 1, 8 do
-        local p = Instance.new("Part")
-        p.Anchored, p.CanCollide, p.CanQuery, p.CanTouch, p.CastShadow = true, false, false, false, false
-        p.Size = Vector3.new(0.25, 0.25, 0.25)
-        p.Color, p.Material = GOLD, Enum.Material.Neon
-        local a = (i / 8) * math.pi * 2
-        local start = st.restCF * CFrame.new(math.cos(a) * 0.6, 0.4, math.sin(a) * 0.6)
-        p.CFrame = start
-        p.Parent = workspace
-        local vel = Vector3.new(math.cos(a) * 1.8, 5 + math.random() * 2, math.sin(a) * 1.8)
-        local t0, life = os.clock(), 0.65 + math.random() * 0.2
-        local conn
-        conn = RunService.RenderStepped:Connect(function()
-            local t = os.clock() - t0
-            if t >= life or not p.Parent then
-                conn:Disconnect()
-                p:Destroy()
+        local chip = Instance.new("Part")
+        chip.Anchored, chip.CanCollide, chip.CanQuery, chip.CanTouch, chip.CastShadow = true, false, false, false, false
+        chip.Size = Vector3.new(0.25, 0.25, 0.25)
+        chip.Color, chip.Material = GOLD_COLOR, Enum.Material.Neon
+        local angle = (i / 8) * math.pi * 2
+        local startCFrame = stand.restCF * CFrame.new(math.cos(angle) * 0.6, 0.4, math.sin(angle) * 0.6)
+        chip.CFrame = startCFrame
+        chip.Parent = workspace
+        local velocity = Vector3.new(math.cos(angle) * 1.8, 5 + math.random() * 2, math.sin(angle) * 1.8)
+        local startedAt, lifetime = os.clock(), 0.65 + math.random() * 0.2
+        local connection
+        connection = RunService.RenderStepped:Connect(function()
+            local elapsed = os.clock() - startedAt
+            if elapsed >= lifetime or not chip.Parent then
+                connection:Disconnect()
+                chip:Destroy()
                 return
             end
-            local pos = start.Position + vel * t + Vector3.new(0, -8 * t * t, 0)
-            local k = t / life
-            p.Size = Vector3.new(0.25, 0.25, 0.25) * (k > 0.7 and (1 - (k - 0.7) / 0.3) or 1)
-            p.CFrame = CFrame.new(pos) * CFrame.Angles(t * 7, t * 5, 0)
+            local position = startCFrame.Position + velocity * elapsed + Vector3.new(0, -8 * elapsed * elapsed, 0)
+            local progress = elapsed / lifetime
+            chip.Size = Vector3.new(0.25, 0.25, 0.25) * (progress > 0.7 and (1 - (progress - 0.7) / 0.3) or 1)
+            chip.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 7, elapsed * 5, 0)
         end)
     end
 end
 
-local function countdown(st, amount)
-    st.busy = true
-    setStatus(st, "COLLECTING", false)
-    local v = Instance.new("NumberValue")
-    v.Value = amount
-    local c = v.Changed:Connect(function(x)
-        if st.amount then
-            st.amount.Text = fmt(x)
+local function countdown(stand, amount)
+    stand.busy = true
+    setStatus(stand, "COLLECTING", false)
+    local counter = Instance.new("NumberValue")
+    counter.Value = amount
+    local changedConnection = counter.Changed:Connect(function(value)
+        if stand.amount then
+            stand.amount.Text = formatMoney(value)
         end
     end)
-    local tw =
-        TweenService:Create(v, TweenInfo.new(0.6, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out), { Value = 0 })
-    tw:Play()
-    tw.Completed:Wait()
-    c:Disconnect()
-    v:Destroy()
-    setStatus(st, "EMPTY", true)
+    local tween = TweenService:Create(
+        counter,
+        TweenInfo.new(0.6, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out),
+        { Value = 0 }
+    )
+    tween:Play()
+    tween.Completed:Wait()
+    changedConnection:Disconnect()
+    counter:Destroy()
+    setStatus(stand, "EMPTY", true)
     task.wait(0.6)
-    st.busy = false
-    setStatus(st, st.model:GetAttribute("Pressed") and "COLLECTED" or "STEP TO COLLECT", false)
+    stand.busy = false
+    setStatus(stand, stand.model:GetAttribute("Pressed") and "COLLECTED" or "STEP TO COLLECT", false)
 end
 
-local function add(model)
+local function addStand(model)
     if stands[model] then
         return
     end
@@ -170,58 +179,58 @@ local function add(model)
         return
     end
     local display = model:FindFirstChild("Display", true)
-    local gui = display and display:FindFirstChild("Screen")
-    local st = {
+    local screenGui = display and display:FindFirstChild("Screen")
+    local stand = {
         model = model,
         plate = plate,
         restCF = plate.CFrame,
         busy = false,
         pressed = model:GetAttribute("Pressed") == true,
-        amount = gui and gui:FindFirstChild("Amount", true),
-        status = gui and gui:FindFirstChild("Status", true),
+        amount = screenGui and screenGui:FindFirstChild("Amount", true),
+        status = screenGui and screenGui:FindFirstChild("Status", true),
     }
-    local sg = plate:FindFirstChild("Shine")
-    if sg then
-        st.shineFrame = sg:FindFirstChild("Band")
-        st.shineGrad = st.shineFrame and st.shineFrame:FindFirstChildOfClass("UIGradient")
+    local shineGui = plate:FindFirstChild("Shine")
+    if shineGui then
+        stand.shineFrame = shineGui:FindFirstChild("Band")
+        stand.shineGrad = stand.shineFrame and stand.shineFrame:FindFirstChildOfClass("UIGradient")
     end
-    stands[model] = st
+    stands[model] = stand
     local function refresh()
-        if st.busy or not st.amount then
+        if stand.busy or not stand.amount then
             return
         end
-        local v = model:GetAttribute("Stored") or 0
-        st.amount.Text = fmt(v)
+        local stored = model:GetAttribute("Stored") or 0
+        stand.amount.Text = formatMoney(stored)
         if not model:GetAttribute("Pressed") then
-            setStatus(st, v >= 1 and "STEP TO COLLECT" or "EMPTY", v < 1)
+            setStatus(stand, stored >= 1 and "STEP TO COLLECT" or "EMPTY", stored < 1)
         end
     end
     model:GetAttributeChangedSignal("Stored"):Connect(refresh)
     model:GetAttributeChangedSignal("Pressed"):Connect(function()
-        press(st, model:GetAttribute("Pressed") == true)
+        press(stand, model:GetAttribute("Pressed") == true)
     end)
     refresh()
 end
 
-for _, m in CollectionService:GetTagged("MoneyStand") do
-    task.spawn(add, m)
+for _, model in CollectionService:GetTagged("MoneyStand") do
+    task.spawn(addStand, model)
 end
-CollectionService:GetInstanceAddedSignal("MoneyStand"):Connect(add)
-CollectionService:GetInstanceRemovedSignal("MoneyStand"):Connect(function(m)
-    stands[m] = nil
+CollectionService:GetInstanceAddedSignal("MoneyStand"):Connect(addStand)
+CollectionService:GetInstanceRemovedSignal("MoneyStand"):Connect(function(model)
+    stands[model] = nil
 end)
 
 ReplicatedStorage:WaitForChild("MoneyCollected").OnClientEvent:Connect(function(model, amount)
-    local st = stands[model]
-    if not st then
+    local stand = stands[model]
+    if not stand then
         return
     end
     if amount <= 0 then
-        setStatus(st, "EMPTY", true)
+        setStatus(stand, "EMPTY", true)
         return
     end
     -- Plate thock + HUD payout chime trigger together for maximum satisfaction.
-    popText(st, amount)
-    burst(st)
-    task.spawn(countdown, st, amount)
+    popText(stand, amount)
+    burst(stand)
+    task.spawn(countdown, stand, amount)
 end)

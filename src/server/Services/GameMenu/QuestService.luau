@@ -3,131 +3,144 @@ Server-authoritative quest progress. Other server scripts report progress:
   local Quests = require(game.ServerScriptService.GameMenu.QuestService)
   Quests.Increment(player, "HatchEgg", 1)   -- only after a hatch has really completed
 Progress is SESSION-ONLY until you connect Persistence below.
+(In this game PlayerDataService overrides QuestService.Persistence.Load/Save and stores the table in the main
+save as field "quests"; Load yields until the save is loaded, Increment calls before that are ignored.)
+
+Public API:
+  QuestService.Changed      BindableEvent, fired with (player) whenever progress / claims change
+  QuestService.Increment(player, objective, amount?)
+  QuestService.Snapshot(player) -> { serverTime, ends = { Daily, Weekly, Monthly }, list = { questRow... } }
+  QuestService.Claim(player, questId, grant) -> ok, message
+  QuestService.Persistence  { Load(player) -> table?, Save(player, questData) }
+Quest definitions and period keys come from ReplicatedStorage.GameMenu.Config (Quests, PeriodKey, PeriodEnds).
+No remotes; GameMenuServer exposes Snapshot / Claim to the client.
 ]]
 local Players = game:GetService("Players")
 local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("GameMenu"):WaitForChild("Config"))
 
-local Q = { Changed = Instance.new("BindableEvent") }
-local data = {} -- [player] = { [questId] = { key = periodKey, progress = n, claimed = bool } }
-local claiming = {}
+local QuestService = { Changed = Instance.new("BindableEvent") }
+local questData = {} -- [player] = { [questId] = { key = periodKey, progress = n, claimed = bool } }
+local claiming = {} -- [player] = true while a grant callback runs
 
 -- Persistence adapter: replace these two with your DataStore / ProfileService calls.
-Q.Persistence = {
-    Load = function(player)
+QuestService.Persistence = {
+    Load = function(_player)
         return nil
     end, -- return the saved table or nil
-    Save = function(player, tbl) end, -- called on leave + after claims
+    Save = function(_player, _questData) end, -- called on leave + after claims
 }
 
-local function row(player, q)
-    local t = os.time()
-    local d = data[player]
-    if not d then
+-- Returns the player's progress row for a quest, resetting it when the quest period rolled over.
+-- nil while the player's data is not loaded.
+local function getQuestRow(player, quest)
+    local currentTime = os.time()
+    local playerQuests = questData[player]
+    if not playerQuests then
         return nil
     end
-    local r = d[q.id]
-    local key = Config.PeriodKey(q.period, t)
-    if not r or r.key ~= key then
-        r = { key = key, progress = 0, claimed = false }
-        d[q.id] = r
+    local questRow = playerQuests[quest.id]
+    local periodKey = Config.PeriodKey(quest.period, currentTime)
+    if not questRow or questRow.key ~= periodKey then
+        questRow = { key = periodKey, progress = 0, claimed = false }
+        playerQuests[quest.id] = questRow
     end -- period rolled over
-    return r
+    return questRow
 end
 
-function Q.Increment(player, objective, n)
-    if not data[player] then
+function QuestService.Increment(player, objective, amount)
+    if not questData[player] then
         return
     end
-    n = tonumber(n) or 1
+    amount = tonumber(amount) or 1
     local changed = false
-    for _, q in Config.Quests do
-        if q.objective == objective then
-            local r = row(player, q)
-            if r and not r.claimed and r.progress < q.target then
-                r.progress = math.min(q.target, r.progress + n)
+    for _, quest in Config.Quests do
+        if quest.objective == objective then
+            local questRow = getQuestRow(player, quest)
+            if questRow and not questRow.claimed and questRow.progress < quest.target then
+                questRow.progress = math.min(quest.target, questRow.progress + amount)
                 changed = true
             end
         end
     end
     if changed then
-        Q.Changed:Fire(player)
+        QuestService.Changed:Fire(player)
     end
 end
 
-function Q.Snapshot(player)
+function QuestService.Snapshot(player)
     local now = os.time()
-    local out = { serverTime = now, ends = {}, list = {} }
-    for _, p in { "Daily", "Weekly", "Monthly" } do
-        out.ends[p] = Config.PeriodEnds(p, now)
+    local snapshot = { serverTime = now, ends = {}, list = {} }
+    for _, period in { "Daily", "Weekly", "Monthly" } do
+        snapshot.ends[period] = Config.PeriodEnds(period, now)
     end
-    for _, q in Config.Quests do
-        local r = row(player, q)
-        if r then
-            table.insert(out.list, {
-                id = q.id,
-                period = q.period,
-                order = q.order,
-                title = q.title,
-                description = q.description,
-                target = q.target,
-                progress = r.progress,
-                claimed = r.claimed,
-                reward = q.reward,
+    for _, quest in Config.Quests do
+        local questRow = getQuestRow(player, quest)
+        if questRow then
+            table.insert(snapshot.list, {
+                id = quest.id,
+                period = quest.period,
+                order = quest.order,
+                title = quest.title,
+                description = quest.description,
+                target = quest.target,
+                progress = questRow.progress,
+                claimed = questRow.claimed,
+                reward = quest.reward,
             })
         end
     end
-    return out
+    return snapshot
 end
 
 -- grant(player, reward) must return true only if the reward was actually given
-function Q.Claim(player, id, grant)
+function QuestService.Claim(player, questId, grant)
     if claiming[player] then
         return false, "Claim in progress"
     end
-    local q
-    for _, x in Config.Quests do
-        if x.id == id then
-            q = x
+    local quest
+    for _, candidate in Config.Quests do
+        if candidate.id == questId then
+            quest = candidate
         end
     end
-    if not q then
+    if not quest then
         return false, "Unknown quest"
     end
-    local r = row(player, q)
-    if not r then
+    local questRow = getQuestRow(player, quest)
+    if not questRow then
         return false, "Not loaded"
     end
-    if r.claimed then
+    if questRow.claimed then
         return false, "Already claimed"
     end
-    if r.progress < q.target then
+    if questRow.progress < quest.target then
         return false, "Not finished yet"
     end
     claiming[player] = true
-    r.claimed = true -- mark first so repeated clicks can't double-pay
-    local ok, msg = pcall(grant, player, q.reward)
+    questRow.claimed = true -- mark first so repeated clicks can't double-pay
+    local ok, granted = pcall(grant, player, quest.reward)
     claiming[player] = nil
-    if not ok or msg ~= true then
-        r.claimed = false
+    if not ok or granted ~= true then
+        questRow.claimed = false
         return false, "Reward failed, try again"
     end
-    Q.Persistence.Save(player, data[player])
-    Q.Changed:Fire(player)
+    QuestService.Persistence.Save(player, questData[player])
+    QuestService.Changed:Fire(player)
     return true, "Claimed"
 end
 
-Players.PlayerAdded:Connect(function(p)
-    data[p] = Q.Persistence.Load(p) or {}
+Players.PlayerAdded:Connect(function(player)
+    questData[player] = QuestService.Persistence.Load(player) or {}
 end)
-for _, p in Players:GetPlayers() do
-    data[p] = data[p] or {}
+for _, player in Players:GetPlayers() do
+    questData[player] = questData[player] or {}
 end
-Players.PlayerRemoving:Connect(function(p)
-    if data[p] then
-        Q.Persistence.Save(p, data[p])
+Players.PlayerRemoving:Connect(function(player)
+    if questData[player] then
+        QuestService.Persistence.Save(player, questData[player])
     end
-    data[p] = nil
-    claiming[p] = nil
+    questData[player] = nil
+    claiming[player] = nil
 end)
 
-return Q
+return QuestService

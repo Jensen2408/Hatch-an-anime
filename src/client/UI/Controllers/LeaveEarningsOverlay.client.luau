@@ -1,50 +1,52 @@
 -- LeaveEarningsOverlay (LocalScript): when the Roblox menu (Esc) opens, show behind it that the temple keeps earning offline.
 -- Offline rate matches PlayerDataService: half of live income, for up to 8 hours.
+-- Display only (estimate from the local player's PlacedItems IncomePerSecond x OwnerIncomeMultiplier); no remotes.
+-- If PlayerDataService's offline rate / cap change, OFFLINE_RATE / OFFLINE_CAP here must be updated by hand.
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
-local TS = game:GetService("TweenService")
+local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local OFFLINE_RATE, OFFLINE_CAP = 0.5, 8 * 3600
-local F = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local K, W = Color3.new(0, 0, 0), Color3.new(1, 1, 1)
-local GLOW = "rbxthumb://type=Asset&id=85372533044428&w=420&h=420"
-local RAYS = "rbxthumb://type=Asset&id=110993746998606&w=420&h=420"
-local SPARK = "rbxthumb://type=Asset&id=87376394612367&w=420&h=420"
-local COINS = "rbxassetid://125162321561970"
-local function new(c, p, parent)
-    local o = Instance.new(c)
-    for k, v in p do
-        o[k] = v
+local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
+local BLACK, WHITE = Color3.new(0, 0, 0), Color3.new(1, 1, 1)
+local GLOW_IMAGE = "rbxthumb://type=Asset&id=85372533044428&w=420&h=420"
+local RAYS_IMAGE = "rbxthumb://type=Asset&id=110993746998606&w=420&h=420"
+local SPARK_IMAGE = "rbxthumb://type=Asset&id=87376394612367&w=420&h=420"
+local COINS_IMAGE = "rbxassetid://125162321561970"
+local function create(className, props, parent)
+    local instance = Instance.new(className)
+    for key, value in props do
+        instance[key] = value
     end
-    o.Parent = parent
-    return o
+    instance.Parent = parent
+    return instance
 end
 local UNITS = { { 1e15, "Qa" }, { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }
-local function short(n)
-    n = tonumber(n) or 0
-    for _, u in UNITS do
-        if n >= u[1] then
-            local v = n / u[1]
-            local s = v < 10 and string.format("%.2f", v)
-                or v < 100 and string.format("%.1f", v)
-                or tostring(math.floor(v + 0.5))
-            s = s:gsub("%.?0+$", "")
-            return "$" .. s .. u[2]
+local function formatShortCash(value)
+    value = tonumber(value) or 0
+    for _, unit in UNITS do
+        if value >= unit[1] then
+            local scaled = value / unit[1]
+            local text = scaled < 10 and string.format("%.2f", scaled)
+                or scaled < 100 and string.format("%.1f", scaled)
+                or tostring(math.floor(scaled + 0.5))
+            text = text:gsub("%.?0+$", "")
+            return "$" .. text .. unit[2]
         end
     end
-    return "$" .. tostring(math.floor(n))
+    return "$" .. tostring(math.floor(value))
 end
-local function income()
+local function getIncomePerSecond()
     local total = 0
     local plots = workspace:FindFirstChild("Plots")
     if plots then
         for _, plot in plots:GetChildren() do
             if plot:GetAttribute("OwnerUserId") == player.UserId then
-                local placed = plot:FindFirstChild("PlacedItems")
-                if placed then
-                    for _, m in placed:GetChildren() do
-                        total += m:GetAttribute("IncomePerSecond") or 0
+                local placedItems = plot:FindFirstChild("PlacedItems")
+                if placedItems then
+                    for _, item in placedItems:GetChildren() do
+                        total += item:GetAttribute("IncomePerSecond") or 0
                     end
                 end
             end
@@ -53,153 +55,159 @@ local function income()
     return total * (workspace:GetAttribute("OwnerIncomeMultiplier") or 1)
 end
 
-local gui = new(
+local screenGui = create(
     "ScreenGui",
     { Name = "LeaveEarningsOverlay", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 999, Enabled = false },
     player:WaitForChild("PlayerGui")
 )
-local bg = new(
+local background = create(
     "Frame",
     { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(18, 8, 40), BackgroundTransparency = 1 },
-    gui
+    screenGui
 )
-new(
+create(
     "UIGradient",
     { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(60, 20, 110), Color3.fromRGB(10, 4, 24)) },
-    bg
+    background
 )
-local rays = new("ImageLabel", {
+local rays = create("ImageLabel", {
     BackgroundTransparency = 1,
-    Image = RAYS,
+    Image = RAYS_IMAGE,
     ImageColor3 = Color3.fromRGB(255, 210, 90),
     ImageTransparency = 1,
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.fromScale(0.5, 0.16),
     Size = UDim2.fromOffset(900, 900),
-}, gui)
-local halo = new("ImageLabel", {
+}, screenGui)
+local halo = create("ImageLabel", {
     BackgroundTransparency = 1,
-    Image = GLOW,
+    Image = GLOW_IMAGE,
     ImageColor3 = Color3.fromRGB(255, 200, 60),
     ImageTransparency = 1,
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.fromScale(0.5, 0.13),
     Size = UDim2.fromOffset(620, 300),
-}, gui)
-local top = new("Frame", {
+}, screenGui)
+local textHolder = create("Frame", {
     BackgroundTransparency = 1,
     AnchorPoint = Vector2.new(0.5, 0),
     Position = UDim2.new(0.5, 0, 0, 24),
     Size = UDim2.fromOffset(900, 170),
-}, gui)
-local scale = new("UIScale", {}, top)
-local function txt(s, y, size, color, th)
-    local l = new("TextLabel", {
+}, screenGui)
+local textScale = create("UIScale", {}, textHolder)
+local function makeText(text, y, size, color, thickness)
+    local label = create("TextLabel", {
         BackgroundTransparency = 1,
         Position = UDim2.fromOffset(0, y),
         Size = UDim2.new(1, 0, 0, size + 8),
-        Text = s,
-        FontFace = F,
+        Text = text,
+        FontFace = FONT,
         TextSize = size,
         TextColor3 = color,
         TextTransparency = 1,
-    }, top)
-    local st =
-        new("UIStroke", { Color = K, Thickness = th, Transparency = 1, LineJoinMode = Enum.LineJoinMode.Round }, l)
-    return l, st
+    }, textHolder)
+    local stroke = create(
+        "UIStroke",
+        { Color = BLACK, Thickness = thickness, Transparency = 1, LineJoinMode = Enum.LineJoinMode.Round },
+        label
+    )
+    return label, stroke
 end
-local t1, s1 = txt("🌙  YOUR TEMPLE KEEPS EARNING!", 0, 44, W, 5)
-local t2, s2 = txt("$0/s while you're away", 58, 34, Color3.fromRGB(130, 255, 110), 4)
-local t3, s3 = txt("Come back to collect up to $0  ·  max 8 hours", 104, 22, Color3.fromRGB(255, 225, 150), 3)
-local g1 = new("UIGradient", {
+local titleLabel, titleStroke = makeText("🌙  YOUR TEMPLE KEEPS EARNING!", 0, 44, WHITE, 5)
+local rateLabel, rateStroke = makeText("$0/s while you're away", 58, 34, Color3.fromRGB(130, 255, 110), 4)
+local capLabel, capStroke =
+    makeText("Come back to collect up to $0  ·  max 8 hours", 104, 22, Color3.fromRGB(255, 225, 150), 3)
+local titleGradient = create("UIGradient", {
     Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 214, 72)),
-        ColorSequenceKeypoint.new(0.5, W),
+        ColorSequenceKeypoint.new(0.5, WHITE),
         ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 140, 220)),
     }),
-}, t1)
-local rain = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ClipsDescendants = true }, gui)
+}, titleLabel)
+local rain =
+    create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ClipsDescendants = true }, screenGui)
 
-local open, conn = false, nil
-local function fade(on)
-    local t = TweenInfo.new(0.35, Enum.EasingStyle.Quad)
-    TS:Create(bg, t, { BackgroundTransparency = on and 0.25 or 1 }):Play()
-    TS:Create(rays, t, { ImageTransparency = on and 0.55 or 1 }):Play()
-    TS:Create(halo, t, { ImageTransparency = on and 0.3 or 1 }):Play()
-    for _, x in { t1, t2, t3 } do
-        TS:Create(x, t, { TextTransparency = on and 0 or 1 }):Play()
+local isOpen, renderConnection = false, nil
+local function fadeOverlay(isVisible)
+    local tweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Quad)
+    TweenService:Create(background, tweenInfo, { BackgroundTransparency = isVisible and 0.25 or 1 }):Play()
+    TweenService:Create(rays, tweenInfo, { ImageTransparency = isVisible and 0.55 or 1 }):Play()
+    TweenService:Create(halo, tweenInfo, { ImageTransparency = isVisible and 0.3 or 1 }):Play()
+    for _, target in { titleLabel, rateLabel, capLabel } do
+        TweenService:Create(target, tweenInfo, { TextTransparency = isVisible and 0 or 1 }):Play()
     end
-    for _, x in { s1, s2, s3 } do
-        TS:Create(x, t, { Transparency = on and 0 or 1 }):Play()
+    for _, target in { titleStroke, rateStroke, capStroke } do
+        TweenService:Create(target, tweenInfo, { Transparency = isVisible and 0 or 1 }):Play()
     end
 end
-local function coin()
-    local sz = math.random(26, 54)
-    local img = math.random() < 0.75 and COINS or SPARK
-    local c = new("ImageLabel", {
+local function spawnFallingCoin()
+    local size = math.random(26, 54)
+    local image = math.random() < 0.75 and COINS_IMAGE or SPARK_IMAGE
+    local coinLabel = create("ImageLabel", {
         BackgroundTransparency = 1,
-        Image = img,
+        Image = image,
         ScaleType = Enum.ScaleType.Fit,
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(math.random(), 0, 0, -60),
-        Size = UDim2.fromOffset(sz, sz),
+        Size = UDim2.fromOffset(size, size),
         Rotation = math.random(-40, 40),
-        ImageTransparency = img == SPARK and 0.2 or 0,
+        ImageTransparency = image == SPARK_IMAGE and 0.2 or 0,
     }, rain)
-    local dur = 3 + math.random() * 2.5
-    TS:Create(c, TweenInfo.new(dur, Enum.EasingStyle.Linear), {
-        Position = c.Position + UDim2.new((math.random() - 0.5) * 0.1, 0, 1.15, 0),
-        Rotation = c.Rotation + math.random(-180, 180),
+    local duration = 3 + math.random() * 2.5
+    TweenService:Create(coinLabel, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
+        Position = coinLabel.Position + UDim2.new((math.random() - 0.5) * 0.1, 0, 1.15, 0),
+        Rotation = coinLabel.Rotation + math.random(-180, 180),
     }):Play()
-    task.delay(dur, function()
-        c:Destroy()
+    task.delay(duration, function()
+        coinLabel:Destroy()
     end)
 end
-local function show()
-    if open then
+local function showOverlay()
+    if isOpen then
         return
     end
-    open = true
-    local rate = income() * OFFLINE_RATE
-    t2.Text = short(rate) .. "/s while you're away"
-    t3.Text = "Come back to collect up to " .. short(rate * OFFLINE_CAP) .. "  ·  max 8 hours"
+    isOpen = true
+    local rate = getIncomePerSecond() * OFFLINE_RATE
+    rateLabel.Text = formatShortCash(rate) .. "/s while you're away"
+    capLabel.Text = "Come back to collect up to " .. formatShortCash(rate * OFFLINE_CAP) .. "  ·  max 8 hours"
     if rate <= 0 then
-        t2.Text = "Place characters on your stands"
-        t3.Text = "...and they earn cash for you even while you're offline!"
+        rateLabel.Text = "Place characters on your stands"
+        capLabel.Text = "...and they earn cash for you even while you're offline!"
     end
-    scale.Scale = math.clamp(workspace.CurrentCamera.ViewportSize.X / 960, 0.5, 1.1)
-    gui.Enabled = true
-    fade(true)
-    scale.Scale *= 0.85
-    TS:Create(scale, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Scale = scale.Scale / 0.85 }):Play()
-    local acc, t0 = 0, os.clock()
-    conn = RunService.RenderStepped:Connect(function(dt)
+    textScale.Scale = math.clamp(workspace.CurrentCamera.ViewportSize.X / 960, 0.5, 1.1)
+    screenGui.Enabled = true
+    fadeOverlay(true)
+    textScale.Scale *= 0.85
+    TweenService:Create(textScale, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Scale = textScale.Scale / 0.85 })
+        :Play()
+    local spawnTimer, startedAt = 0, os.clock()
+    renderConnection = RunService.RenderStepped:Connect(function(dt)
         rays.Rotation += dt * 8
-        g1.Offset = Vector2.new(math.sin((os.clock() - t0) * 1.5) * 0.4, 0)
+        titleGradient.Offset = Vector2.new(math.sin((os.clock() - startedAt) * 1.5) * 0.4, 0)
         halo.Size = UDim2.fromOffset(620 + math.sin(os.clock() * 2) * 40, 300 + math.sin(os.clock() * 2) * 20)
-        acc += dt
-        if acc > 0.12 then
-            acc = 0
-            coin()
+        spawnTimer += dt
+        if spawnTimer > 0.12 then
+            spawnTimer = 0
+            spawnFallingCoin()
         end
     end)
 end
-local function hide()
-    if not open then
+local function hideOverlay()
+    if not isOpen then
         return
     end
-    open = false
-    fade(false)
-    if conn then
-        conn:Disconnect()
-        conn = nil
+    isOpen = false
+    fadeOverlay(false)
+    if renderConnection then
+        renderConnection:Disconnect()
+        renderConnection = nil
     end
     task.delay(0.4, function()
-        if not open then
-            gui.Enabled = false
+        if not isOpen then
+            screenGui.Enabled = false
             rain:ClearAllChildren()
         end
     end)
 end
-GuiService.MenuOpened:Connect(show)
-GuiService.MenuClosed:Connect(hide)
+GuiService.MenuOpened:Connect(showOverlay)
+GuiService.MenuClosed:Connect(hideOverlay)

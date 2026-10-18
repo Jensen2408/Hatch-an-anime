@@ -2,139 +2,160 @@
 Remotes: ReplicatedStorage.GameMenu.Remotes.{ GetState (RF), Action (RF), Changed (RE) }
 Connect HOOKS to your existing catalog / CharacterEconomy / inventory / plot / placement code.
 Unconnected hooks return a clear "not connected" message; nothing pretends to work.
+
+Network authority: the client only sends a section name or an action name + args table. Every action is
+re-validated here (ownership, prices via UpgradePrices / TempleSlotUnlocks / GameMenu Config, cash on the server).
+Upgrade actions only *request* the upgrade through the plot's BindableEvents; PlotManager / PlotChambers do the
+actual ownership + distance checks and charge the cost.
+
+Remote contract:
+  GetState:InvokeServer(section) -> table      (rate-limited to one read per 5 ms per player)
+    "index"  -> { catalog, discovered, owned }   "plot" -> GameAdapter.GetPlot result
+    "quests" -> QuestService.Snapshot             "shop" -> { items, tabs, serverTime }
+    otherwise / errors -> { error = message }
+  Action:InvokeServer(actionName, args) -> ok, message   (one at a time, >= 0.2 s apart per player)
+    actionName in ACTIONS: EquipBest, UnequipAll, PlaceSelected{uids}, StoreSelected{uids}, Claim{id}, ClaimAll,
+    UpgradeTemple, UpgradeIncubator{index}, AddIncubator, UnlockSlot, Buy{id}
+  Changed:FireClient(player)   "your menu data changed, re-fetch"; fired after successful actions,
+                               quest changes and GameAdapter events.
+Robux items from the Shop are only prompted here; see the note at the bottom about ProcessReceipt.
 ]]
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
-local root = RS:WaitForChild("GameMenu")
-local Config = require(root:WaitForChild("Config"))
-local Quests = require(script.Parent:WaitForChild("QuestService"))
+local gameMenuFolder = ReplicatedStorage:WaitForChild("GameMenu")
+local Config = require(gameMenuFolder:WaitForChild("Config"))
+local QuestService = require(script.Parent:WaitForChild("QuestService"))
 
-local remotes = root:FindFirstChild("Remotes") or Instance.new("Folder")
+local remotes = gameMenuFolder:FindFirstChild("Remotes") or Instance.new("Folder")
 remotes.Name = "Remotes"
-remotes.Parent = root
-local function remote(class, name)
-    local r = remotes:FindFirstChild(name) or Instance.new(class)
-    r.Name = name
-    r.Parent = remotes
-    return r
+remotes.Parent = gameMenuFolder
+local function ensureRemote(className, name)
+    local remoteInstance = remotes:FindFirstChild(name) or Instance.new(className)
+    remoteInstance.Name = name
+    remoteInstance.Parent = remotes
+    return remoteInstance
 end
 local GetState, Action, Changed =
-    remote("RemoteFunction", "GetState"), remote("RemoteFunction", "Action"), remote("RemoteEvent", "Changed")
+    ensureRemote("RemoteFunction", "GetState"),
+    ensureRemote("RemoteFunction", "Action"),
+    ensureRemote("RemoteEvent", "Changed")
 
 local HOOKS = require(script.Parent:WaitForChild("GameAdapter"))
-HOOKS.OwnsGamePass = function(player, id)
-    local ok, r = pcall(MarketplaceService.UserOwnsGamePassAsync, MarketplaceService, player.UserId, id)
-    return ok and r
+HOOKS.OwnsGamePass = function(player, gamePassId)
+    local ok, owns = pcall(MarketplaceService.UserOwnsGamePassAsync, MarketplaceService, player.UserId, gamePassId)
+    return ok and owns
 end
 
-local busy = {}
-local requestAt = {}
-local readAt = {}
-local function push(p)
-    if p and p.Parent == Players then
-        Changed:FireClient(p)
+local busy = {} -- [player] = true while an Action runs
+local requestAt = {} -- [player] = os.clock() of the last accepted Action
+local readAt = {} -- [player] = os.clock() of the last accepted GetState
+local function pushState(player)
+    if player and player.Parent == Players then
+        Changed:FireClient(player)
     end
 end
-task.spawn(HOOKS.Init, push)
-Quests.Changed.Event:Connect(push)
+task.spawn(HOOKS.Init, pushState)
+QuestService.Changed.Event:Connect(pushState)
 
-local function plotOrErr(p)
-    local plot, err = HOOKS.GetPlot(p)
+local function plotOrErr(player)
+    local plot, err = HOOKS.GetPlot(player)
     return plot, err
 end
 
-GetState.OnServerInvoke = function(p, section)
+GetState.OnServerInvoke = function(player, section)
     local now = os.clock()
-    if now - (readAt[p] or -100) < 0.005 then
+    if now - (readAt[player] or -100) < 0.005 then
         return { error = "Please wait a moment." }
     end
-    readAt[p] = now
+    readAt[player] = now
     if section == "index" then
-        local cat, err = HOOKS.GetCatalog(p)
-        if not cat then
+        local catalog, err = HOOKS.GetCatalog(player)
+        if not catalog then
             return { error = err }
         end
-        local disc = HOOKS.GetDiscovered(p) or {}
+        local discovered = HOOKS.GetDiscovered(player) or {}
         local owned = {}
-        local plot = HOOKS.GetPlot(p)
+        local plot = HOOKS.GetPlot(player)
         if plot and plot.items then
-            for _, it in plot.items do
-                owned[it.id] = (owned[it.id] or 0) + 1
+            for _, item in plot.items do
+                owned[item.id] = (owned[item.id] or 0) + 1
             end
         end
-        for id, n in HOOKS.GetOwnedEggs(p) do
-            owned[id] = n
+        for eggKey, count in HOOKS.GetOwnedEggs(player) do
+            owned[eggKey] = count
         end
-        return { catalog = cat, discovered = disc, owned = owned }
+        return { catalog = catalog, discovered = discovered, owned = owned }
     elseif section == "plot" then
-        local plot, err = plotOrErr(p)
+        local plot, err = plotOrErr(player)
         if not plot then
             return { error = err }
         end
         return plot
     elseif section == "quests" then
-        return Quests.Snapshot(p)
+        return QuestService.Snapshot(player)
     elseif section == "shop" then
-        local out = {}
-        for _, e in Config.Shop do
-            local available = (e.kind == "cash" and e.price ~= nil)
-                or (e.kind == "robux" and (e.productId or e.gamePassId) ~= nil)
-            local item = table.clone(e)
+        local items = {}
+        for _, entry in Config.Shop do
+            local available = (entry.kind == "cash" and entry.price ~= nil)
+                or (entry.kind == "robux" and (entry.productId or entry.gamePassId) ~= nil)
+            local item = table.clone(entry)
             item.available = available
-            if e.grant and e.grant.egg then
-                item.model = "MenuEgg_" .. e.grant.egg
+            if entry.grant and entry.grant.egg then
+                item.model = "MenuEgg_" .. entry.grant.egg
             end
-            if e.gamePassId then
-                item.owned = HOOKS.OwnsGamePass(p, e.gamePassId)
+            if entry.gamePassId then
+                item.owned = HOOKS.OwnsGamePass(player, entry.gamePassId)
             end
-            table.insert(out, item)
+            table.insert(items, item)
         end
-        return { items = out, tabs = Config.ShopTabs, serverTime = os.time() }
+        return { items = items, tabs = Config.ShopTabs, serverTime = os.time() }
     end
     return { error = "Unknown section" }
 end
 
-local ACT = {}
-ACT.EquipBest = function(p)
-    return HOOKS.EquipBest(p)
+-- ACTIONS[name](player, args) -> ok, message. Called inside pcall by Action.OnServerInvoke.
+local ACTIONS = {}
+ACTIONS.EquipBest = function(player)
+    return HOOKS.EquipBest(player)
 end
-ACT.UnequipAll = function(p)
-    local plot, err = plotOrErr(p)
+ACTIONS.UnequipAll = function(player)
+    local plot, err = plotOrErr(player)
     if not plot then
         return false, err
     end
     local uids = {}
-    for _, it in plot.items do
-        if it.state == "placed" then
-            table.insert(uids, it.uid)
+    for _, item in plot.items do
+        if item.state == "placed" then
+            table.insert(uids, item.uid)
         end
     end
     if #uids == 0 then
         return false, "Nothing is placed"
     end
-    local n, e = HOOKS.StoreCharacters(p, uids)
-    if n == nil then
-        return false, e
+    local count, message = HOOKS.StoreCharacters(player, uids)
+    if count == nil then
+        return false, message
     end
-    return true, ("%d back in inventory"):format(n)
+    return true, ("%d back in inventory"):format(count)
 end
-local function uidList(a)
-    local t = {}
-    if type(a.uids) == "table" then
-        for i, u in a.uids do
+-- First 60 entries of args.uids, keeping only strings.
+local function collectUids(args)
+    local uids = {}
+    if type(args.uids) == "table" then
+        for i, uid in args.uids do
             if i > 60 then
                 break
             end
-            if type(u) == "string" then
-                table.insert(t, u)
+            if type(uid) == "string" then
+                table.insert(uids, uid)
             end
         end
     end
-    return t
+    return uids
 end
-ACT.PlaceSelected = function(p, a)
-    local plot, err = plotOrErr(p)
+ACTIONS.PlaceSelected = function(player, args)
+    local plot, err = plotOrErr(player)
     if not plot then
         return false, err
     end
@@ -142,60 +163,62 @@ ACT.PlaceSelected = function(p, a)
         return false, "You don't have a plot yet"
     end
     local used = 0
-    for _, it in plot.items do
-        if it.state == "placed" then
+    for _, item in plot.items do
+        if item.state == "placed" then
             used += 1
         end
     end
     if used >= plot.unlocked then
         return false, "No free stands"
     end
-    local n, e = HOOKS.PlaceCharacters(p, uidList(a))
-    if n == nil then
-        return false, e
+    local count, message = HOOKS.PlaceCharacters(player, collectUids(args))
+    if count == nil then
+        return false, message
     end
-    return true, "Placed " .. n
+    return true, "Placed " .. count
 end
-ACT.StoreSelected = function(p, a)
-    local n, e = HOOKS.StoreCharacters(p, uidList(a))
-    if n == nil then
-        return false, e
+ACTIONS.StoreSelected = function(player, args)
+    local count, message = HOOKS.StoreCharacters(player, collectUids(args))
+    if count == nil then
+        return false, message
     end
-    return true, "Stored " .. n
+    return true, "Stored " .. count
 end
-ACT.Claim = function(p, a)
-    return Quests.Claim(p, tostring(a.id), function(pl, rw)
-        return HOOKS.GrantReward(pl, rw) == true
+ACTIONS.Claim = function(player, args)
+    return QuestService.Claim(player, tostring(args.id), function(grantPlayer, reward)
+        return HOOKS.GrantReward(grantPlayer, reward) == true
     end)
 end
-ACT.ClaimAll = function(p)
-    local n = 0
-    for _, q in Quests.Snapshot(p).list do
-        if q.progress >= q.target and not q.claimed then
+ACTIONS.ClaimAll = function(player)
+    local claimedCount = 0
+    for _, quest in QuestService.Snapshot(player).list do
+        if quest.progress >= quest.target and not quest.claimed then
             if
-                Quests.Claim(p, q.id, function(pl, rw)
-                    return HOOKS.GrantReward(pl, rw) == true
+                QuestService.Claim(player, quest.id, function(grantPlayer, reward)
+                    return HOOKS.GrantReward(grantPlayer, reward) == true
                 end)
             then
-                n += 1
+                claimedCount += 1
             end
         end
     end
-    return n > 0, n > 0 and ("Claimed %d rewards"):format(n) or "Nothing to claim"
+    return claimedCount > 0, claimedCount > 0 and ("Claimed %d rewards"):format(claimedCount) or "Nothing to claim"
 end
-ACT.UpgradeTemple = function(p)
+-- The upgrade actions below fire the plot's request BindableEvent, wait 0.4 s and then report whether the
+-- upgrade visibly started. CanAfford here is only a pre-check for a nicer message; the plot scripts charge.
+ACTIONS.UpgradeTemple = function(player)
     local plot
-    for _, pl in workspace.Plots:GetChildren() do
-        if pl:GetAttribute("OwnerUserId") == p.UserId then
-            plot = pl
+    for _, candidate in workspace.Plots:GetChildren() do
+        if candidate:GetAttribute("OwnerUserId") == player.UserId then
+            plot = candidate
         end
     end
     if not plot then
         return false, "You don't have a plot yet"
     end
-    local Slots = require(game.ServerScriptService.TempleSlotUnlocks)
-    if not Slots.CanUpgrade(plot) then
-        return false, "Buy all " .. Slots.Capacity(plot) .. " current slots before upgrading your temple"
+    local TempleSlotUnlocks = require(game.ServerScriptService.TempleSlotUnlocks)
+    if not TempleSlotUnlocks.CanUpgrade(plot) then
+        return false, "Buy all " .. TempleSlotUnlocks.Capacity(plot) .. " current slots before upgrading your temple"
     end
     local before = plot:GetAttribute("TempleLevel") or 1
     if before >= 3 then
@@ -205,67 +228,68 @@ ACT.UpgradeTemple = function(p)
         return false, "Upgrade already in progress"
     end
     do
-        local UP = require(game.ReplicatedStorage.UpgradePrices)
-        if not UP.CanAfford(p, UP.Temple[before + 1]) then
+        local UpgradePrices = require(game.ReplicatedStorage.UpgradePrices)
+        if not UpgradePrices.CanAfford(player, UpgradePrices.Temple[before + 1]) then
             return false, "Not enough money"
         end
     end
-    local req = plot:FindFirstChild("RequestUpgrade")
-    if not req then
+    local requestEvent = plot:FindFirstChild("RequestUpgrade")
+    if not requestEvent then
         return false, "Upgrade unavailable"
     end
-    req:Fire(p) -- PlotManager checks ownership + distance
+    requestEvent:Fire(player) -- PlotManager checks ownership + distance
     task.wait(0.4)
     if plot:GetAttribute("TempleBuilding") or (plot:GetAttribute("TempleLevel") or 1) > before then
         return true, "Upgrading temple!"
     end
     return false, "Go to your plot to upgrade"
 end
-ACT.UpgradeIncubator = function(p, a)
+ACTIONS.UpgradeIncubator = function(player, args)
     local plot
-    for _, pl in workspace.Plots:GetChildren() do
-        if pl:GetAttribute("OwnerUserId") == p.UserId then
-            plot = pl
+    for _, candidate in workspace.Plots:GetChildren() do
+        if candidate:GetAttribute("OwnerUserId") == player.UserId then
+            plot = candidate
         end
     end
     if not plot then
         return false, "You don't have a plot yet"
     end
-    local i = tonumber(a.index)
-    local c = i and plot.Chambers:FindFirstChild("Chamber" .. math.floor(i))
-    if not c then
+    local chamberIndex = tonumber(args.index)
+    local chamber = chamberIndex and plot.Chambers:FindFirstChild("Chamber" .. math.floor(chamberIndex))
+    if not chamber then
         return false, "No incubator there"
     end
-    local lv = c:GetAttribute("UpgradeLevel") or 1
-    if lv >= 3 then
+    local level = chamber:GetAttribute("UpgradeLevel") or 1
+    if level >= 3 then
         return false, "Incubator is max level"
     end
-    if (c:GetAttribute("Status") or "Ready") ~= "Ready" then
+    if (chamber:GetAttribute("Status") or "Ready") ~= "Ready" then
         return false, "Wait until the incubator is empty"
     end
     do
-        local UP = require(game.ReplicatedStorage.UpgradePrices)
-        if not UP.CanAfford(p, UP.IncubatorLevel[lv + 1]) then
+        local UpgradePrices = require(game.ReplicatedStorage.UpgradePrices)
+        if not UpgradePrices.CanAfford(player, UpgradePrices.IncubatorLevel[level + 1]) then
             return false, "Not enough money"
         end
     end
-    local req = c:FindFirstChild("RequestIncubatorUpgrade")
-    if not req then
+    local requestEvent = chamber:FindFirstChild("RequestIncubatorUpgrade")
+    if not requestEvent then
         return false, "Upgrade unavailable"
     end
-    req:Fire(p) -- PlotChambers checks ownership + distance
+    requestEvent:Fire(player) -- PlotChambers checks ownership + distance
     task.wait(0.4)
-    local now = plot.Chambers:FindFirstChild(c.Name)
-    if (now and now:GetAttribute("UnderConstruction")) or now ~= c then
-        return true, "Upgrading incubator " .. i .. "!"
+    -- the upgraded chamber replaces the old instance, so a different instance also means "started"
+    local currentChamber = plot.Chambers:FindFirstChild(chamber.Name)
+    if (currentChamber and currentChamber:GetAttribute("UnderConstruction")) or currentChamber ~= chamber then
+        return true, "Upgrading incubator " .. chamberIndex .. "!"
     end
     return false, "Go to your plot to upgrade"
 end
-ACT.AddIncubator = function(p)
+ACTIONS.AddIncubator = function(player)
     local plot
-    for _, pl in workspace.Plots:GetChildren() do
-        if pl:GetAttribute("OwnerUserId") == p.UserId then
-            plot = pl
+    for _, candidate in workspace.Plots:GetChildren() do
+        if candidate:GetAttribute("OwnerUserId") == player.UserId then
+            plot = candidate
         end
     end
     if not plot then
@@ -276,113 +300,114 @@ ACT.AddIncubator = function(p)
         return false, "You have all 3 incubators"
     end
     do
-        local UP = require(game.ReplicatedStorage.UpgradePrices)
-        if not UP.CanAfford(p, UP.AddIncubator[before + 1]) then
+        local UpgradePrices = require(game.ReplicatedStorage.UpgradePrices)
+        if not UpgradePrices.CanAfford(player, UpgradePrices.AddIncubator[before + 1]) then
             return false, "Not enough money"
         end
     end
-    local req = plot:FindFirstChild("RequestChamberUpgrade")
-    if not req then
+    local requestEvent = plot:FindFirstChild("RequestChamberUpgrade")
+    if not requestEvent then
         return false, "Unavailable"
     end
-    req:Fire(p)
+    requestEvent:Fire(player)
     task.wait(0.4)
     if plot:GetAttribute("ChamberCount") ~= before or #plot.Chambers:GetChildren() > before then
         return true, "Building a new incubator!"
     end
     return false, "Go to your plot to add one"
 end
-ACT.UnlockSlot = function(p)
+-- Unlike the upgrades, slot unlocks are charged right here (TempleSlotUnlocks.Prices, fallback 250000).
+ACTIONS.UnlockSlot = function(player)
     local plot
-    for _, pl in workspace.Plots:GetChildren() do
-        if pl:GetAttribute("OwnerUserId") == p.UserId then
-            plot = pl
+    for _, candidate in workspace.Plots:GetChildren() do
+        if candidate:GetAttribute("OwnerUserId") == player.UserId then
+            plot = candidate
         end
     end
     if not plot then
         return false, "You don't have a plot yet"
     end
-    local root = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-    if not root or (root.Position - plot.TempleAnchor.Position).Magnitude > 80 then
+    local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not rootPart or (rootPart.Position - plot.TempleAnchor.Position).Magnitude > 80 then
         return false, "Go to your plot to unlock"
     end
-    local Slots = require(game.ServerScriptService.TempleSlotUnlocks)
+    local TempleSlotUnlocks = require(game.ServerScriptService.TempleSlotUnlocks)
     -- next locked slot in order
-    local nextSlot, i
-    for n = 1, Slots.Capacity(plot) do
-        local s = plot.Slots:FindFirstChild(string.format("Slot%02d", n))
-        if s and not s:GetAttribute("Unlocked") then
-            nextSlot, i = s, n
+    local nextSlot, slotIndex
+    for slotNumber = 1, TempleSlotUnlocks.Capacity(plot) do
+        local slot = plot.Slots:FindFirstChild(string.format("Slot%02d", slotNumber))
+        if slot and not slot:GetAttribute("Unlocked") then
+            nextSlot, slotIndex = slot, slotNumber
             break
         end
     end
     if not nextSlot then
         return false, "All slots unlocked!"
     end
-    local cash = p:FindFirstChild("leaderstats") and p.leaderstats:FindFirstChild("Cash")
-    local price = Slots.Prices[i] or 250000
+    local cash = player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Cash")
+    local price = TempleSlotUnlocks.Prices[slotIndex] or 250000
     if not cash or cash.Value < price then
         return false, "Not enough cash"
     end
     cash.Value -= price
     nextSlot:SetAttribute("Unlocked", true)
-    Slots.Refresh(plot)
-    return true, "Slot " .. i .. " unlocked!"
+    TempleSlotUnlocks.Refresh(plot)
+    return true, "Slot " .. slotIndex .. " unlocked!"
 end
-ACT.Buy = function(p, a)
-    local e
-    for _, x in Config.Shop do
-        if x.id == a.id then
-            e = x
+ACTIONS.Buy = function(player, args)
+    local entry
+    for _, candidate in Config.Shop do
+        if candidate.id == args.id then
+            entry = candidate
         end
     end
-    if not e then
+    if not entry then
         return false, "Unknown item"
     end
-    if e.endsAt and os.time() > e.endsAt then
+    if entry.endsAt and os.time() > entry.endsAt then
         return false, "This item has ended"
     end
-    if e.kind == "cash" then
-        return HOOKS.BuyCash(p, e)
+    if entry.kind == "cash" then
+        return HOOKS.BuyCash(player, entry)
         --[[ Legacy spend-then-grant path replaced with atomic prepared delivery.
 		local ok, why = HOOKS.SpendCash(p, e.price); if not ok then return false, why or "Not enough cash" end
 		local g, gwhy = HOOKS.GrantShopItem(p, e)
 		if not g then warn("[GameMenu] grant failed after spend; refund in your SpendCash/Grant code:", gwhy); return false, gwhy end
 		return true, "Bought " .. e.name ]]
-    elseif e.productId then
-        MarketplaceService:PromptProductPurchase(p, e.productId)
+    elseif entry.productId then
+        MarketplaceService:PromptProductPurchase(player, entry.productId)
         return true, "Opening purchase"
-    elseif e.gamePassId then
-        MarketplaceService:PromptGamePassPurchase(p, e.gamePassId)
+    elseif entry.gamePassId then
+        MarketplaceService:PromptGamePassPurchase(player, entry.gamePassId)
         return true, "Opening purchase"
     end
     return false, "Coming soon"
 end
 
-Action.OnServerInvoke = function(p, name, args)
-    if type(name) ~= "string" or not ACT[name] then
+Action.OnServerInvoke = function(player, name, args)
+    if type(name) ~= "string" or not ACTIONS[name] then
         return false, "Unknown action"
     end
-    if busy[p] or os.clock() - (requestAt[p] or -100) < 0.2 then
+    if busy[player] or os.clock() - (requestAt[player] or -100) < 0.2 then
         return false, "Please wait a moment."
     end
-    requestAt[p] = os.clock()
-    busy[p] = true
-    local ok, res, msg = pcall(ACT[name], p, type(args) == "table" and args or {})
-    busy[p] = nil
+    requestAt[player] = os.clock()
+    busy[player] = true
+    local ok, result, message = pcall(ACTIONS[name], player, type(args) == "table" and args or {})
+    busy[player] = nil
     if not ok then
-        warn("[GameMenu]", name, res)
+        warn("[GameMenu]", name, result)
         return false, "Server error"
     end
-    if res then
-        push(p)
+    if result then
+        pushState(player)
     end
-    return res, msg
+    return result, message
 end
-Players.PlayerRemoving:Connect(function(p)
-    busy[p] = nil
-    requestAt[p] = nil
-    readAt[p] = nil
+Players.PlayerRemoving:Connect(function(player)
+    busy[player] = nil
+    requestAt[player] = nil
+    readAt[player] = nil
 end)
 
 --[[ Robux receipts: Roblox allows ONE ProcessReceipt per game. If you already have one, add a branch there that calls

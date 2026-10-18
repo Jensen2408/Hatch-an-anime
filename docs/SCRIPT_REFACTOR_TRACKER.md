@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 90 |
+| Pending | 78 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 94 |
+| Refactored | 106 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -167,18 +167,18 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Plot/MoneyStandClient.client.luau` | LocalScript | 157 | 227 | Pending | — | — |
-| `client/UI/Controllers/LeaveEarningsOverlay.client.luau` | LocalScript | 85 | 205 | Pending | — | — |
-| `client/UI/Controllers/OfflineEarningsUI.client.luau` | LocalScript | 160 | 479 | Pending | — | — |
-| `client/UI/Screens/MoneyDisplay/MoneyLogic.client.luau` | LocalScript | 162 | 213 | Pending | — | — |
-| `server/Economy/MoneyStandOwnership.server.luau` | Script | 55 | 101 | Pending | — | — |
-| `server/Economy/MoneyStandServer.server.luau` | Script | 111 | 128 | Pending | — | — |
-| `server/Economy/UpgradeEffects.luau` | ModuleScript | 121 | 197 | Pending | — | — |
-| `server/Services/GameMenu/GameAdapter.luau` | ModuleScript | 187 | 392 | Pending | — | — |
-| `server/Services/GameMenu/GameMenuServer.server.luau` | Script | 182 | 389 | Pending | — | — |
-| `server/Services/GameMenu/QuestService.luau` | ModuleScript | 76 | 133 | Pending | — | — |
-| `server/Shops/ShopService.server.luau` | Script | 262 | 507 | Pending | — | — |
-| `server/Storage/MoneyStandBuilder.luau` | ModuleScript | 81 | 139 | Pending | — | — |
+| `client/Plot/MoneyStandClient.client.luau` | LocalScript | 157 | 236 | Refactored | SAME | _player/_shine (documented as unused), stand/targetCFrame/chip/angle/elapsed etc., GOLD_COLOR, formatMoney, header remote note, stands shape comment |
+| `client/UI/Controllers/LeaveEarningsOverlay.client.luau` | LocalScript | 85 | 213 | Refactored | SAME | TweenService, FONT/BLACK/WHITE/*_IMAGE, titleLabel/rateLabel/capLabel + strokes, fadeOverlay/spawnFallingCoin/show/hideOverlay, header note on hard-coded rate |
+| `client/UI/Controllers/OfflineEarningsUI.client.luau` | LocalScript | 160 | 495 | Refactored | SAME | Service names, ShopConfig/shopRemote, BLACK/WHITE/*_IMAGE, create/makeLabel/makeButton/rgb, window/header/amountLabel..., header on Offline2x flow |
+| `client/UI/Screens/MoneyDisplay/MoneyLogic.client.luau` | LocalScript | 162 | 221 | Refactored | SAME | baseScale, playTween params, formatCash/Full/Short, screenGui/moneyFrame/amountLabel, label/stroke, shownCash/targetCash, header + comments |
+| `server/Economy/MoneyStandOwnership.server.luau` | Script | 55 | 135 | Refactored | SAME | Header (attribute inputs/outputs, templates path, if_same_then_else note), CollectionService, GHOST_COLOR, buildLockedGhost/setupPlot, descriptive locals, comments |
+| `server/Economy/MoneyStandServer.server.luau` | Script | 111 | 145 | Refactored | SAME | Header: server-only collection authority, MoneyCollected payload, side effects. Renames (awardCurrency, isInPlateZone, addStand, standState, isOnPlate...), edge-trigger comment |
+| `server/Economy/UpgradeEffects.luau` | ModuleScript | 121 | 239 | Refactored | SAME | Header with opts contract + replicated attributes, CollectionService, UpgradeEffects table name, partSignature, record/part/instance renames, _riseDistance, comments |
+| `server/Services/GameMenu/GameAdapter.luau` | ModuleScript | 187 | 443 | Refactored | SAME | Header with full public API, service names, GameAdapter/QuestService/InventoryService names, _EggCharacterRewards/_err/_tool, descriptive renames, comments |
+| `server/Services/GameMenu/GameMenuServer.server.luau` | Script | 182 | 414 | Refactored | SAME | Header (authority, GetState sections, Action names, Changed), gameMenuFolder/rootPart fix shadowing, ACTIONS, descriptive renames, comments on upgrade request flow |
+| `server/Services/GameMenu/QuestService.luau` | ModuleScript | 76 | 146 | Refactored | SAME | QuestService/questData/getQuestRow renames, _player/_questData, header with API + persistence override note |
+| `server/Shops/ShopService.server.luau` | Script | 262 | 545 | Refactored | SAME | Renames only (player, playerData, savePlayer, refreshMultipliers, receiptInfo...), DAY_SECONDS, CROWN_IMAGE, header with authority + remote contract + receipt flow, state shape comments |
+| `server/Storage/MoneyStandBuilder.luau` | ModuleScript | 81 | 146 | Refactored | SAME | COLORS, STUD_TEXTURE, makePart/options/newPart, screenGui/background/amountStroke, header notes (contract names, no active requirer) |
 
 ## Batch 12 — Mutations, effects and nighttime
 
@@ -1210,111 +1210,111 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Plot/MoneyStandClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 11 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 11 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.MoneyStandClient  (LocalScript)
 - **Dependencies:** InventoryFormat, UISound
 - **Public functions:** —
 - **Events:** Connect×7, OnClientEvent×1, RunService×1
-- **Readability problems:** 16 dense one-line statements; 1 lines >160 chars; 7 one-letter locals
+- **Readability problems:** Unused player and shine; st/cf/g/tw/a/bb/t/p/k/v/c/x/m names; GOLD
 
 ### `client/UI/Controllers/LeaveEarningsOverlay.client.luau`
 
-- **Type:** LocalScript · **Batch:** 11 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 11 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** LeaveEarningsOverlay (LocalScript): when the Roblox menu (Esc) opens, show behind it that the temple keeps earning offline. Offline rate matches PlayerDataService: half of live income, for up to 8 hou
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 8 dense one-line statements; 10 lines >160 chars; 7 one-letter locals
+- **Readability problems:** TS alias; F/K/W; t1-t3/s1-s3/g1/bg/top/txt/conn/acc/sz/img/dur names
 
 ### `client/UI/Controllers/OfflineEarningsUI.client.luau`
 
-- **Type:** LocalScript · **Batch:** 11 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 11 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** OfflineEarningsUI (LocalScript): "while you were away" window from Figma "Offline Earnings v3". Reads player attributes set by PlayerDataService: OfflineEarnings (cash put on the stands), OfflineSecon
 - **Dependencies:** ShopConfig, UISound
 - **Public functions:** —
 - **Events:** Connect×7
-- **Readability problems:** 11 dense one-line statements; 26 lines >160 chars; 9 one-letter locals
+- **Readability problems:** TS/RS/SC aliases; K/W/c3/new/lbl/amt/win/hd/dbl/fl/b/h/g/sc names; remote flow undocumented
 
 ### `client/UI/Screens/MoneyDisplay/MoneyLogic.client.luau`
 
-- **Type:** LocalScript · **Batch:** 11 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 11 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Cash display: panel + coin art from ReplicatedStorage.GameMenuImages (CashPanel / CashCoin), smooth count, +$ popups, coin bounce, shine sweep, income per second.
 - **Dependencies:** InventoryFormat, UISound
 - **Public functions:** —
 - **Events:** Connect×7, RunService×2
-- **Readability problems:** 8 dense one-line statements; 1 lines >160 chars; 5 one-letter locals
+- **Readability problems:** RS alias; BASE_SCALE is reassigned (not a constant); tw(o,t,p,s,d), fmt/full/short, l/st/v/c/m/t0 names
 
 ### `server/Economy/MoneyStandOwnership.server.luau`
 
-- **Type:** Script · **Batch:** 11 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 11 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** locked (but buyable-floor) slots show a grey, see-through ghost of the podium
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×4
-- **Readability problems:** 7 dense one-line statements; 2 lines >160 chars; 1 one-letter locals
+- **Readability problems:** No header; CS alias; one-letter names (g, d); vague names (templates, ghostOf, setup, folder, owner)
 
 ### `server/Economy/MoneyStandServer.server.luau`
 
-- **Type:** Script · **Batch:** 11 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 11 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ServerScriptService.MoneyStandServer  (Script)
 - **Dependencies:** QuestService
 - **Public functions:** —
 - **Events:** Connect×2
-- **Readability problems:** 5 dense one-line statements
+- **Readability problems:** Header lacked network authority / remote contract; cryptic locals (ls, rel, hx, hz, s, hrp, hum, on, m); generic names add/remove/remote
 
 ### `server/Economy/UpgradeEffects.luau`
 
-- **Type:** ModuleScript · **Batch:** 11 · **Priority:** High · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 11 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** FX.Play
 - **Events:** —
-- **Readability problems:** 14 dense one-line statements; 2 one-letter locals
+- **Readability problems:** No header/API doc; FX/Collection aliases; one-letter names (p, k, r, v, t, a, b); unused riseDistance; dead `if false` retention path undocumented
 
 ### `server/Services/GameMenu/GameAdapter.luau`
 
-- **Type:** ModuleScript · **Batch:** 11 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 11 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Game Menu adapters: use existing server inventory/economy, never client stats.
 - **Dependencies:** CharacterCatalog, EggCharacterRewards, InventoryService, QuestService, TempleSlotUnlocks
 - **Public functions:** Adapter.BuyCash, Adapter.EquipBest, Adapter.ExportDiscovered, Adapter.GetCash, Adapter.GetCatalog, Adapter.GetDiscovered, Adapter.GetOwnedEggs, Adapter.GetPlot, Adapter.GrantReward, Adapter.GrantShopItem, Adapter.ImportDiscovered, Adapter.Init, Adapter.PlaceCharacters, Adapter.SpendCash, Adapter.StoreCharacters
 - **Events:** Connect×13, PlayerAdded×1, PlayerRemoving×1
-- **Readability problems:** 36 dense one-line statements; 9 lines >160 chars; 6 one-letter locals
+- **Readability problems:** RS/SS/SSS/Http/Catalog aliases; p/e/it/s/n/r/c/d names; unused Rewards/err/tool; no API doc
 
 ### `server/Services/GameMenu/GameMenuServer.server.luau`
 
-- **Type:** Script · **Batch:** 11 · **Priority:** Medium · **Status:** Pending
+- **Type:** Script · **Batch:** 11 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ServerScriptService.GameMenu.GameMenuServer  (Script, server)
 - **Dependencies:** Config, GameAdapter, QuestService, TempleSlotUnlocks, UpgradePrices
 - **Public functions:** —
 - **Events:** Connect×2, OnServerInvoke×2, PlayerRemoving×1
-- **Readability problems:** 60 dense one-line statements; 2 lines >160 chars; 6 one-letter locals
+- **Readability problems:** RS alias; shadowed `root`; p/a/e/n/q/c/i/lv/req/UP/x names; ACT constant name; remote payloads undocumented
 
 ### `server/Services/GameMenu/QuestService.luau`
 
-- **Type:** ModuleScript · **Batch:** 11 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 11 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ServerScriptService.GameMenu.QuestService  (ModuleScript, server)
 - **Dependencies:** Config, QuestService
 - **Public functions:** Q.Claim, Q.Increment, Q.Snapshot
 - **Events:** Connect×2, PlayerAdded×1, PlayerRemoving×1
-- **Readability problems:** 14 dense one-line statements; 1 lines >160 chars; 4 one-letter locals
+- **Readability problems:** Q/data/row/r/d/q/x names; unused params in Persistence stubs; header did not mention PlayerDataService override
 
 ### `server/Shops/ShopService.server.luau`
 
-- **Type:** Script · **Batch:** 11 · **Priority:** High · **Status:** Pending
+- **Type:** Script · **Batch:** 11 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** ServerScriptService.ShopService
 - **Dependencies:** CharacterCatalog, ShopConfig
 - **Public functions:** —
 - **Events:** Connect×4, OnServerInvoke×1, PlayerAdded×1, PlayerRemoving×1
-- **Readability problems:** 59 dense one-line statements; 4 lines >160 chars; 7 one-letter locals
+- **Readability problems:** MPS/DSS/RS aliases; p/d/r/t/lv/st/bb/img/sn/n names everywhere in purchase code; remote contract and receipt flow undocumented; unused `id`
 
 ### `server/Storage/MoneyStandBuilder.luau`
 
-- **Type:** ModuleScript · **Batch:** 11 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 11 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ServerStorage.MoneyStandBuilder  (ModuleScript)
 - **Dependencies:** MoneyStandBuilder
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 15 dense one-line statements; 3 lines >160 chars; 3 one-letter locals
+- **Readability problems:** `C` palette; StudTexture constant casing; p/o/t/f/sg/bg/as names
 
 ### `client/Effects/AuraFlipbookPump.client.luau`
 

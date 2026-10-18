@@ -1,170 +1,178 @@
 -- Cash display: panel + coin art from ReplicatedStorage.GameMenuImages (CashPanel / CashCoin),
 -- smooth count, +$ popups, coin bounce, shine sweep, income per second.
+-- LocalScript inside the MoneyDisplay ScreenGui. Display only: reads leaderstats.Cash and the IncomePerSecond
+-- attributes of the local player's PlacedItems (x workspace OwnerIncomeMultiplier). No remotes.
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
-local RS = game:GetService("ReplicatedStorage")
-local UISound = require(RS:WaitForChild("UISound"))
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UISound = require(ReplicatedStorage:WaitForChild("UISound"))
 local player = Players.LocalPlayer
-local gui = script.Parent
-local money = gui.Money
-local face = money.Face
-local amount = face.Amount
-local sweep = face.Shine.Sweep
-local coinBox = money.CoinBox
+local screenGui = script.Parent
+local moneyFrame = screenGui.Money
+local face = moneyFrame.Face
+local amountLabel = face.Amount
+local shineSweep = face.Shine.Sweep
+local coinBox = moneyFrame.CoinBox
 local coinScale = coinBox.UIScale
-local panelScale = money.UIScale
-local BASE_SCALE = 0.68
-panelScale.Scale = BASE_SCALE
-gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
+local panelScale = moneyFrame.UIScale
+local baseScale = 0.68 -- panel scale at rest; layoutMoney switches it to 0.46 on compact screens
+panelScale.Scale = baseScale
+screenGui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
 local function layoutMoney()
-    local v = gui.AbsoluteSize
-    if v.X <= 0 or v.Y <= 0 then
+    local viewportSize = screenGui.AbsoluteSize
+    if viewportSize.X <= 0 or viewportSize.Y <= 0 then
         return
     end
-    local compact = math.min(v.X, v.Y) < 600
-    gui.ScreenInsets = compact and Enum.ScreenInsets.CoreUISafeInsets or Enum.ScreenInsets.None
-    BASE_SCALE = compact and 0.46 or 0.68
-    panelScale.Scale = BASE_SCALE
-    local portrait = compact and v.X < v.Y
-    money.AnchorPoint = Vector2.new(compact and 1 or 0.5, 0)
-    money.Position = compact and UDim2.new(1, portrait and -10 or -184, 0, 0)
-        or UDim2.new(0.5, 0, 0, 64 - money.Size.Y.Offset * (1 - BASE_SCALE) / 2)
+    local compact = math.min(viewportSize.X, viewportSize.Y) < 600
+    screenGui.ScreenInsets = compact and Enum.ScreenInsets.CoreUISafeInsets or Enum.ScreenInsets.None
+    baseScale = compact and 0.46 or 0.68
+    panelScale.Scale = baseScale
+    local portrait = compact and viewportSize.X < viewportSize.Y
+    moneyFrame.AnchorPoint = Vector2.new(compact and 1 or 0.5, 0)
+    moneyFrame.Position = compact and UDim2.new(1, portrait and -10 or -184, 0, 0)
+        or UDim2.new(0.5, 0, 0, 64 - moneyFrame.Size.Y.Offset * (1 - baseScale) / 2)
 end
 
-gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutMoney)
-money:GetPropertyChangedSignal("Size"):Connect(layoutMoney)
+screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutMoney)
+moneyFrame:GetPropertyChangedSignal("Size"):Connect(layoutMoney)
 layoutMoney()
 local incomeText = face.Income.Text
-local pops = money.Popups
+local popupsFrame = moneyFrame.Popups
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json", Enum.FontWeight.Bold)
 local INK = Color3.fromRGB(40, 24, 18)
 
-local NumberFormat = require(RS:WaitForChild("CharacterInventory"):WaitForChild("InventoryFormat"))
-local function short(n)
-    return NumberFormat.Short(n)
+local NumberFormat = require(ReplicatedStorage:WaitForChild("CharacterInventory"):WaitForChild("InventoryFormat"))
+local function formatShort(value)
+    return NumberFormat.Short(value)
 end
-local function full(n)
-    local s = tostring(math.floor(n)):reverse():gsub("(%d%d%d)", "%1,"):reverse()
-    return (s:gsub("^,", ""))
+local function formatFull(value)
+    local withCommas = tostring(math.floor(value)):reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    return (withCommas:gsub("^,", ""))
 end
-local function fmt(n)
-    return "$" .. (n < 1e5 and full(n) or short(n))
+-- Below 100k the full number with thousands separators, above that the short form (InventoryFormat.Short).
+local function formatCash(value)
+    return "$" .. (value < 1e5 and formatFull(value) or formatShort(value))
 end
-local function tw(o, t, p, s, d)
-    local x = TweenService:Create(o, TweenInfo.new(t, s or Enum.EasingStyle.Quad, d or Enum.EasingDirection.Out), p)
-    x:Play()
-    return x
+local function playTween(instance, duration, goals, easingStyle, easingDirection)
+    local tween = TweenService:Create(
+        instance,
+        TweenInfo.new(duration, easingStyle or Enum.EasingStyle.Quad, easingDirection or Enum.EasingDirection.Out),
+        goals
+    )
+    tween:Play()
+    return tween
 end
 
-local images = RS:WaitForChild("GameMenuImages", 10)
+local gameMenuImages = ReplicatedStorage:WaitForChild("GameMenuImages", 10)
 local function setArt()
-    if not images then
+    if not gameMenuImages then
         return
     end
-    money.Image = images:GetAttribute("CashPanel") or ""
-    local c = images:GetAttribute("CashCoin") or ""
-    coinBox.Coin.Image = c
-    coinBox.CoinShadow.Image = c
+    moneyFrame.Image = gameMenuImages:GetAttribute("CashPanel") or ""
+    local coinImage = gameMenuImages:GetAttribute("CashCoin") or ""
+    coinBox.Coin.Image = coinImage
+    coinBox.CoinShadow.Image = coinImage
 end
-if images then
-    images:GetAttributeChangedSignal("CashPanel"):Connect(setArt)
-    images:GetAttributeChangedSignal("CashCoin"):Connect(setArt)
+if gameMenuImages then
+    gameMenuImages:GetAttributeChangedSignal("CashPanel"):Connect(setArt)
+    gameMenuImages:GetAttributeChangedSignal("CashCoin"):Connect(setArt)
 end
 setArt()
 
 local function shine(playSound)
-    sweep.Offset = Vector2.new(-1.5, 0)
-    tw(sweep, 0.7, { Offset = Vector2.new(1.5, 0) }, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+    shineSweep.Offset = Vector2.new(-1.5, 0)
+    playTween(shineSweep, 0.7, { Offset = Vector2.new(1.5, 0) }, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
     if playSound then
         UISound.Play("Shine", nil, 0.38)
     end
 end
 
 local function popup(delta)
-    local l = Instance.new("TextLabel")
-    l.BackgroundTransparency = 1
-    l.FontFace = FONT
-    l.TextSize = 26
-    l.ZIndex = 21
-    l.Text = (delta > 0 and "+" or "-") .. fmt(math.abs(delta))
-    l.TextColor3 = delta > 0 and Color3.fromRGB(120, 245, 110) or Color3.fromRGB(255, 95, 80)
-    l.AutomaticSize = Enum.AutomaticSize.XY
-    l.Size = UDim2.new()
-    l.AnchorPoint = Vector2.new(1, 1)
-    l.Position = UDim2.new(1, math.random(-10, 6), 0, 8)
-    local st = Instance.new("UIStroke")
-    st.Thickness = 3
-    st.Color = delta > 0 and Color3.fromRGB(20, 70, 25) or INK
-    st.Parent = l
-    l.Parent = pops
-    tw(l, 0.9, { Position = l.Position - UDim2.fromOffset(0, 44) })
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.FontFace = FONT
+    label.TextSize = 26
+    label.ZIndex = 21
+    label.Text = (delta > 0 and "+" or "-") .. formatCash(math.abs(delta))
+    label.TextColor3 = delta > 0 and Color3.fromRGB(120, 245, 110) or Color3.fromRGB(255, 95, 80)
+    label.AutomaticSize = Enum.AutomaticSize.XY
+    label.Size = UDim2.new()
+    label.AnchorPoint = Vector2.new(1, 1)
+    label.Position = UDim2.new(1, math.random(-10, 6), 0, 8)
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 3
+    stroke.Color = delta > 0 and Color3.fromRGB(20, 70, 25) or INK
+    stroke.Parent = label
+    label.Parent = popupsFrame
+    playTween(label, 0.9, { Position = label.Position - UDim2.fromOffset(0, 44) })
     task.delay(0.5, function()
-        tw(l, 0.4, { TextTransparency = 1 })
-        tw(st, 0.4, { Transparency = 1 })
+        playTween(label, 0.4, { TextTransparency = 1 })
+        playTween(stroke, 0.4, { Transparency = 1 })
     end)
     task.delay(1, function()
-        l:Destroy()
+        label:Destroy()
     end)
 end
 
-local shown, target = 0, 0
-local lastPop, pending = 0, 0
+-- shownCash eases toward targetCash every frame; popups are throttled to one per 0.2 s (pendingDelta accumulates).
+local shownCash, targetCash = 0, 0
+local lastPopupAt, pendingDelta = 0, 0
 local startupTime = os.clock()
 local preloadChingPlayed = false
 task.spawn(function()
     local cash = player:WaitForChild("leaderstats"):WaitForChild("Cash")
-    shown, target = cash.Value, cash.Value
-    amount.Text = fmt(shown)
-    cash.Changed:Connect(function(v)
-        local delta = v - target
-        target = v
+    shownCash, targetCash = cash.Value, cash.Value
+    amountLabel.Text = formatCash(shownCash)
+    cash.Changed:Connect(function(newValue)
+        local delta = newValue - targetCash
+        targetCash = newValue
         if delta == 0 then
             return
         end
-        pending += delta
+        pendingDelta += delta
 
         -- During startup / preload, ensure exactly ONE cash sound plays
         -- the join sequence (loading, welcome back, offline cash) counts as startup too, so only the first ching plays
         local inPreload = (os.clock() - startupTime < 20) or (player:GetAttribute("StartupSessionReady") ~= true)
 
-        if os.clock() - lastPop > 0.20 then
-            lastPop = os.clock()
-            popup(pending)
-            if pending > 0 then
+        if os.clock() - lastPopupAt > 0.20 then
+            lastPopupAt = os.clock()
+            popup(pendingDelta)
+            if pendingDelta > 0 then
                 if inPreload then
                     if false and not preloadChingPlayed then -- startup is silent; the Shine already plays on join
                         preloadChingPlayed = true
                         UISound.Play("CoinChing", 1.0, 0.80)
                     end
                 else
-                    if pending >= 500 then
+                    if pendingDelta >= 500 then
                         UISound.Play("CoinChing", 1.0, 0.80)
                     else
                         UISound.PlayCoinPickup()
                     end
                 end
             end
-            pending = 0
+            pendingDelta = 0
         end
         coinScale.Scale = 1.18
-        tw(coinScale, 0.35, { Scale = 1 }, Enum.EasingStyle.Back)
-        panelScale.Scale = BASE_SCALE * (delta > 0 and 1.04 or 0.97)
-        tw(panelScale, 0.3, { Scale = BASE_SCALE }, Enum.EasingStyle.Back)
-        if not inPreload and delta > 0 and delta >= math.max(1000, target * 0.1) then
+        playTween(coinScale, 0.35, { Scale = 1 }, Enum.EasingStyle.Back)
+        panelScale.Scale = baseScale * (delta > 0 and 1.04 or 0.97)
+        playTween(panelScale, 0.3, { Scale = baseScale }, Enum.EasingStyle.Back)
+        if not inPreload and delta > 0 and delta >= math.max(1000, targetCash * 0.1) then
             shine(true)
         end
     end)
 end)
 
-local function income()
+local function getIncomePerSecond()
     local total = 0
     for _, plot in workspace:WaitForChild("Plots"):GetChildren() do
         if plot:GetAttribute("OwnerUserId") == player.UserId then
-            local placed = plot:FindFirstChild("PlacedItems")
-            if placed then
-                for _, m in placed:GetChildren() do
-                    total += m:GetAttribute("IncomePerSecond") or 0
+            local placedItems = plot:FindFirstChild("PlacedItems")
+            if placedItems then
+                for _, item in placedItems:GetChildren() do
+                    total += item:GetAttribute("IncomePerSecond") or 0
                 end
             end
         end
@@ -173,7 +181,7 @@ local function income()
 end
 task.spawn(function()
     while true do
-        incomeText.Text = "+" .. fmt(income()) .. "/sec"
+        incomeText.Text = "+" .. formatCash(getIncomePerSecond()) .. "/sec"
         task.wait(1)
     end
 end)
@@ -184,15 +192,15 @@ task.spawn(function()
     end
 end)
 
-local t0 = os.clock()
+local bobStartTime = os.clock()
 RunService.RenderStepped:Connect(function(dt)
-    coinBox.Rotation = math.sin((os.clock() - t0) * 1.6) * 4
-    if shown ~= target then
-        shown += (target - shown) * math.min(1, dt * 10)
-        if math.abs(target - shown) < 1 then
-            shown = target
+    coinBox.Rotation = math.sin((os.clock() - bobStartTime) * 1.6) * 4
+    if shownCash ~= targetCash then
+        shownCash += (targetCash - shownCash) * math.min(1, dt * 10)
+        if math.abs(targetCash - shownCash) < 1 then
+            shownCash = targetCash
         end
-        amount.Text = fmt(math.floor(shown + 0.5))
+        amountLabel.Text = formatCash(math.floor(shownCash + 0.5))
     end
 end)
 
@@ -202,7 +210,7 @@ local pillGlow = face:FindFirstChild("IncomeGlow")
 task.spawn(function()
     while true do
         pillSweep.Offset = Vector2.new(-1.5, 0)
-        tw(pillSweep, 0.9, { Offset = Vector2.new(1.5, 0) }, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+        playTween(pillSweep, 0.9, { Offset = Vector2.new(1.5, 0) }, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
         task.wait(2.6)
     end
 end)

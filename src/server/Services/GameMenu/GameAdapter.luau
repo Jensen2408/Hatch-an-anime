@@ -1,135 +1,169 @@
--- Game Menu adapters: use existing server inventory/economy, never client stats.
+--[[ ServerScriptService.GameMenu.GameAdapter  (ModuleScript, server)
+Game Menu adapters: use existing server inventory/economy, never client stats.
+GameMenuServer calls these; this module owns no remotes itself.
+
+Network authority: every value returned here is read from server state (InventoryService, leaderstats,
+Backpack tools, plot attributes). Spend / grant functions validate amounts on the server.
+
+Public API (all take the Player first unless noted):
+  GetCatalog() -> { eggs = {...}, characters = {...} }      static catalog for the menu
+  GetPlot(player) -> { availableSlots, canUpgrade, plotOwned, level, unlocked, items }
+  GetOwnedEggs(player) -> { ["egg:<id>"] = count }
+  GetDiscovered / ExportDiscovered / ImportDiscovered        "char:<id>" / "egg:<id>" / "hatch:<id>" keys
+  PlaceCharacters / StoreCharacters(player, uids) -> count? , message   (max 60 uids, 0.27 s between requests)
+  EquipBest(player) -> ok, message
+  GetCash(player) -> number;  SpendCash(player, price) -> true | nil, message;  GrantReward(player, {cash}) -> true | nil, message
+  BuyCash(player, shopEntry) -> ok, message   (pays with Cash, delivers an egg Tool, refunds on delivery failure)
+  GrantShopItem(player, shopEntry) -> true | nil, message
+  Init(pushState)   hooks backpack / hatch / plot events; calls pushState(player) when menu data changed and
+                    increments QuestService counters (HatchEgg, DiscoverCharacter, Upgrade, PlaceCharacter).
+]]
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
-local SS = game:GetService("ServerStorage")
-local SSS = game:GetService("ServerScriptService")
-local Http = game:GetService("HttpService")
-local Catalog = require(RS.CharacterCatalog)
-local Inventory = require(SSS.CharacterInventory.InventoryService)
-local Rewards = require(SSS.EggCharacterRewards)
-local Quests = require(script.Parent.QuestService)
-local Adapter = {}
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+local HttpService = game:GetService("HttpService")
+local CharacterCatalog = require(ReplicatedStorage.CharacterCatalog)
+local InventoryService = require(ServerScriptService.CharacterInventory.InventoryService)
+local _EggCharacterRewards = require(ServerScriptService.EggCharacterRewards) -- required for load order only
+local QuestService = require(script.Parent.QuestService)
+
+local GameAdapter = {}
+
+-- discoveries[player] = { [discoveryKey] = true }  (persisted by GameMenuServer via Export/ImportDiscovered)
 local discoveries = {}
-local function plotOf(p)
+
+local function getOwnedPlot(player)
     for _, plot in workspace.Plots:GetChildren() do
-        if plot:GetAttribute("OwnerUserId") == p.UserId then
+        if plot:GetAttribute("OwnerUserId") == player.UserId then
             return plot
         end
     end
 end
-local function remember(p, key)
-    discoveries[p] = discoveries[p] or {}
-    if not discoveries[p][key] then
-        discoveries[p][key] = true
+
+-- Returns true only the first time a key is discovered.
+local function markDiscovered(player, key)
+    discoveries[player] = discoveries[player] or {}
+    if not discoveries[player][key] then
+        discoveries[player][key] = true
         return true
     end
     return false
 end
-function Adapter.GetCatalog()
-    local out = { eggs = {}, characters = {} }
-    for _, e in Catalog.Order do
-        table.insert(out.characters, {
-            id = "char:" .. e.Id,
-            name = e.Name,
-            rarity = e.Rarity,
-            image = e.image,
+
+function GameAdapter.GetCatalog()
+    local catalog = { eggs = {}, characters = {} }
+    for _, entry in CharacterCatalog.Order do
+        table.insert(catalog.characters, {
+            id = "char:" .. entry.Id,
+            name = entry.Name,
+            rarity = entry.Rarity,
+            image = entry.image,
             description = "Each hatch rolls individual Power and earnings.",
-            obtain = "Hatch a " .. e.Id .. " egg in your incubator.",
+            obtain = "Hatch a " .. entry.Id .. " egg in your incubator.",
         })
-        local model = SS.AuxEggTemplates:FindFirstChild(e.Id)
+        local model = ServerStorage.AuxEggTemplates:FindFirstChild(entry.Id)
         if model and model:GetAttribute("ReleaseEnabled") ~= false then
-            table.insert(out.eggs, {
-                id = "egg:" .. e.Id,
-                name = e.Id .. " Egg",
-                rarity = e.Rarity,
-                model = "MenuEgg_" .. e.Id,
-                description = "Price: " .. Catalog.FormatPrice(e.Price),
+            table.insert(catalog.eggs, {
+                id = "egg:" .. entry.Id,
+                name = entry.Id .. " Egg",
+                rarity = entry.Rarity,
+                model = "MenuEgg_" .. entry.Id,
+                description = "Price: " .. CharacterCatalog.FormatPrice(entry.Price),
                 obtain = "Collect from the river and return to your plot.",
             })
         end
     end
-    return out
+    return catalog
 end
-function Adapter.GetPlot(p)
-    local snap = Inventory.Snapshot(p)
-    local plot = plotOf(p)
+
+function GameAdapter.GetPlot(player)
+    local snapshot = InventoryService.Snapshot(player)
+    local plot = getOwnedPlot(player)
     local items = {}
-    for _, it in snap.items do
-        local entry = Catalog.ById[it.characterId]
+    for _, item in snapshot.items do
+        local entry = CharacterCatalog.ById[item.characterId]
         table.insert(items, {
-            uid = it.id,
-            id = "char:" .. it.characterId,
-            name = it.name,
-            rarity = it.rarity,
-            power = it.power,
-            income = it.income * snap.multiplier,
-            state = ({ Placed = "placed", Held = "held", Backpack = "stored" })[it.state],
-            acquired = it.acquired,
+            uid = item.id,
+            id = "char:" .. item.characterId,
+            name = item.name,
+            rarity = item.rarity,
+            power = item.power,
+            income = item.income * snapshot.multiplier,
+            state = ({ Placed = "placed", Held = "held", Backpack = "stored" })[item.state],
+            acquired = item.acquired,
             image = entry.image,
         })
     end
-    local Slots = require(SSS.TempleSlotUnlocks)
+    local TempleSlotUnlocks = require(ServerScriptService.TempleSlotUnlocks)
     return {
-        availableSlots = plot and Slots.Capacity(plot) or 0,
-        canUpgrade = plot and Slots.CanUpgrade(plot) or false,
+        availableSlots = plot and TempleSlotUnlocks.Capacity(plot) or 0,
+        canUpgrade = plot and TempleSlotUnlocks.CanUpgrade(plot) or false,
         plotOwned = plot ~= nil,
         level = plot and plot:GetAttribute("TempleLevel") or 0,
-        unlocked = snap.capacity.unlocked,
+        unlocked = snapshot.capacity.unlocked,
         items = items,
     }
 end
-function Adapter.GetOwnedEggs(p)
-    local out = {}
-    for _, container in { p:FindFirstChildOfClass("Backpack"), p.Character } do
+
+function GameAdapter.GetOwnedEggs(player)
+    local ownedEggs = {}
+    for _, container in { player:FindFirstChildOfClass("Backpack"), player.Character } do
         if container then
             for _, tool in container:GetChildren() do
-                local id = tool:GetAttribute("EggType")
-                if tool:IsA("Tool") and id and Catalog.ById[id] then
-                    local key = "egg:" .. id
-                    out[key] = (out[key] or 0) + 1
+                local eggId = tool:GetAttribute("EggType")
+                if tool:IsA("Tool") and eggId and CharacterCatalog.ById[eggId] then
+                    local key = "egg:" .. eggId
+                    ownedEggs[key] = (ownedEggs[key] or 0) + 1
                 end
             end
         end
     end
-    return out
+    return ownedEggs
 end
-function Adapter.ExportDiscovered(p)
-    local t = {}
-    for k in discoveries[p] or {} do
-        table.insert(t, k)
+
+function GameAdapter.ExportDiscovered(player)
+    local keys = {}
+    for key in discoveries[player] or {} do
+        table.insert(keys, key)
     end
-    return t
+    return keys
 end
-function Adapter.ImportDiscovered(p, list)
-    discoveries[p] = discoveries[p] or {}
-    for _, k in list do
-        if type(k) == "string" then
-            discoveries[p][k] = true
+
+function GameAdapter.ImportDiscovered(player, list)
+    discoveries[player] = discoveries[player] or {}
+    for _, key in list do
+        if type(key) == "string" then
+            discoveries[player][key] = true
         end
     end
 end
-function Adapter.GetDiscovered(p)
-    discoveries[p] = discoveries[p] or {}
-    for _, it in Inventory.Snapshot(p).items do
-        remember(p, "char:" .. it.characterId)
+
+function GameAdapter.GetDiscovered(player)
+    discoveries[player] = discoveries[player] or {}
+    for _, item in InventoryService.Snapshot(player).items do
+        markDiscovered(player, "char:" .. item.characterId)
     end
-    for _, container in { p:FindFirstChildOfClass("Backpack"), p.Character } do
+    for _, container in { player:FindFirstChildOfClass("Backpack"), player.Character } do
         if container then
             for _, tool in container:GetChildren() do
-                local id = tool:GetAttribute("EggType")
-                if tool:IsA("Tool") and id and Catalog.ById[id] then
-                    remember(p, "egg:" .. id)
+                local eggId = tool:GetAttribute("EggType")
+                if tool:IsA("Tool") and eggId and CharacterCatalog.ById[eggId] then
+                    markDiscovered(player, "egg:" .. eggId)
                 end
             end
         end
     end
-    return table.clone(discoveries[p])
+    return table.clone(discoveries[player])
 end
-local function batch(p, uids, action)
+
+-- Validates the whole uid list first, then runs InventoryService.MenuRequest per uid.
+-- Stops at the first failure and returns the number already done (or nil if none) + the error message.
+local function runBatchRequest(player, uids, action)
     if type(uids) ~= "table" or #uids > 60 then
         return nil, "Invalid selection."
     end
-    local done, seen = 0, {}
+    local completed, seen = 0, {}
     for _, uid in ipairs(uids) do
         if type(uid) ~= "string" or seen[uid] then
             return nil, "Invalid selection."
@@ -137,67 +171,77 @@ local function batch(p, uids, action)
         seen[uid] = true
     end
     for _, uid in ipairs(uids) do
-        local result = Inventory.MenuRequest(p, action, { id = uid })
+        local result = InventoryService.MenuRequest(player, action, { id = uid })
         if not result.ok then
-            return done > 0 and done or nil, result.message or result.code
+            return completed > 0 and completed or nil, result.message or result.code
         end
-        done += 1
+        completed += 1
         if #uids > 1 then
             task.wait(0.27)
         end
     end
-    return done
+    return completed
 end
-function Adapter.PlaceCharacters(p, uids)
-    return batch(p, uids, "Place")
+
+function GameAdapter.PlaceCharacters(player, uids)
+    return runBatchRequest(player, uids, "Place")
 end
-function Adapter.StoreCharacters(p, uids)
-    return batch(p, uids, "Store")
+
+function GameAdapter.StoreCharacters(player, uids)
+    return runBatchRequest(player, uids, "Store")
 end
-function Adapter.EquipBest(p)
-    local r = Inventory.MenuRequest(p, "PlaceBest", {})
-    return r.ok, r.message or (r.ok and "Best earners placed." or r.code)
+
+function GameAdapter.EquipBest(player)
+    local result = InventoryService.MenuRequest(player, "PlaceBest", {})
+    return result.ok, result.message or (result.ok and "Best earners placed." or result.code)
 end
-function Adapter.GetCash(p)
-    local s = p:FindFirstChild("leaderstats")
-    local cash = s and s:FindFirstChild("Cash")
+
+function GameAdapter.GetCash(player)
+    local leaderstats = player:FindFirstChild("leaderstats")
+    local cash = leaderstats and leaderstats:FindFirstChild("Cash")
     return cash and cash.Value or 0
 end
-function Adapter.SpendCash(p, n)
-    local s = p:FindFirstChild("leaderstats")
-    local cash = s and s:FindFirstChild("Cash")
-    if not cash or type(n) ~= "number" or n ~= n or n < 0 or n % 1 ~= 0 then
+
+-- price must be a non-negative integer (NaN rejected via `price ~= price`).
+function GameAdapter.SpendCash(player, price)
+    local leaderstats = player:FindFirstChild("leaderstats")
+    local cash = leaderstats and leaderstats:FindFirstChild("Cash")
+    if not cash or type(price) ~= "number" or price ~= price or price < 0 or price % 1 ~= 0 then
         return nil, "Invalid price."
     end
-    if cash.Value < n then
+    if cash.Value < price then
         return nil, "Not enough cash."
     end
-    cash.Value -= n
+    cash.Value -= price
     return true
 end
-function Adapter.GrantReward(p, reward)
-    local s = p:FindFirstChild("leaderstats")
-    local cash = s and s:FindFirstChild("Cash")
-    local n = reward and reward.cash
-    if not cash or type(n) ~= "number" or n < 0 or n ~= n then
+
+-- reward.cash must be a non-negative number; it is floored before being added.
+function GameAdapter.GrantReward(player, reward)
+    local leaderstats = player:FindFirstChild("leaderstats")
+    local cash = leaderstats and leaderstats:FindFirstChild("Cash")
+    local amount = reward and reward.cash
+    if not cash or type(amount) ~= "number" or amount < 0 or amount ~= amount then
         return nil, "Cash is unavailable."
     end
-    cash.Value += math.floor(n)
+    cash.Value += math.floor(amount)
     return true
 end
-local function createEgg(p, id)
-    local e = Catalog.ById[id]
-    local template = e and SS.AuxEggTemplates:FindFirstChild(id)
-    local bag = p:FindFirstChildOfClass("Backpack")
-    if not bag or not template or template:GetAttribute("ReleaseEnabled") == false then
+
+-- Builds (but does not parent) an egg Tool for eggId. Returns tool, backpack or nil, message.
+local function createEgg(player, eggId)
+    local entry = CharacterCatalog.ById[eggId]
+    local template = entry and ServerStorage.AuxEggTemplates:FindFirstChild(eggId)
+    local backpack = player:FindFirstChildOfClass("Backpack")
+    if not backpack or not template or template:GetAttribute("ReleaseEnabled") == false then
         return nil, "Egg is unavailable."
     end
     local tool = Instance.new("Tool")
-    tool.Name = id .. " Egg"
+    tool.Name = eggId .. " Egg"
     tool.CanBeDropped = false
-    Catalog.Stamp(tool, e)
-    tool:SetAttribute("EggType", id)
-    tool:SetAttribute("EggId", Http:GenerateGUID(false))
+    CharacterCatalog.Stamp(tool, entry)
+    tool:SetAttribute("EggType", eggId)
+    tool:SetAttribute("EggId", HttpService:GenerateGUID(false))
     tool:SetAttribute("ShopPurchased", true)
     local visual = template:Clone()
     visual.Name = "Egg"
@@ -225,160 +269,166 @@ local function createEgg(p, id)
             part:Destroy()
         end
     end
-    return tool, bag
+    return tool, backpack
 end
-function Adapter.BuyCash(p, shop)
-    local id = shop.grant and shop.grant.egg
-    local tool, bag = createEgg(p, id)
+
+function GameAdapter.BuyCash(player, shop)
+    local eggId = shop.grant and shop.grant.egg
+    local tool, backpackOrMessage = createEgg(player, eggId)
     if not tool then
-        return false, bag
+        return false, backpackOrMessage
     end
-    local ok, why = Adapter.SpendCash(p, shop.price)
+    local ok, reason = GameAdapter.SpendCash(player, shop.price)
     if not ok then
         tool:Destroy()
-        return false, why
+        return false, reason
     end
     -- No yield between payment and delivery; refund if delivery unexpectedly fails.
-    local delivered, err = pcall(function()
-        tool.Parent = bag
+    local delivered, _err = pcall(function()
+        tool.Parent = backpackOrMessage
     end)
     if not delivered then
-        Adapter.GrantReward(p, { cash = shop.price })
+        GameAdapter.GrantReward(player, { cash = shop.price })
         tool:Destroy()
         return false, "Purchase refunded."
     end
     return true, "Bought " .. shop.name
 end
-function Adapter.GrantShopItem(p, e)
-    local tool, bag = createEgg(p, e.grant and e.grant.egg)
+
+function GameAdapter.GrantShopItem(player, shopEntry)
+    local tool, backpackOrMessage = createEgg(player, shopEntry.grant and shopEntry.grant.egg)
     if not tool then
-        return nil, bag
+        return nil, backpackOrMessage
     end
-    tool.Parent = bag
+    tool.Parent = backpackOrMessage
     return true
 end
-function Adapter.Init(push)
-    local watched = setmetatable({}, { __mode = "k" })
-    local function watchPlayer(p)
-        discoveries[p] = {}
-        local function container(c)
-            if not c then
+
+function GameAdapter.Init(pushState)
+    local watchedHatchEvents = setmetatable({}, { __mode = "k" })
+    local function watchPlayer(player)
+        discoveries[player] = {}
+        -- New tools in the Backpack / Character mark discoveries and refresh the menu.
+        local function watchContainer(container)
+            if not container then
                 return
             end
-            c.ChildAdded:Connect(function(tool)
+            container.ChildAdded:Connect(function(tool)
                 if not tool:IsA("Tool") then
                     return
                 end
                 task.defer(function()
-                    local charId = tool:GetAttribute("CharacterId")
+                    local characterId = tool:GetAttribute("CharacterId")
                     local eggId = tool:GetAttribute("EggType")
-                    if charId and Catalog.ById[charId] then
-                        remember(p, "char:" .. charId)
+                    if characterId and CharacterCatalog.ById[characterId] then
+                        markDiscovered(player, "char:" .. characterId)
                     end
-                    if eggId and Catalog.ById[eggId] then
-                        remember(p, "egg:" .. eggId)
+                    if eggId and CharacterCatalog.ById[eggId] then
+                        markDiscovered(player, "egg:" .. eggId)
                     end
-                    push(p)
+                    pushState(player)
                 end)
             end)
         end
-        container(p:FindFirstChildOfClass("Backpack"))
-        container(p.Character)
-        p.CharacterAdded:Connect(container)
-        p.ChildAdded:Connect(function(c)
-            if c:IsA("Backpack") then
-                container(c)
+        watchContainer(player:FindFirstChildOfClass("Backpack"))
+        watchContainer(player.Character)
+        player.CharacterAdded:Connect(watchContainer)
+        player.ChildAdded:Connect(function(child)
+            if child:IsA("Backpack") then
+                watchContainer(child)
             end
         end)
     end
-    for _, p in Players:GetPlayers() do
-        watchPlayer(p)
+    for _, player in Players:GetPlayers() do
+        watchPlayer(player)
     end
     Players.PlayerAdded:Connect(watchPlayer)
-    Players.PlayerRemoving:Connect(function(p)
-        discoveries[p] = nil
+    Players.PlayerRemoving:Connect(function(player)
+        discoveries[player] = nil
     end)
+    -- Each incubator fires a BindableEvent "HatchCycleCompleted(player, tool, characterId)" inside its plot.
     local function hookHatch(event)
-        if event.Name ~= "HatchCycleCompleted" or not event:IsA("BindableEvent") or watched[event] then
+        if event.Name ~= "HatchCycleCompleted" or not event:IsA("BindableEvent") or watchedHatchEvents[event] then
             return
         end
-        watched[event] = true
-        event.Event:Connect(function(p, tool, id)
-            local plot = plotOf(p)
+        watchedHatchEvents[event] = true
+        event.Event:Connect(function(player, _tool, characterId)
+            local plot = getOwnedPlot(player)
             if not plot or not event:IsDescendantOf(plot) then
                 return
             end
-            Quests.Increment(p, "HatchEgg", 1)
-            if id and Catalog.ById[id] then
-                local marker = "hatch:" .. id
-                if remember(p, marker) then
-                    Quests.Increment(p, "DiscoverCharacter", 1)
+            QuestService.Increment(player, "HatchEgg", 1)
+            if characterId and CharacterCatalog.ById[characterId] then
+                local marker = "hatch:" .. characterId
+                if markDiscovered(player, marker) then
+                    QuestService.Increment(player, "DiscoverCharacter", 1)
                 end
-                remember(p, "char:" .. id)
+                markDiscovered(player, "char:" .. characterId)
             end
-            push(p)
+            pushState(player)
         end)
     end
-    for _, d in workspace.Plots:GetDescendants() do
-        hookHatch(d)
+    for _, descendant in workspace.Plots:GetDescendants() do
+        hookHatch(descendant)
     end
     workspace.Plots.DescendantAdded:Connect(hookHatch)
-    local function owner(plot)
+    local function getPlotOwner(plot)
         return Players:GetPlayerByUserId(plot:GetAttribute("OwnerUserId") or 0)
     end
     local function watchPlot(plot)
-        local placed = plot:WaitForChild("PlacedItems", 30)
+        local placedItems = plot:WaitForChild("PlacedItems", 30)
         local slots = plot:WaitForChild("Slots", 30)
         local chambers = plot:WaitForChild("Chambers", 30)
-        if not placed or not slots or not chambers then
+        if not placedItems or not slots or not chambers then
             warn("[GameMenu] plot folders not ready: " .. plot.Name)
             return
         end
-        local prev = plot:GetAttribute("TempleLevel") or 1
+        -- Upgrade quest counts only level increases (decreases / resets do not count).
+        local previousLevel = plot:GetAttribute("TempleLevel") or 1
         plot:GetAttributeChangedSignal("TempleLevel"):Connect(function()
-            local n = plot:GetAttribute("TempleLevel") or 1
-            local p = owner(plot)
-            if p and n > prev then
-                Quests.Increment(p, "Upgrade", 1)
+            local newLevel = plot:GetAttribute("TempleLevel") or 1
+            local owner = getPlotOwner(plot)
+            if owner and newLevel > previousLevel then
+                QuestService.Increment(owner, "Upgrade", 1)
             end
-            prev = n
-            if p then
-                push(p)
+            previousLevel = newLevel
+            if owner then
+                pushState(owner)
             end
         end)
-        placed.ChildAdded:Connect(function(model)
+        placedItems.ChildAdded:Connect(function(model)
             task.defer(function()
-                local p = owner(plot)
-                if p and model.Parent and model:GetAttribute("CharacterId") then
-                    Quests.Increment(p, "PlaceCharacter", 1)
-                    push(p)
+                local owner = getPlotOwner(plot)
+                if owner and model.Parent and model:GetAttribute("CharacterId") then
+                    QuestService.Increment(owner, "PlaceCharacter", 1)
+                    pushState(owner)
                 end
             end)
         end)
         for _, slot in slots:GetChildren() do
             slot:GetAttributeChangedSignal("Unlocked"):Connect(function()
-                local p = owner(plot)
-                if p then
-                    push(p)
+                local owner = getPlotOwner(plot)
+                if owner then
+                    pushState(owner)
                 end
             end)
         end
-        local function watchChamber(c)
-            local level = c:GetAttribute("UpgradeLevel") or 1
-            c:GetAttributeChangedSignal("UpgradeLevel"):Connect(function()
-                local n = c:GetAttribute("UpgradeLevel") or 1
-                local p = owner(plot)
-                if p and n > level then
-                    Quests.Increment(p, "Upgrade", 1)
+        local function watchChamber(chamber)
+            local level = chamber:GetAttribute("UpgradeLevel") or 1
+            chamber:GetAttributeChangedSignal("UpgradeLevel"):Connect(function()
+                local newLevel = chamber:GetAttribute("UpgradeLevel") or 1
+                local owner = getPlotOwner(plot)
+                if owner and newLevel > level then
+                    QuestService.Increment(owner, "Upgrade", 1)
                 end
-                level = n
-                if p then
-                    push(p)
+                level = newLevel
+                if owner then
+                    pushState(owner)
                 end
             end)
         end
-        for _, c in chambers:GetChildren() do
-            watchChamber(c)
+        for _, chamber in chambers:GetChildren() do
+            watchChamber(chamber)
         end
         chambers.ChildAdded:Connect(watchChamber)
     end
@@ -389,4 +439,5 @@ function Adapter.Init(push)
         task.spawn(watchPlot, plot)
     end)
 end
-return Adapter
+
+return GameAdapter
