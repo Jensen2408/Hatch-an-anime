@@ -2,72 +2,79 @@
 -- Roblox clears the Backpack and destroys the held Tool on respawn, so a player who died lost every egg they carried.
 -- On death they're parked in Player.RespawnHold, then put back in the new Backpack.
 -- PlayerDataService saves from Backpack/Character/IncubatorHeldEggs; RespawnHold only exists for the few seconds of a respawn.
+-- Runtime: Script in ServerScriptService. Note: a respawn without Humanoid.Died (e.g. LoadCharacterAsync from the admin
+-- "Respawn" action) is not handled — see docs/PROJECT_AUDIT.md.
 local Players = game:GetService("Players")
 
-local function keep(t)
-    return t:IsA("Tool")
-        and (t:GetAttribute("EggType") ~= nil or t:GetAttribute("CharacterId") ~= nil or t:GetAttribute("BrainrotId") ~= nil)
-        and not t:GetAttribute("Incubating")
+-- Eggs / characters that are not currently sitting in an incubator.
+local function shouldKeep(tool)
+    return tool:IsA("Tool")
+        and (tool:GetAttribute("EggType") ~= nil or tool:GetAttribute("CharacterId") ~= nil or tool:GetAttribute(
+            "BrainrotId"
+        ) ~= nil)
+        and not tool:GetAttribute("Incubating")
 end
 
-local deadBag = setmetatable({}, { __mode = "k" }) -- [player] = the Backpack Roblox is about to replace
+local deadBackpacks = setmetatable({}, { __mode = "k" }) -- [player] = the Backpack Roblox is about to replace
 
-local function park(p, char)
-    deadBag[p] = p:FindFirstChildOfClass("Backpack")
-    local hold = p:FindFirstChild("RespawnHold") or Instance.new("Folder")
+local function parkItems(player, character)
+    deadBackpacks[player] = player:FindFirstChildOfClass("Backpack")
+    local hold = player:FindFirstChild("RespawnHold") or Instance.new("Folder")
     hold.Name = "RespawnHold"
-    hold.Parent = p
-    for _, c in { p:FindFirstChildOfClass("Backpack"), char } do
-        if c then
-            for _, t in c:GetChildren() do
-                if keep(t) then
-                    t.Parent = hold
+    hold.Parent = player
+    for _, container in { player:FindFirstChildOfClass("Backpack"), character } do
+        if container then
+            for _, tool in container:GetChildren() do
+                if shouldKeep(tool) then
+                    tool.Parent = hold
                 end
             end
         end
     end
 end
 
-local function restore(p)
-    local hold = p:FindFirstChild("RespawnHold")
+local function restoreItems(player)
+    local hold = player:FindFirstChild("RespawnHold")
     if not hold then
         return
     end
     -- Roblox swaps in a fresh Backpack around CharacterAdded; putting items in the old one loses them
-    local bag, t0 = nil, os.clock()
+    local backpack, startedAt = nil, os.clock()
     repeat
         task.wait(0.1)
-        bag = p:FindFirstChildOfClass("Backpack")
-    until (bag and bag ~= deadBag[p] and bag.Parent == p) or os.clock() - t0 > 10 or not p.Parent
-    if not bag or bag == deadBag[p] or not p.Parent then
+        backpack = player:FindFirstChildOfClass("Backpack")
+    until (backpack and backpack ~= deadBackpacks[player] and backpack.Parent == player)
+        or os.clock() - startedAt > 10
+        or not player.Parent
+    if not backpack or backpack == deadBackpacks[player] or not player.Parent then
         return
     end
-    deadBag[p] = nil
-    for _, t in hold:GetChildren() do
-        t.Enabled = true
-        t:SetAttribute("ReturningToBase", nil)
-        t.Parent = bag
+    deadBackpacks[player] = nil
+    for _, tool in hold:GetChildren() do
+        tool.Enabled = true
+        tool:SetAttribute("ReturningToBase", nil)
+        tool.Parent = backpack
     end
     hold:Destroy()
 end
 
-local function watch(p)
-    local function onChar(char)
-        task.defer(restore, p)
-        local hum = char:WaitForChild("Humanoid", 10)
-        if hum then
-            hum.Died:Connect(function()
-                park(p, char)
+local function watchPlayer(player)
+    local function onCharacterAdded(character)
+        task.defer(restoreItems, player)
+        local humanoid = character:WaitForChild("Humanoid", 10)
+        if humanoid then
+            humanoid.Died:Connect(function()
+                parkItems(player, character)
             end)
         end
     end
-    p.CharacterAdded:Connect(onChar)
-    if p.Character then
-        onChar(p.Character)
+    player.CharacterAdded:Connect(onCharacterAdded)
+    if player.Character then
+        onCharacterAdded(player.Character)
     end
 end
 
-Players.PlayerAdded:Connect(watch)
-for _, p in Players:GetPlayers() do
-    task.spawn(watch, p)
+Players.PlayerAdded:Connect(watchPlayer)
+for _, player in Players:GetPlayers() do
+    task.spawn(watchPlayer, player)
 end

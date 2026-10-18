@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 155 |
+| Pending | 150 |
 | Reviewed — No Changes Needed | 4 |
-| Refactored | 30 |
+| Refactored | 35 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -62,11 +62,11 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `server/Economy/NoEarnAccounts.server.luau` | Script | 30 | 45 | Pending | — | — |
-| `server/PlayerData/KeepItemsOnRespawn.server.luau` | Script | 51 | 73 | Pending | — | — |
-| `server/PlayerData/PlayerDataService.server.luau` | Script | 402 | 826 | Pending | — | — |
-| `server/PlayerData/SaveRestore.luau` | ModuleScript | 54 | 90 | Pending | — | — |
-| `server/PlayerData/TutorialProgress.server.luau` | Script | 13 | 26 | Pending | — | — |
+| `server/Economy/NoEarnAccounts.server.luau` | Script | 30 | 47 | Refactored | SAME | Renames (guardCash, lastValue, isReverting...), header runtime note, comment on re-entrancy flag. |
+| `server/PlayerData/KeepItemsOnRespawn.server.luau` | Script | 51 | 80 | Refactored | SAME | Renames (shouldKeep, parkItems, restoreItems, watchPlayer, deadBackpacks...); header notes the admin-respawn known issue. |
+| `server/PlayerData/PlayerDataService.server.luau` | Script | 402 | 922 | Refactored | SAME | Full saved-schema + load/save/failure-flow header; descriptive renames (sessionData, restoreState, saveData/loadData...); invariant comments. Save/load logic untouched (SAME). |
+| `server/PlayerData/SaveRestore.luau` | ModuleScript | 54 | 104 | Refactored | SAME | Header documents store/key/lock coupling; renames (resolvePlayer, summarize, oldSave, versionInfo); function comments. |
+| `server/PlayerData/TutorialProgress.server.luau` | Script | 13 | 31 | Refactored | SAME | RS->ReplicatedStorage, expected->EXPECTED_ACTION, header with remote + attribute contract. |
 
 ## Batch 04 — Egg — server and carry
 
@@ -625,48 +625,48 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `server/Economy/NoEarnAccounts.server.luau`
 
-- **Type:** Script · **Batch:** 03 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 03 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** NoEarnAccounts: these accounts can never gain cash (stands, offline earnings, sales, gifts...). Spending still works. The saved balance is restored normally on join; guarding starts once the save is f
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×2, PlayerAdded×1
-- **Readability problems:** 4 dense one-line statements; 1 one-letter locals
+- **Readability problems:** Cryptic names (guard, p, t, ls, last, fixing, v)
 
 ### `server/PlayerData/KeepItemsOnRespawn.server.luau`
 
-- **Type:** Script · **Batch:** 03 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 03 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** KeepItemsOnRespawn: eggs and characters (Tools with EggType / CharacterId / BrainrotId) survive dying and respawning. Roblox clears the Backpack and destroys the held Tool on respawn, so a player who 
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3, PlayerAdded×1
-- **Readability problems:** 5 dense one-line statements
+- **Readability problems:** Cryptic names (keep, t, c, p, hum, t0, deadBag)
 
 ### `server/PlayerData/PlayerDataService.server.luau`
 
-- **Type:** Script · **Batch:** 03 · **Priority:** High · **Status:** Pending
+- **Type:** Script · **Batch:** 03 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** PlayerDataService — saves and restores each player's progress (DataStore "PlayerData_v1", key "u<UserId>").
 - **Dependencies:** CharacterCatalog, CharacterEconomy, EggCharacterRewards, Mutations, TempleSlotUnlocks
 - **Public functions:** —
 - **Events:** Connect×4, OnServerEvent×1, PlayerAdded×1, PlayerRemoving×1
-- **Readability problems:** 73 dense one-line statements; 13 lines >160 chars; 12 one-letter locals
+- **Readability problems:** Cryptic locals (d, r, p, t, m, inc, nv, jd/td), aliases DSS/SSS/RS, shadowed `r` in snapshot (3 selene warnings), header said autosave 90 s but AUTOSAVE=30, no schema doc
 
 ### `server/PlayerData/SaveRestore.luau`
 
-- **Type:** ModuleScript · **Batch:** 03 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 03 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** SaveRestore (owner only, used by the owner panel): list a player's older saves (Roblox keeps ~30 days) and put one back.
 - **Dependencies:** —
 - **Public functions:** M.List, M.Restore
 - **Events:** —
-- **Readability problems:** 8 dense one-line statements; 3 one-letter locals
+- **Readability problems:** Alias DSS, module `M`, cryptic locals (r, n, s, v, cur, here), undocumented coupling to PlayerDataService schema/lock timeout
 
 ### `server/PlayerData/TutorialProgress.server.luau`
 
-- **Type:** Script · **Batch:** 03 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 03 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Only acknowledges the UI tour after server-validated first income collection. These acknowledgements cannot buy upgrades, grant cash, or award items.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×1, OnServerEvent×1
-- **Readability problems:** 2 dense one-line statements; 1 lines >160 chars
+- **Readability problems:** Alias RS, constant table `expected` lower-case, header lacked runtime/remote info
 
 ### `server/Carry/CarryGripLayout.luau`
 

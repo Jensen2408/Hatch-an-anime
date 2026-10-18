@@ -1,160 +1,215 @@
---[[ PlayerDataService — saves and restores each player's progress (DataStore "PlayerData_v1", key "u<UserId>").
+--[[ PlayerDataService — saves and restores each player's progress.
+Runtime: Script in ServerScriptService. DataStore "PlayerData_v1", key "u<UserId>".
+
 Saved: Cash (+ uncollected stand cash), backpack/held/incubating egg + character tools, placed characters (same slot),
-unlocked slots, temple level, incubator count/levels, index discoveries, quests.
+unlocked slots, temple level, incubator count/levels, index discoveries, quests, tutorial progress, settings.
 Safety: never saves if the load failed (no wipes), session lock so two servers can't load the same player at once,
-autosave every 90 s, save on leave and on server shutdown. In Studio without API access it runs session-only.
-Other scripts: PlotManager waits for player attribute "DataLoaded" and calls ServerStorage.PlayerDataSnapshot before it clears the plot.
+autosave every AUTOSAVE_INTERVAL (30 s), save on leave and on server shutdown. In Studio without API access it runs
+session-only (in-memory store).
+
+SAVED SCHEMA (one table per player; field names are a persistence contract — never rename):
+    v                       number   schema VERSION (1)
+    savedAt                 number   os.time() of the last save (drives offline earnings, capped at 8 h)
+    lock                    table?   { job = game.JobId, t = os.time() } while a server owns the session; nil once released
+    restoredAt              number?  only written by SaveRestore (owner panel rollback)
+    cash                    number   floor(Cash + uncollected stand cash on the final save), >= 0
+    tools                   array    tool records (backpack, RespawnHold, IncubatorHeldEggs, character, carried-over)
+    placed                  array    { s = slotName, k = "char", n = ToolName attribute, a = attributes }
+    unlocked                array?   slot names with attribute Unlocked (only written when the plot has >= 1 unlocked)
+    chambers                array?   incubator UpgradeLevel for ChamberIndex 1..3, nil entries skipped (compacted)
+    templeLevel             number   plot attribute TempleLevel
+    tutorialCompleted       boolean
+    tutorialIncomeCollected boolean
+    tutorialTourStage       number   9..12 (clamped on load)
+    settings                table?   SETTING_TYPES keys only (written by the SaveSettings remote)
+    discovered              any      GameAdapter.ExportDiscovered(player) / ImportDiscovered
+    quests                  any      QuestService.Persistence.Save/Load payload
+  Tool record: { k = "char" | "egg", n = Tool.Name, a = { string/number/boolean attributes },
+                 inc = { c = ChamberIndex, left = seconds of hatching left }? } (inc only for eggs in an incubator)
+
+FLOW
+    Load:  PlayerAdded -> onJoin -> loadData (UpdateAsync, takes the lock, 8 attempts) -> player attributes
+           (DataLoaded, Tutorial*, SavedTempleLevel, SavedChambers, settings) -> task.spawn restoreSavedState
+           (cash, tools, slots, placed characters, offline earnings, incubating eggs) -> TutorialDataReady.
+    Save:  snapshot (live state -> sessionData[player]) then saveData (UpdateAsync, 3 attempts, respects foreign locks).
+           Triggers: autosave loop, PlayerRemoving, BindToClose, the PlayerDataSaveAll / PlayerDataSaveNow hooks.
+    Failure handling: load failure (not Studio / not left) kicks the player so nothing is overwritten; snapshot keeps the
+           loaded save untouched until cash was restored (restoreState.cash) and only rewrites items / plot once the
+           whole restore finished (restoreState.all). Records that cannot be rebuilt are carried in the save (unbuildable).
+    Known issue: see docs/PROJECT_AUDIT.md "PlayerData restore" — saved tools are given before the plot wait.
+
+Other scripts: PlotManager waits for player attribute "DataLoaded" and calls ServerStorage.PlayerDataSnapshot before it
+clears the plot; CrossServerService (/update) calls PlayerDataSaveAll; ShopService calls PlayerDataSaveNow.
+Creates: ReplicatedStorage.SaveSettings (RemoteEvent), ServerStorage.PlayerDataSaveAll / PlayerDataSaveNow /
+PlayerDataSnapshot (BindableFunctions), ServerStorage.PlayerDataDebug (Studio only).
 ]]
+
+-- Services
 local Players = game:GetService("Players")
-local DSS = game:GetService("DataStoreService")
+local DataStoreService = game:GetService("DataStoreService")
 local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
-local SSS = game:GetService("ServerScriptService")
-local RS = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+-- Constants
 local STORE_NAME, VERSION = "PlayerData_v1", 1
-local AUTOSAVE, LOCK_TIMEOUT = 30, 150
-local okStore, store = pcall(DSS.GetDataStore, DSS, STORE_NAME)
+-- LOCK_TIMEOUT: a lock older than this (seconds) is considered abandoned by a crashed server and can be taken over.
+-- SaveRestore hard-codes the same 150.
+local AUTOSAVE_INTERVAL, LOCK_TIMEOUT = 30, 150
+
+-- DataStore (nil when unavailable -> load() returns "nostore" and the session is not saved)
+local okStore, store = pcall(DataStoreService.GetDataStore, DataStoreService, STORE_NAME)
 if not okStore then
     store = nil
 end
 -- Studio: real DataStores are blocked unless API access is on, so use an in-memory practice store (nothing persists)
 if RunService:IsStudio() then
-    local ok = pcall(function()
+    local probeOk = pcall(function()
         store:GetAsync("__probe")
     end)
-    if not ok then
-        local mem = {}
+    if not probeOk then
+        local memoryStore = {}
         store = {
-            UpdateAsync = function(_, key, fn)
-                local nv = fn(mem[key])
-                if nv ~= nil then
-                    mem[key] = nv
+            UpdateAsync = function(_, key, transform)
+                local newValue = transform(memoryStore[key])
+                if newValue ~= nil then
+                    memoryStore[key] = newValue
                 end
-                return nv
+                return newValue
             end,
         }
         warn("[PlayerData] Studio: using in-memory practice store (saves do not persist between play tests)")
     end
 end
 
-local Catalog = require(RS:WaitForChild("CharacterCatalog"))
-local Economy = require(RS:WaitForChild("CharacterEconomy"))
-local Rewards = require(SSS:WaitForChild("EggCharacterRewards"))
-local SlotUnlocks = require(SSS:WaitForChild("TempleSlotUnlocks"))
-local Quests
+-- Dependencies
+local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
+local Economy = require(ReplicatedStorage:WaitForChild("CharacterEconomy"))
+local EggCharacterRewards = require(ServerScriptService:WaitForChild("EggCharacterRewards"))
+local TempleSlotUnlocks = require(ServerScriptService:WaitForChild("TempleSlotUnlocks"))
+local QuestService -- optional: nil when GameMenu.QuestService fails to load
 do
-    local ok, q = pcall(require, SSS:WaitForChild("GameMenu"):WaitForChild("QuestService"))
-    Quests = ok and q or nil
+    local ok, module = pcall(require, ServerScriptService:WaitForChild("GameMenu"):WaitForChild("QuestService"))
+    QuestService = ok and module or nil
 end
-local Adapter
+local GameAdapter -- optional: nil when GameMenu.GameAdapter fails to load
 do
-    local ok, a = pcall(require, SSS.GameMenu:WaitForChild("GameAdapter"))
-    Adapter = ok and a or nil
+    local ok, module = pcall(require, ServerScriptService.GameMenu:WaitForChild("GameAdapter"))
+    GameAdapter = ok and module or nil
 end
-local library = ServerStorage:WaitForChild("BrainrotModels")
+local brainrotModels = ServerStorage:WaitForChild("BrainrotModels")
 
-local data, loaded, final, lastHeld = {}, {}, {}, {}
-local lastSet = {}
-local restored = {} -- [p] = { cash = bool, all = bool }: only overwrite saved fields once they were restored in-game
-local carry = {} -- [p] = records that could not be rebuilt; kept in the save instead of being deleted
+-- State (all keyed by Player; cleared in onLeave)
+-- sessionData: the save table being edited live; isLoaded: the save was loaded (only then may we write it back);
+-- hasFinalSnapshot: the leave/shutdown snapshot was already taken; lastHeldTools: records of tools held by the last
+-- character (used when the player leaves without a character); lastSettingsAt: SaveSettings rate limit.
+local sessionData, isLoaded, hasFinalSnapshot, lastHeldTools = {}, {}, {}, {}
+local lastSettingsAt = {}
+local restoreState = {} -- [p] = { cash = bool, all = bool }: only overwrite saved fields once they were restored in-game
+local unbuildable = {} -- [p] = records that could not be rebuilt; kept in the save instead of being deleted
 
 ------------------------------------------------------------ helpers
-local function plotOf(p)
+local function plotOf(player)
     for _, plot in workspace.Plots:GetChildren() do
-        if plot:GetAttribute("OwnerUserId") == p.UserId then
+        if plot:GetAttribute("OwnerUserId") == player.UserId then
             return plot
         end
     end
 end
-local function cashOf(p)
-    local ls = p:FindFirstChild("leaderstats")
-    return ls and ls:FindFirstChild("Cash")
+local function cashOf(player)
+    local leaderstats = player:FindFirstChild("leaderstats")
+    return leaderstats and leaderstats:FindFirstChild("Cash")
 end
-local function attrs(obj)
-    local t = {}
-    for k, v in obj:GetAttributes() do
-        local ty = typeof(v)
-        if ty == "string" or ty == "number" or ty == "boolean" then
-            t[k] = v
+-- Copies the attributes that a DataStore can hold (string / number / boolean).
+local function copyAttributes(instance)
+    local result = {}
+    for name, value in instance:GetAttributes() do
+        local valueType = typeof(value)
+        if valueType == "string" or valueType == "number" or valueType == "boolean" then
+            result[name] = value
         end
     end
-    return t
+    return result
 end
-local SKIP = { Occupied = true, OwnerUserId = true, PlacementToken = true, SlotName = true, IncubatorChamber = true }
+-- Placement / incubator bookkeeping attributes: never copied back onto a rebuilt tool.
+local SKIPPED_ATTRIBUTES =
+    { Occupied = true, OwnerUserId = true, PlacementToken = true, SlotName = true, IncubatorChamber = true }
 local function serializeTool(tool)
     if not tool:IsA("Tool") then
         return nil
     end
-    local a = attrs(tool)
-    if a.CharacterId or a.BrainrotId then
-        return { k = "char", n = tool.Name, a = a }
+    local attributes = copyAttributes(tool)
+    if attributes.CharacterId or attributes.BrainrotId then
+        return { k = "char", n = tool.Name, a = attributes }
     end
-    if a.EggType then
-        return { k = "egg", n = tool.Name, a = a }
+    if attributes.EggType then
+        return { k = "egg", n = tool.Name, a = attributes }
     end
     return nil -- bat and other gear are given by their own scripts
 end
 
------------------------------------------------------------- rebuild
+------------------------------------------------------------ rebuild (saved record -> Tool)
 local function goldenTemplate()
-    local f = ServerStorage:FindFirstChild("FutureUpdateContent")
-    local c = f and f:FindFirstChild("Characters")
-    return c and c:FindFirstChild("Golden Pirate")
+    local futureContent = ServerStorage:FindFirstChild("FutureUpdateContent")
+    local characters = futureContent and futureContent:FindFirstChild("Characters")
+    return characters and characters:FindFirstChild("Golden Pirate")
 end
-local function buildChar(rec)
-    local a = rec.a
-    local id = a.CharacterId or a.BrainrotId
-    if not id or not Catalog.ById[id] then
+local function buildCharacterTool(record)
+    local attributes = record.a
+    local characterId = attributes.CharacterId or attributes.BrainrotId
+    if not characterId or not Catalog.ById[characterId] then
         return nil
     end
-    local template = (a.GoldVariant or a.Golden) and goldenTemplate() or library:FindFirstChild(id)
+    local template = (attributes.GoldVariant or attributes.Golden) and goldenTemplate()
+        or brainrotModels:FindFirstChild(characterId)
     if not template then
         return nil
     end
-    local probe = Instance.new("Folder")
-    for k, v in a do
-        probe:SetAttribute(k, v)
+    -- Economy.Read reads stats from attributes, so stage the saved attributes on a throwaway instance
+    local attributeProbe = Instance.new("Folder")
+    for name, value in attributes do
+        attributeProbe:SetAttribute(name, value)
     end
-    local stats = Economy.Read(probe, id) or Economy.Roll(id)
-    probe:Destroy()
-    local ok, tool = pcall(Rewards.Tool, template, id, stats, a.Mutation or false)
+    local stats = Economy.Read(attributeProbe, characterId) or Economy.Roll(characterId)
+    attributeProbe:Destroy()
+    local ok, tool = pcall(EggCharacterRewards.Tool, template, characterId, stats, attributes.Mutation or false)
     if not ok or not tool then
-        warn("[PlayerData] char rebuild failed", id, tool)
+        warn("[PlayerData] char rebuild failed", characterId, tool)
         return nil
     end
-    for k, v in a do
-        if not SKIP[k] then
-            tool:SetAttribute(k, v)
+    for name, value in attributes do
+        if not SKIPPED_ATTRIBUTES[name] then
+            tool:SetAttribute(name, value)
         end
     end
-    if rec.n then
-        tool.Name = rec.n
+    if record.n then
+        tool.Name = record.n
     end
     return tool
 end
-local function buildEgg(rec)
-    local a = rec.a
-    local id = a.EggType
+local function buildEggTool(record)
+    local attributes = record.a
+    local eggType = attributes.EggType
     local template
-    if a.UnknownEgg then
-        template = RS.ShopSystem.ShopModels:FindFirstChild("UnknownEgg")
+    if attributes.UnknownEgg then
+        template = ReplicatedStorage.ShopSystem.ShopModels:FindFirstChild("UnknownEgg")
     else
-        template = ServerStorage.AuxEggTemplates:FindFirstChild(id)
+        template = ServerStorage.AuxEggTemplates:FindFirstChild(eggType)
     end
-    if not template and not a.UnknownEgg then
+    if not template and not attributes.UnknownEgg then
         return nil
     end
     local tool = Instance.new("Tool")
-    tool.Name = rec.n or (id .. " Egg")
+    tool.Name = record.n or (eggType .. " Egg")
     tool.CanBeDropped = false
-    local entry = Catalog.ById[id]
+    local entry = Catalog.ById[eggType]
     if entry then
         pcall(Catalog.Stamp, tool, entry)
     end
-    for k, v in a do
-        if not SKIP[k] then
-            tool:SetAttribute(k, v)
+    for name, value in attributes do
+        if not SKIPPED_ATTRIBUTES[name] then
+            tool:SetAttribute(name, value)
         end
     end
     local handle = Instance.new("Part")
@@ -165,142 +220,146 @@ local function buildEgg(rec)
     handle.Massless = true
     handle.Parent = tool
     -- saved mutation eggs come back as their mutated model (same size as the plain egg) with the aura VFX
-    local mutSrc
-    if a.Mutation and template and not a.UnknownEgg then
-        local pack = ServerStorage:FindFirstChild("UpdatePack_Mutations_Halloween")
-        local eggs = pack and pack:FindFirstChild("Update_Eggs_Halloween", true)
-        mutSrc = eggs
+    local mutatedModel
+    if attributes.Mutation and template and not attributes.UnknownEgg then
+        local mutationPack = ServerStorage:FindFirstChild("UpdatePack_Mutations_Halloween")
+        local mutationEggs = mutationPack and mutationPack:FindFirstChild("Update_Eggs_Halloween", true)
+        mutatedModel = mutationEggs
             and (
-                eggs:FindFirstChild(id .. "_Halloween_" .. a.Mutation .. "_Egg")
-                or eggs:FindFirstChild(id .. "_" .. a.Mutation .. "_Egg")
+                mutationEggs:FindFirstChild(eggType .. "_Halloween_" .. attributes.Mutation .. "_Egg")
+                or mutationEggs:FindFirstChild(eggType .. "_" .. attributes.Mutation .. "_Egg")
             )
     end
     if template then
-        local visual = (mutSrc or template):Clone()
+        local visual = (mutatedModel or template):Clone()
         visual.Name = "Egg"
-        if a.UnknownEgg then
+        if attributes.UnknownEgg then
             local _, size = visual:GetBoundingBox()
             visual:ScaleTo(visual:GetScale() * 2.2 / math.max(size.Y, 0.01))
-        elseif mutSrc then
-            local _, ps = template:GetBoundingBox()
-            local _, vs = visual:GetBoundingBox()
-            visual:ScaleTo(visual:GetScale() * ps.Y * 0.5 / math.max(vs.Y, 0.01))
+        elseif mutatedModel then
+            local _, plainSize = template:GetBoundingBox()
+            local _, visualSize = visual:GetBoundingBox()
+            visual:ScaleTo(visual:GetScale() * plainSize.Y * 0.5 / math.max(visualSize.Y, 0.01))
             pcall(function()
-                require(SSS.Mutations).AddAura(visual, a.Mutation)
+                require(ServerScriptService.Mutations).AddAura(visual, attributes.Mutation)
             end)
         else
             visual:ScaleTo(template:GetScale() * 0.5)
         end
         visual:PivotTo(CFrame.new())
-        for _, d in visual:GetDescendants() do
-            if d:IsA("BasePart") then
-                d.Anchored = false
-                d.CanCollide = false
-                d.CanTouch = false
-                d.Massless = true
-                local w = Instance.new("WeldConstraint")
-                w.Part0 = handle
-                w.Part1 = d
-                w.Parent = handle
-            elseif d:IsA("BaseScript") then
-                d:Destroy()
+        for _, descendant in visual:GetDescendants() do
+            if descendant:IsA("BasePart") then
+                descendant.Anchored = false
+                descendant.CanCollide = false
+                descendant.CanTouch = false
+                descendant.Massless = true
+                local weld = Instance.new("WeldConstraint")
+                weld.Part0 = handle
+                weld.Part1 = descendant
+                weld.Parent = handle
+            elseif descendant:IsA("BaseScript") then
+                descendant:Destroy()
             end
         end
         visual.Parent = tool
     end
     return tool
 end
-local function build(rec, p)
-    local ok, t = pcall(function()
-        if rec.k == "char" then
-            return buildChar(rec)
-        elseif rec.k == "egg" then
-            return buildEgg(rec)
+-- Rebuilds one saved record. On failure the record is remembered in unbuildable[player] so the next save keeps it.
+local function buildTool(record, player)
+    local ok, tool = pcall(function()
+        if record.k == "char" then
+            return buildCharacterTool(record)
+        elseif record.k == "egg" then
+            return buildEggTool(record)
         end
     end)
-    if not ok or not t then
-        if p then
-            carry[p] = carry[p] or {}
-            table.insert(carry[p], rec)
-            warn("[PlayerData] kept unbuildable item in save", p.Name, rec.n)
+    if not ok or not tool then
+        if player then
+            unbuildable[player] = unbuildable[player] or {}
+            table.insert(unbuildable[player], record)
+            warn("[PlayerData] kept unbuildable item in save", player.Name, record.n)
         end
         return nil
     end
-    return t
+    return tool
 end
 
 ------------------------------------------------------------ snapshot (live state -> table)
-local function snapshot(p, isFinal)
-    local d = data[p]
-    if not d or not loaded[p] then
+-- Writes the player's live state into sessionData[player]. isFinal = leave / shutdown snapshot: also banks uncollected
+-- stand cash, uses lastHeldTools when the character is gone, and marks hasFinalSnapshot.
+local function snapshot(player, isFinal)
+    local saved = sessionData[player]
+    if not saved or not isLoaded[player] then
         return
     end
-    local r = restored[p]
-    if not r or not r.cash then
+    local restoreFlags = restoreState[player]
+    if not restoreFlags or not restoreFlags.cash then
         return
     end -- nothing given back yet: keep the loaded save exactly as it is
-    local cash = cashOf(p)
-    local plot = plotOf(p)
+    local cash = cashOf(player)
+    local plot = plotOf(player)
     local tools, seen = {}, {}
     local function addFrom(container)
         if not container then
             return
         end
-        for _, t in container:GetChildren() do
-            if not seen[t] then
-                local r = serializeTool(t)
-                if r then
-                    seen[t] = true
-                    table.insert(tools, r)
+        for _, tool in container:GetChildren() do
+            if not seen[tool] then
+                local record = serializeTool(tool)
+                if record then
+                    seen[tool] = true
+                    table.insert(tools, record)
                 end
             end
         end
     end
-    addFrom(p:FindFirstChildOfClass("Backpack"))
-    addFrom(p:FindFirstChild("RespawnHold")) -- KeepItemsOnRespawn parks eggs/characters here during a respawn
+    addFrom(player:FindFirstChildOfClass("Backpack"))
+    addFrom(player:FindFirstChild("RespawnHold")) -- KeepItemsOnRespawn parks eggs/characters here during a respawn
     do
-        local held = p:FindFirstChild("IncubatorHeldEggs")
-        if held then
-            for _, t in held:GetChildren() do
-                if not seen[t] then
-                    local r = serializeTool(t)
-                    if r then
-                        seen[t] = true
-                        local key = t:GetAttribute("IncubatorChamber")
-                        if plot and key then
-                            for _, m in (plot:FindFirstChild("Chambers") and plot.Chambers:GetChildren() or {}) do
-                                if m:GetFullName() == key then
-                                    local ends = m:GetAttribute("CycleEnd")
-                                    r.inc = {
-                                        c = m:GetAttribute("ChamberIndex") or 1,
-                                        left = (m:GetAttribute("Hatching") and ends)
-                                                and math.max(0, ends - workspace:GetServerTimeNow())
+        -- eggs sitting in an incubator: remember which chamber and how much hatch time is left
+        local heldEggs = player:FindFirstChild("IncubatorHeldEggs")
+        if heldEggs then
+            for _, tool in heldEggs:GetChildren() do
+                if not seen[tool] then
+                    local record = serializeTool(tool)
+                    if record then
+                        seen[tool] = true
+                        local chamberPath = tool:GetAttribute("IncubatorChamber")
+                        if plot and chamberPath then
+                            for _, chamber in (plot:FindFirstChild("Chambers") and plot.Chambers:GetChildren() or {}) do
+                                if chamber:GetFullName() == chamberPath then
+                                    local cycleEnd = chamber:GetAttribute("CycleEnd")
+                                    record.inc = {
+                                        c = chamber:GetAttribute("ChamberIndex") or 1,
+                                        left = (chamber:GetAttribute("Hatching") and cycleEnd)
+                                                and math.max(0, cycleEnd - workspace:GetServerTimeNow())
                                             or 0,
                                     }
                                 end
                             end
                         end
-                        r.a.Incubating = nil
-                        table.insert(tools, r)
+                        record.a.Incubating = nil
+                        table.insert(tools, record)
                     end
                 end
             end
         end
     end
-    if p.Character then
-        addFrom(p.Character)
+    if player.Character then
+        addFrom(player.Character)
     elseif isFinal then
-        for _, r in lastHeld[p] or {} do
-            table.insert(tools, r)
+        for _, record in lastHeldTools[player] or {} do
+            table.insert(tools, record)
         end
     end
-    local placed, unlocked, standCash, chambers = {}, {}, 0, {}
+    local placed, unlocked, standCash, chamberLevelsByIndex = {}, {}, 0, {}
     if plot then
         for _, display in plot.PlacedItems:GetChildren() do
             local slotName = display.Name:match("^(.-)_Brainrot$")
-            local a = attrs(display)
-            if slotName and (a.CharacterId or a.BrainrotId) then
-                table.insert(placed, { s = slotName, k = "char", n = display:GetAttribute("ToolName"), a = a })
+            local attributes = copyAttributes(display)
+            if slotName and (attributes.CharacterId or attributes.BrainrotId) then
+                table.insert(placed, { s = slotName, k = "char", n = display:GetAttribute("ToolName"), a = attributes })
             end
         end
         for _, slot in plot.Slots:GetChildren() do
@@ -312,116 +371,125 @@ local function snapshot(p, isFinal)
                 standCash += tonumber(stand:GetAttribute("Stored")) or 0
             end
         end
-        local ch = plot:FindFirstChild("Chambers")
-        if ch then
-            for _, m in ch:GetChildren() do
-                local i = m:GetAttribute("ChamberIndex")
-                if i then
-                    chambers[i] = m:GetAttribute("UpgradeLevel") or 1
+        local chambersFolder = plot:FindFirstChild("Chambers")
+        if chambersFolder then
+            for _, chamber in chambersFolder:GetChildren() do
+                local chamberIndex = chamber:GetAttribute("ChamberIndex")
+                if chamberIndex then
+                    chamberLevelsByIndex[chamberIndex] = chamber:GetAttribute("UpgradeLevel") or 1
                 end
             end
         end
-        d.templeLevel = plot:GetAttribute("TempleLevel") or d.templeLevel or 1
+        saved.templeLevel = plot:GetAttribute("TempleLevel") or saved.templeLevel or 1
     end
     if cash then
-        d.cash = math.max(0, math.floor(cash.Value + standCash))
+        saved.cash = math.max(0, math.floor(cash.Value + standCash))
     end
-    if not r.all then -- items / plot not fully restored yet: only cash + flags are safe to update
+    if not restoreFlags.all then -- items / plot not fully restored yet: only cash + flags are safe to update
         if isFinal then
-            final[p] = true
+            hasFinalSnapshot[player] = true
         end
         return
     end
-    for _, rec in carry[p] or {} do
-        table.insert(tools, rec)
+    for _, record in unbuildable[player] or {} do
+        table.insert(tools, record)
     end
-    d.tools, d.placed = tools, placed
-    d.tutorialCompleted = p:GetAttribute("TutorialCompleted") == true
-    d.tutorialIncomeCollected = p:GetAttribute("TutorialIncomeCollected") == true
-    d.tutorialTourStage = p:GetAttribute("TutorialTourStage") or 9
+    saved.tools, saved.placed = tools, placed
+    saved.tutorialCompleted = player:GetAttribute("TutorialCompleted") == true
+    saved.tutorialIncomeCollected = player:GetAttribute("TutorialIncomeCollected") == true
+    saved.tutorialTourStage = player:GetAttribute("TutorialTourStage") or 9
     if plot and #unlocked > 0 then
-        d.unlocked = unlocked
-        local list = {}
+        saved.unlocked = unlocked
+        local chamberLevels = {}
         for i = 1, 3 do
-            if chambers[i] then
-                table.insert(list, chambers[i])
+            if chamberLevelsByIndex[i] then
+                table.insert(chamberLevels, chamberLevelsByIndex[i])
             end
         end
-        if #list > 0 then
-            d.chambers = list
+        if #chamberLevels > 0 then
+            saved.chambers = chamberLevels
         end
     end
-    if Adapter and Adapter.ExportDiscovered then
-        d.discovered = Adapter.ExportDiscovered(p)
+    if GameAdapter and GameAdapter.ExportDiscovered then
+        saved.discovered = GameAdapter.ExportDiscovered(player)
     end
     if isFinal then
-        final[p] = true
+        hasFinalSnapshot[player] = true
     end
 end
 
 ------------------------------------------------------------ store
-local function save(p, releaseLock)
-    local d = data[p]
-    if not store or not d or not loaded[p] then
+-- Writes sessionData[player]. releaseLock = true clears the session lock (leave / shutdown / SaveAll), otherwise the
+-- lock is refreshed. Returns true on success, false when another server holds the lock, nil after 3 failed attempts.
+local function saveData(player, releaseLock)
+    local saved = sessionData[player]
+    if not store or not saved or not isLoaded[player] then
         return
     end
-    d.v = VERSION
-    d.savedAt = os.time()
-    d.lock = (not releaseLock) and { job = game.JobId, t = os.time() } or nil
+    saved.v = VERSION
+    saved.savedAt = os.time()
+    saved.lock = (not releaseLock) and { job = game.JobId, t = os.time() } or nil
     for attempt = 1, 3 do
         local blocked = false
-        local ok, err = pcall(store.UpdateAsync, store, "u" .. p.UserId, function(old)
-            if old and old.lock and old.lock.job ~= game.JobId and os.time() - (old.lock.t or 0) < LOCK_TIMEOUT then
+        local ok, err = pcall(store.UpdateAsync, store, "u" .. player.UserId, function(stored)
+            if
+                stored
+                and stored.lock
+                and stored.lock.job ~= game.JobId
+                and os.time() - (stored.lock.t or 0) < LOCK_TIMEOUT
+            then
                 blocked = true
                 return nil
             end -- another server owns it
-            return d
+            return saved
         end)
         if ok and not blocked then
-            p:SetAttribute("TempleSaveStatus", "Saved")
+            player:SetAttribute("TempleSaveStatus", "Saved")
             return true
         end
         if blocked then
-            warn("[PlayerData] save skipped: another server holds the lock", p.Name)
+            warn("[PlayerData] save skipped: another server holds the lock", player.Name)
             return false
         end
-        warn("[PlayerData] save failed", p.Name, err)
+        warn("[PlayerData] save failed", player.Name, err)
         task.wait(1 + attempt)
     end
 end
 
-local function load(p)
+-- Loads the save and takes the session lock in the same UpdateAsync. A fresh lock held by another server is respected
+-- for 7 attempts; the 8th attempt takes the lock over. Returns (data) or (nil, "nostore" | "studio" | "left" | "failed").
+local function loadData(player)
     if not store then
         return nil, "nostore"
     end
-    local key = "u" .. p.UserId
+    local key = "u" .. player.UserId
     for attempt = 1, 8 do
         local result, lockedElsewhere
-        local ok, err = pcall(store.UpdateAsync, store, key, function(old)
-            old = old or { v = VERSION }
+        local ok, err = pcall(store.UpdateAsync, store, key, function(stored)
+            stored = stored or { v = VERSION }
             if
-                old.lock
-                and old.lock.job ~= game.JobId
-                and os.time() - (old.lock.t or 0) < LOCK_TIMEOUT
+                stored.lock
+                and stored.lock.job ~= game.JobId
+                and os.time() - (stored.lock.t or 0) < LOCK_TIMEOUT
                 and attempt < 8
             then
                 lockedElsewhere = true
                 return nil
             end
-            old.lock = { job = game.JobId, t = os.time() }
-            result = old
-            return old
+            stored.lock = { job = game.JobId, t = os.time() }
+            result = stored
+            return stored
         end)
         if ok and result then
             return result
         end
         if not ok then
-            warn("[PlayerData] load error", p.Name, err)
+            warn("[PlayerData] load error", player.Name, err)
             if tostring(err):find("StudioAccessToApisNotAllowed") or tostring(err):find("Studio access") then
                 return nil, "studio"
             end
         end
-        if not p.Parent then
+        if not player.Parent then
             return nil, "left"
         end
         task.wait(lockedElsewhere and 2 or (1 + attempt))
@@ -430,256 +498,280 @@ local function load(p)
 end
 
 ------------------------------------------------------------ apply saved state
-local function waitFor(fn, timeout)
-    local t = os.clock()
+-- Polls getter every 0.25 s until it returns a truthy value or timeout (default 20 s) passes; returns that value or nil.
+local function waitFor(getter, timeout)
+    local startedAt = os.clock()
     repeat
-        local v = fn()
-        if v then
-            return v
+        local value = getter()
+        if value then
+            return value
         end
         task.wait(0.25)
-    until os.clock() - t > (timeout or 20)
+    until os.clock() - startedAt > (timeout or 20)
 end
 
-local function apply(p, d)
+-- Puts the saved state back into the game. Yields a lot (character, backpack, plot, chambers). restoreState.cash is set
+-- right after cash is restored; restoreState.all is only set by restoreSavedState once this returns with a plot.
+local function applySavedState(player, saved)
     -- wait for the character: Roblox resets the Backpack when the first character spawns, wiping anything given earlier
-    local char = p.Character or waitFor(function()
-        return p.Character
+    local character = player.Character or waitFor(function()
+        return player.Character
     end, 40)
-    if not char or not p.Parent then
+    if not character or not player.Parent then
         return
     end
     waitFor(function()
-        return char:FindFirstChild("HumanoidRootPart")
+        return character:FindFirstChild("HumanoidRootPart")
     end, 15)
     task.wait(1)
-    local offline = math.clamp(os.time() - (tonumber(d.savedAt) or os.time()), 0, 28800) -- up to 8 h counts (economy v4)
+    local offlineSeconds = math.clamp(os.time() - (tonumber(saved.savedAt) or os.time()), 0, 28800) -- up to 8 h counts (economy v4)
     local cash = waitFor(function()
-        return cashOf(p)
+        return cashOf(player)
     end, 20)
-    if cash and d.cash then
-        cash.Value = d.cash
+    if cash and saved.cash then
+        cash.Value = saved.cash
     end
-    restored[p] = { cash = cash ~= nil, all = false }
-    local bag = waitFor(function()
-        return p:FindFirstChildOfClass("Backpack")
+    restoreState[player] = { cash = cash ~= nil, all = false }
+    local backpack = waitFor(function()
+        return player:FindFirstChildOfClass("Backpack")
     end, 20)
+    -- Known issue (PROJECT_AUDIT "PlayerData restore dup"): tools are given here, before the plot wait below.
     local incubating = {}
-    for _, rec in d.tools or {} do
-        if rec.inc then
-            table.insert(incubating, rec)
+    for _, record in saved.tools or {} do
+        if record.inc then
+            table.insert(incubating, record)
         else
-            local t = build(rec, p)
-            if t and bag then
-                t.Parent = bag
+            local tool = buildTool(record, player)
+            if tool and backpack then
+                tool.Parent = backpack
             end
         end
     end
     local plot = waitFor(function()
-        return plotOf(p)
+        return plotOf(player)
     end, 40)
     if not plot then
-        warn("[PlayerData] no plot for", p.Name, "- keeping saved temple/characters untouched")
+        warn("[PlayerData] no plot for", player.Name, "- keeping saved temple/characters untouched")
         return
     end
-    for _, name in d.unlocked or {} do
-        local s = plot.Slots:FindFirstChild(name)
-        if s then
-            s:SetAttribute("Unlocked", true)
+    for _, slotName in saved.unlocked or {} do
+        local slot = plot.Slots:FindFirstChild(slotName)
+        if slot then
+            slot:SetAttribute("Unlocked", true)
         end
     end
-    pcall(SlotUnlocks.Refresh, plot)
+    pcall(TempleSlotUnlocks.Refresh, plot)
+    -- placed characters: give the tool, then let the slot's own InvokePlaceCharacter put it back on the platform
     local placedSlots = {}
-    for _, rec in d.placed or {} do
-        local tool = build(rec, p)
-        if tool and bag then
-            tool.Parent = bag
-            local slot = plot.Slots:FindFirstChild(rec.s)
-            local inv = slot
+    for _, record in saved.placed or {} do
+        local tool = buildTool(record, player)
+        if tool and backpack then
+            tool.Parent = backpack
+            local slot = plot.Slots:FindFirstChild(record.s)
+            local placeInvoke = slot
                 and slot:FindFirstChild("Platform")
                 and slot.Platform:FindFirstChild("InvokePlaceCharacter")
-            if inv and slot:GetAttribute("Unlocked") and not slot:GetAttribute("Occupied") then
-                local ok, placed = pcall(inv.Invoke, inv, p, tool)
+            if placeInvoke and slot:GetAttribute("Unlocked") and not slot:GetAttribute("Occupied") then
+                local ok, placed = pcall(placeInvoke.Invoke, placeInvoke, player, tool)
                 if ok and placed then
                     table.insert(placedSlots, slot)
                 end
             end
         end
     end
-    pcall(SlotUnlocks.Refresh, plot)
+    pcall(TempleSlotUnlocks.Refresh, plot)
     -- offline earnings land on the money stands
-    if offline > 5 and #placedSlots > 0 then
+    if offlineSeconds > 5 and #placedSlots > 0 then
         task.wait(1.5)
         local total = 0
         for _, slot in placedSlots do
             local stand = slot:FindFirstChild("MoneyStand")
             local rate = stand and tonumber(stand:GetAttribute("IncomePerSecond")) or 0
             if stand and rate > 0 then
-                local add = math.floor(rate * offline * 0.5) --[[ offline earns half ]]
-                stand:SetAttribute("Stored", (stand:GetAttribute("Stored") or 0) + add)
-                total += add
+                local earned = math.floor(rate * offlineSeconds * 0.5) --[[ offline earns half ]]
+                stand:SetAttribute("Stored", (stand:GetAttribute("Stored") or 0) + earned)
+                total += earned
             end
         end
         if total > 0 then
-            p:SetAttribute("OfflineEarnings", total)
-            p:SetAttribute("OfflineSeconds", offline)
+            player:SetAttribute("OfflineEarnings", total)
+            player:SetAttribute("OfflineSeconds", offlineSeconds)
         end
     end
     -- eggs go back into their incubator with the time they had left, minus the time you were away
-    for _, rec in incubating do
-        local tool = build(rec, p)
+    for _, record in incubating do
+        local tool = buildTool(record, player)
         if tool then
             tool:SetAttribute("Incubating", nil)
             local chamber = waitFor(function()
-                local ch = plot:FindFirstChild("Chambers")
-                local m = ch and ch:FindFirstChild("Chamber" .. (rec.inc.c or 1))
-                return m and not m:GetAttribute("UnderConstruction") and m:FindFirstChild("ResumeEgg") and m
+                local chambersFolder = plot:FindFirstChild("Chambers")
+                local candidate = chambersFolder and chambersFolder:FindFirstChild("Chamber" .. (record.inc.c or 1))
+                return candidate
+                    and not candidate:GetAttribute("UnderConstruction")
+                    and candidate:FindFirstChild("ResumeEgg")
+                    and candidate
             end, 25)
-            local ok = false
-            if chamber and plotOf(p) == plot then
-                tool.Parent = bag
-                local s2, r2 = pcall(
+            local resumedOk = false
+            if chamber and plotOf(player) == plot then
+                tool.Parent = backpack
+                local invokeOk, resumed = pcall(
                     chamber.ResumeEgg.Invoke,
                     chamber.ResumeEgg,
-                    p,
+                    player,
                     tool,
-                    math.max(0, (rec.inc.left or 0) - offline)
+                    math.max(0, (record.inc.left or 0) - offlineSeconds)
                 )
-                ok = s2 and r2 == true
-                if ok then
+                resumedOk = invokeOk and resumed == true
+                if resumedOk then
                     task.wait(1)
                 end
             end
-            if not ok and bag then
-                tool.Parent = bag
+            if not resumedOk and backpack then
+                tool.Parent = backpack
             end
         end
     end
 end
 
-local function applyAll(p, d)
-    local ok, err = pcall(apply, p, d)
+-- pcall wrapper: marks restoreState.all only when the restore finished, the player is still here and owns a plot.
+local function restoreSavedState(player, saved)
+    local ok, err = pcall(applySavedState, player, saved)
     if not ok then
-        warn("[PlayerData] restore error", p.Name, err)
+        warn("[PlayerData] restore error", player.Name, err)
         return
     end
-    local plot = plotOf(p)
-    if p.Parent and plot and restored[p] then
-        restored[p].all = true
+    local plot = plotOf(player)
+    if player.Parent and plot and restoreState[player] then
+        restoreState[player].all = true
     end
 end
 
-local function onJoin(p)
-    data[p] = { v = VERSION }
-    local jd = p:GetJoinData()
-    local td = jd and jd.TeleportData
-    if type(td) == "table" and td.SoftShutdown == true then -- /update waiting server: just passing through, never touch the save
-        p:SetAttribute("DataLoaded", true)
-        p:SetAttribute("TempleSaveStatus", "Updating…")
+local function onJoin(player)
+    sessionData[player] = { v = VERSION }
+    local joinData = player:GetJoinData()
+    local teleportData = joinData and joinData.TeleportData
+    if type(teleportData) == "table" and teleportData.SoftShutdown == true then -- /update waiting server: just passing through, never touch the save
+        player:SetAttribute("DataLoaded", true)
+        player:SetAttribute("TempleSaveStatus", "Updating…")
         return
     end
-    local d, why = load(p)
-    if not p.Parent then
+    local saved, failReason = loadData(player)
+    if not player.Parent then
         return
     end
-    if d then
-        data[p] = d
-        loaded[p] = true
-        p:SetAttribute("TutorialCompleted", d.tutorialCompleted == true)
-        p:SetAttribute("TutorialIncomeCollected", d.tutorialIncomeCollected == true or d.tutorialCompleted == true)
-        p:SetAttribute("TutorialTourStage", math.clamp(tonumber(d.tutorialTourStage) or 9, 9, 12))
-        for k, v in d.settings or {} do
-            p:SetAttribute(k, v)
+    if saved then
+        sessionData[player] = saved
+        isLoaded[player] = true
+        player:SetAttribute("TutorialCompleted", saved.tutorialCompleted == true)
+        player:SetAttribute(
+            "TutorialIncomeCollected",
+            saved.tutorialIncomeCollected == true or saved.tutorialCompleted == true
+        )
+        player:SetAttribute("TutorialTourStage", math.clamp(tonumber(saved.tutorialTourStage) or 9, 9, 12))
+        for name, value in saved.settings or {} do
+            player:SetAttribute(name, value)
         end
-        p:SetAttribute("SavedTempleLevel", d.templeLevel or 1)
-        if d.chambers then
-            p:SetAttribute("SavedChambers", table.concat(d.chambers, ","))
+        player:SetAttribute("SavedTempleLevel", saved.templeLevel or 1)
+        if saved.chambers then
+            player:SetAttribute("SavedChambers", table.concat(saved.chambers, ","))
         end
-        if Adapter and Adapter.ImportDiscovered and d.discovered then
-            pcall(Adapter.ImportDiscovered, p, d.discovered)
+        if GameAdapter and GameAdapter.ImportDiscovered and saved.discovered then
+            pcall(GameAdapter.ImportDiscovered, player, saved.discovered)
         end
-        p:SetAttribute("DataLoaded", true)
-        p:SetAttribute("TempleSaveStatus", "Saved")
+        player:SetAttribute("DataLoaded", true)
+        player:SetAttribute("TempleSaveStatus", "Saved")
         task.spawn(function()
-            applyAll(p, d)
-            if p.Parent then
-                p:SetAttribute("TutorialDataReady", true)
+            restoreSavedState(player, saved)
+            if player.Parent then
+                player:SetAttribute("TutorialDataReady", true)
             end
         end)
-    elseif why == "studio" or why == "nostore" then
-        p:SetAttribute("DataLoaded", true)
-        p:SetAttribute("TempleSaveStatus", "Session only (Studio)")
-        p:SetAttribute("TutorialCompleted", false)
-        p:SetAttribute("TutorialIncomeCollected", false)
-        p:SetAttribute("TutorialTourStage", 9)
-        p:SetAttribute("TutorialDataReady", true)
-    elseif why ~= "left" then
-        p:Kick("We couldn't load your save right now, so nothing was changed. Please rejoin in a minute.")
+    elseif failReason == "studio" or failReason == "nostore" then
+        player:SetAttribute("DataLoaded", true)
+        player:SetAttribute("TempleSaveStatus", "Session only (Studio)")
+        player:SetAttribute("TutorialCompleted", false)
+        player:SetAttribute("TutorialIncomeCollected", false)
+        player:SetAttribute("TutorialTourStage", 9)
+        player:SetAttribute("TutorialDataReady", true)
+    elseif failReason ~= "left" then
+        -- load failed for real: kick instead of playing on an empty profile that would overwrite the save
+        player:Kick("We couldn't load your save right now, so nothing was changed. Please rejoin in a minute.")
     end
 end
 
-local function onLeave(p)
-    if loaded[p] then
-        if not final[p] then
-            snapshot(p, true)
+local function onLeave(player)
+    if isLoaded[player] then
+        if not hasFinalSnapshot[player] then
+            snapshot(player, true)
         end
-        save(p, true)
+        saveData(player, true)
     end
-    data[p], loaded[p], final[p], lastHeld[p], lastSet[p], restored[p], carry[p] = nil, nil, nil, nil, nil, nil, nil
+    sessionData[player], isLoaded[player], hasFinalSnapshot[player], lastHeldTools[player], lastSettingsAt[player], restoreState[player], unbuildable[player] =
+        nil, nil, nil, nil, nil, nil, nil
 end
 
 ------------------------------------------------------------ studio debug hook
+-- ServerStorage.PlayerDataDebug:Invoke("dump", player) -> JSON of the save; ("rejoin", player, secondsAway) simulates
+-- a leave + rejoin on the same server.
 if RunService:IsStudio() then
-    local dbg = ServerStorage:FindFirstChild("PlayerDataDebug") or Instance.new("BindableFunction")
-    dbg.Name = "PlayerDataDebug"
-    dbg.Parent = ServerStorage
-    dbg.OnInvoke = function(action, p, extra)
+    local debugHook = ServerStorage:FindFirstChild("PlayerDataDebug") or Instance.new("BindableFunction")
+    debugHook.Name = "PlayerDataDebug"
+    debugHook.Parent = ServerStorage
+    debugHook.OnInvoke = function(action, player, secondsAway)
         if action == "dump" then
-            snapshot(p, false)
-            return game:GetService("HttpService"):JSONEncode(data[p])
+            snapshot(player, false)
+            return game:GetService("HttpService"):JSONEncode(sessionData[player])
         end
         if action == "rejoin" then -- snapshot, wipe live state like a leave, then restore like a rejoin (extra = seconds away)
-            snapshot(p, true)
-            final[p] = nil
-            local d = data[p]
-            d.savedAt = os.time() - (tonumber(extra) or 0)
-            for _, c in { p:FindFirstChildOfClass("Backpack"), p.Character, p:FindFirstChild("IncubatorHeldEggs") } do
-                if c then
-                    for _, t in c:GetChildren() do
-                        if serializeTool(t) then
-                            t:Destroy()
+            snapshot(player, true)
+            hasFinalSnapshot[player] = nil
+            local saved = sessionData[player]
+            saved.savedAt = os.time() - (tonumber(secondsAway) or 0)
+            for _, container in
+                {
+                    player:FindFirstChildOfClass("Backpack"),
+                    player.Character,
+                    player:FindFirstChild("IncubatorHeldEggs"),
+                }
+            do
+                if container then
+                    for _, tool in container:GetChildren() do
+                        if serializeTool(tool) then
+                            tool:Destroy()
                         end
                     end
                 end
             end
-            local plot = plotOf(p)
+            local plot = plotOf(player)
             if plot then
                 plot.PlacedItems:ClearAllChildren()
-                for _, sl in plot.Slots:GetChildren() do
-                    sl:SetAttribute("Occupied", false)
-                    sl:SetAttribute("Unlocked", nil)
+                for _, slot in plot.Slots:GetChildren() do
+                    slot:SetAttribute("Occupied", false)
+                    slot:SetAttribute("Unlocked", nil)
                 end
                 plot:SetAttribute("OwnerUserId", 0)
                 task.wait(1)
-                plot:SetAttribute("OwnerUserId", p.UserId)
+                plot:SetAttribute("OwnerUserId", player.UserId)
                 task.wait(1)
-                for _, sl in plot.Slots:GetChildren() do
-                    if sl.Name == "Slot01" then
-                        sl:SetAttribute("Unlocked", true)
+                for _, slot in plot.Slots:GetChildren() do
+                    if slot.Name == "Slot01" then
+                        slot:SetAttribute("Unlocked", true)
                     end
                 end
             end
-            local cash = cashOf(p)
+            local cash = cashOf(player)
             if cash then
                 cash.Value = 0
             end
-            applyAll(p, d)
+            restoreSavedState(player, saved)
             return "restored"
         end
     end
 end
 ------------------------------------------------------------ settings (volume + toggles)
-local SETTINGS = {
+-- Allowed setting -> expected type. Numbers are clamped to 0..1 (NaN -> 1). Saved under sessionData[player].settings
+-- and re-applied as player attributes on join.
+local SETTING_TYPES = {
     MusicVolume = "number",
     SFXVolume = "number",
     SFXMuted = "boolean",
@@ -687,140 +779,144 @@ local SETTINGS = {
     NightFX = "boolean",
     HideLabels = "boolean",
 }
-local setRemote = RS:FindFirstChild("SaveSettings") or Instance.new("RemoteEvent")
-setRemote.Name = "SaveSettings"
-setRemote.Parent = RS
-setRemote.OnServerEvent:Connect(function(p, t)
-    if type(t) ~= "table" or not data[p] or os.clock() - (lastSet[p] or 0) < 0.5 then
+local saveSettingsRemote = ReplicatedStorage:FindFirstChild("SaveSettings") or Instance.new("RemoteEvent")
+saveSettingsRemote.Name = "SaveSettings"
+saveSettingsRemote.Parent = ReplicatedStorage
+saveSettingsRemote.OnServerEvent:Connect(function(player, requested)
+    if type(requested) ~= "table" or not sessionData[player] or os.clock() - (lastSettingsAt[player] or 0) < 0.5 then
         return
     end
-    lastSet[p] = os.clock()
+    lastSettingsAt[player] = os.clock()
     local clean = {}
-    for k, ty in SETTINGS do
-        local v = t[k]
-        if typeof(v) == ty then
-            if ty == "number" then
-                v = math.clamp(v, 0, 1)
-                if v ~= v then
-                    v = 1
+    for name, expectedType in SETTING_TYPES do
+        local value = requested[name]
+        if typeof(value) == expectedType then
+            if expectedType == "number" then
+                value = math.clamp(value, 0, 1)
+                if value ~= value then -- NaN
+                    value = 1
                 end
             end
-            clean[k] = v
-            p:SetAttribute(k, v)
+            clean[name] = value
+            player:SetAttribute(name, value)
         end
     end
-    data[p].settings = clean
+    sessionData[player].settings = clean
 end)
 ------------------------------------------------------------ wiring
-local saveAll = ServerStorage:FindFirstChild("PlayerDataSaveAll") or Instance.new("BindableFunction")
-saveAll.Name = "PlayerDataSaveAll"
-saveAll.Parent = ServerStorage
-saveAll.OnInvoke = function() -- save + release every player (used by /update before teleporting)
-    local n = 0
-    for _, p in Players:GetPlayers() do
-        if loaded[p] then
-            n += 1
+local saveAllHook = ServerStorage:FindFirstChild("PlayerDataSaveAll") or Instance.new("BindableFunction")
+saveAllHook.Name = "PlayerDataSaveAll"
+saveAllHook.Parent = ServerStorage
+saveAllHook.OnInvoke = function() -- save + release every player (used by /update before teleporting)
+    local pending = 0
+    for _, player in Players:GetPlayers() do
+        if isLoaded[player] then
+            pending += 1
             task.spawn(function()
-                pcall(snapshot, p, true)
-                pcall(save, p, true)
-                loaded[p] = nil
-                n -= 1
+                pcall(snapshot, player, true)
+                pcall(saveData, player, true)
+                isLoaded[player] = nil -- lock released: no further saves from this server
+                pending -= 1
             end)
         end
     end
-    local t = os.clock()
-    while n > 0 and os.clock() - t < 20 do
+    local startedAt = os.clock()
+    while pending > 0 and os.clock() - startedAt < 20 do
         task.wait(0.2)
     end
-    return n == 0
+    return pending == 0
 end
-local saveNow = ServerStorage:FindFirstChild("PlayerDataSaveNow") or Instance.new("BindableFunction")
-saveNow.Name = "PlayerDataSaveNow"
-saveNow.Parent = ServerStorage
-saveNow.OnInvoke = function(p) -- returns true only once the player's items are restored AND the save landed
-    if not loaded[p] or not (restored[p] and restored[p].all) then
+local saveNowHook = ServerStorage:FindFirstChild("PlayerDataSaveNow") or Instance.new("BindableFunction")
+saveNowHook.Name = "PlayerDataSaveNow"
+saveNowHook.Parent = ServerStorage
+saveNowHook.OnInvoke = function(player) -- returns true only once the player's items are restored AND the save landed
+    if not isLoaded[player] or not (restoreState[player] and restoreState[player].all) then
         return false
     end
-    pcall(snapshot, p, false)
-    return save(p, false) == true
+    pcall(snapshot, player, false)
+    return saveData(player, false) == true
 end
-local snapFn = ServerStorage:FindFirstChild("PlayerDataSnapshot") or Instance.new("BindableFunction")
-snapFn.Name = "PlayerDataSnapshot"
-snapFn.Parent = ServerStorage
-snapFn.OnInvoke = function(p)
-    pcall(snapshot, p, true)
+local snapshotHook = ServerStorage:FindFirstChild("PlayerDataSnapshot") or Instance.new("BindableFunction")
+snapshotHook.Name = "PlayerDataSnapshot"
+snapshotHook.Parent = ServerStorage
+snapshotHook.OnInvoke = function(player)
+    pcall(snapshot, player, true)
     return true
 end
 
-if Quests and Quests.Persistence then
-    Quests.Persistence.Load = function(p)
+-- QuestService stores its progress inside this save (field "quests").
+if QuestService and QuestService.Persistence then
+    QuestService.Persistence.Load = function(player)
         waitFor(function()
-            return p:GetAttribute("DataLoaded") or not p.Parent
+            return player:GetAttribute("DataLoaded") or not player.Parent
         end, 30)
-        return data[p] and data[p].quests or nil
+        return sessionData[player] and sessionData[player].quests or nil
     end
-    Quests.Persistence.Save = function(p, tbl)
-        if data[p] then
-            data[p].quests = tbl
+    QuestService.Persistence.Save = function(player, questData)
+        if sessionData[player] then
+            sessionData[player].quests = questData
         end
     end
 end
 
-local function watchChar(p)
-    p.CharacterRemoving:Connect(function(c)
-        local list = {}
-        for _, t in c:GetChildren() do
-            local r = serializeTool(t)
-            if r then
-                table.insert(list, r)
+-- Remembers what the character was holding, so a final snapshot after the character is gone still saves it.
+local function watchCharacter(player)
+    player.CharacterRemoving:Connect(function(character)
+        local heldRecords = {}
+        for _, tool in character:GetChildren() do
+            local record = serializeTool(tool)
+            if record then
+                table.insert(heldRecords, record)
             end
         end
-        lastHeld[p] = list
+        lastHeldTools[player] = heldRecords
     end)
 end
-Players.PlayerAdded:Connect(function(p)
-    watchChar(p)
-    onJoin(p)
+Players.PlayerAdded:Connect(function(player)
+    watchCharacter(player)
+    onJoin(player)
 end)
-for _, p in Players:GetPlayers() do
+for _, player in Players:GetPlayers() do
     task.spawn(function()
-        watchChar(p)
-        onJoin(p)
+        watchCharacter(player)
+        onJoin(player)
     end)
 end
 Players.PlayerRemoving:Connect(onLeave)
 
+-- Autosave loop (refreshes the session lock)
 task.spawn(function()
     while true do
-        task.wait(AUTOSAVE)
-        for _, p in Players:GetPlayers() do
-            if loaded[p] and not final[p] then
-                pcall(snapshot, p, false)
-                task.spawn(save, p, false)
+        task.wait(AUTOSAVE_INTERVAL)
+        for _, player in Players:GetPlayers() do
+            if isLoaded[player] and not hasFinalSnapshot[player] then
+                pcall(snapshot, player, false)
+                task.spawn(saveData, player, false)
             end
         end
     end
 end)
 
+-- Shutdown: final snapshot + save + lock release for everyone, waiting up to 25 s.
 game:BindToClose(function()
     if not store then
         return
     end
-    local n = 0
-    for _, p in Players:GetPlayers() do
-        if loaded[p] then
-            n += 1
+    local pending = 0
+    for _, player in Players:GetPlayers() do
+        if isLoaded[player] then
+            pending += 1
             task.spawn(function()
-                if not final[p] then
-                    pcall(snapshot, p, true)
+                if not hasFinalSnapshot[player] then
+                    pcall(snapshot, player, true)
                 end
-                save(p, true)
-                n -= 1
+                saveData(player, true)
+                pending -= 1
             end)
         end
     end
-    local t = os.clock()
-    while n > 0 and os.clock() - t < 25 do
+    local startedAt = os.clock()
+    while pending > 0 and os.clock() - startedAt < 25 do
         task.wait(0.2)
     end
 end)
