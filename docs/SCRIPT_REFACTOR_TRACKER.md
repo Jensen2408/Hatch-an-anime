@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 127 |
+| Pending | 123 |
 | Reviewed — No Changes Needed | 4 |
-| Refactored | 58 |
+| Refactored | 62 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -110,10 +110,10 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Hatching/CinematicHatch.client.luau` | LocalScript | 612 | 897 | Pending | — | — |
-| `client/Hatching/HatchFXClientStart.client.luau` | LocalScript | 2 | 2 | Pending | — | — |
-| `client/Hatching/HatchLiquidVisuals.client.luau` | LocalScript | 113 | 190 | Pending | — | — |
-| `shared/Hatching/HatchFX/HatchFXClient.luau` | ModuleScript | 446 | 898 | Pending | — | — |
+| `client/Hatching/CinematicHatch.client.luau` | LocalScript | 612 | 967 | Refactored | CHANGED | Renames (record/activeSession/timelineTime…), services full names, UPPER constants, contract header; extracted createCoreEffects, showRecord, animateHatching, animateRelease, updateOwnerCamera |
+| `client/Hatching/HatchFXClientStart.client.luau` | LocalScript | 2 | 4 | Refactored | SAME | Header comment explaining what it starts |
+| `client/Hatching/HatchLiquidVisuals.client.luau` | LocalScript | 113 | 213 | Refactored | SAME | Header with attribute contract, descriptive renames, unused locals prefixed _, comments; heartbeatConnection kept as-is and documented as known issue |
+| `shared/Hatching/HatchFX/HatchFXClient.luau` | ModuleScript | 446 | 980 | Refactored | CHANGED | Renames, replicated-contract header, section/why comments; extracted rockEgg, updateCracks, updateShards, updateCharacter (from step) and createEggEffects, collectMachineGlow (from begin) |
 
 ## Batch 08 — Characters
 
@@ -877,39 +877,39 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Hatching/CinematicHatch.client.luau`
 
-- **Type:** LocalScript · **Batch:** 07 · **Priority:** High · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 07 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** CinematicHatch (LocalScript, StarterPlayerScripts) Local hatch cinematic for the incubators. The server owns timing, rewards and machine state; this script only draws. Everyone nearby sees the egg bre
 - **Dependencies:** PlayerModule, UISound
 - **Public functions:** —
 - **Events:** Connect×7, OnClientEvent×1, RunService×1
-- **Readability problems:** 66 dense one-line statements; 17 one-letter locals
+- **Readability problems:** 897-line script; ~230-line render-step callback mixing egg animation, release physics and owner camera; cryptic locals (r, s, u, t, b, d, g, e, em, mn/mx); service aliases Collection/Actions; unused Debris; stale sound comment
 
 ### `client/Hatching/HatchFXClientStart.client.luau`
 
-- **Type:** LocalScript · **Batch:** 07 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 07 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.HatchFXClientStart  (LocalScript)
 - **Dependencies:** HatchFXClient
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** One-line bootstrap with minimal header
 
 ### `client/Hatching/HatchLiquidVisuals.client.luau`
 
-- **Type:** LocalScript · **Batch:** 07 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 07 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×5
-- **Readability problems:** 13 dense one-line statements; 1 lines >160 chars; 4 one-letter locals
+- **Readability problems:** No header; cryptic names (h, m, e, a, s, c, fade, collection); unused RunService/layers; undefined global heartbeatConnection read
 
 ### `shared/Hatching/HatchFX/HatchFXClient.luau`
 
-- **Type:** ModuleScript · **Batch:** 07 · **Priority:** High · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 07 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.HatchFX.HatchFXClient  (ModuleScript, client)
 - **Dependencies:** HatchFXConfig
 - **Public functions:** Client.Start, Shake.add
 - **Events:** Connect×9, RunService×3
-- **Readability problems:** 83 dense one-line statements; 17 lines >160 chars; 20 one-letter locals
+- **Readability problems:** 898 lines; step() ~170 lines and begin() ~190 lines mixing phases; one-letter locals (s, g, l, r, d, n, p, q, cf, R, T); contract undocumented
 
 ### `client/Characters/CharacterAnimator.client.luau`
 

@@ -7,26 +7,36 @@
 -- (triangles grouped by fracture cell, original UVs + SurfaceAppearance kept), so the
 -- intact egg looks identical and the pieces part along voxel-stepped fracture lines.
 -- A warm core inside the shell is what you see through the opening seams.
+--
+-- Server contract:
+--   tags  "IncubatorEgg" (egg models with a ChamberHome CFrame attribute; shell is pre-built)
+--         "CinematicEggHatch" (hatch running; HatchEpoch = server start time, HatchDuration seconds)
+--   ReplicatedStorage.CinematicHatchCue  server -> owner  (action, chamber, home, value, intro, cameraToken)
+--         actions: "Start" (value = duration) | "HatchStarted" | "Reveal" (value = character name) | "End"
+--   ReplicatedStorage.HatchCameraReady   owner -> server  (cameraToken), once the camera has settled
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
-local Collection = game:GetService("CollectionService")
+local CollectionService = game:GetService("CollectionService")
 local AssetService = game:GetService("AssetService")
 local Lighting = game:GetService("Lighting")
 local SoundService = game:GetService("SoundService")
-local Actions = game:GetService("ContextActionService")
-local Debris = game:GetService("Debris")
+local ContextActionService = game:GetService("ContextActionService")
+local _Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
-local remote = game.ReplicatedStorage:WaitForChild("CinematicHatchCue")
+local cinematicHatchCue = game.ReplicatedStorage:WaitForChild("CinematicHatchCue")
 local UISound = require(game.ReplicatedStorage:WaitForChild("UISound"))
 
-local BASE = 5.6 -- timeline below is written for a 5.6 s hatch and scaled to the real one
-local NEAR = 120
+local BASE_DURATION = 5.6 -- timeline below is written for a 5.6 s hatch and scaled to the real one
+local NEAR_DISTANCE = 120 -- shells are only built / animated within this camera distance
 local TAU = math.pi * 2
-local CORE = Color3.fromRGB(255, 236, 196)
--- Sounds are not set yet. Hook points are marked "SOUND:" below (hum start, each crack, release).
+local CORE_COLOR = Color3.fromRGB(255, 236, 196)
+-- Sounds are not set yet. Hook points are marked "SOUND:" below (hum start, each crack, release);
+-- the crack and release hooks already play UISound cues.
 -- shake beats: first fracture is a single jolt, then bursts grow with shorter pauses
+--   t = start (timeline s), amp = tilt degrees, len = burst s, open = cells whose seam opens,
+--   vol / pitch = crack sound, axis = tilt direction (radians)
 local BEATS = {
     { t = 0.95, amp = 6, len = 0.28, cycles = 1, open = { 1, 2 }, vol = 0.5, pitch = 1.05, axis = 0.6 },
     { t = 1.85, amp = 4, len = 0.38, cycles = 2, open = { 3 }, vol = 0.42, pitch = 1.2, axis = 2.2 },
@@ -37,8 +47,8 @@ local BEATS = {
 }
 local WHITE_FROM, WHITE_TO, HOLD = 4.25, 5.0, 5.0 -- breaking point, then tension hold
 
-local function wrap(a)
-    return (a + math.pi) % TAU - math.pi
+local function wrapAngle(angle)
+    return (angle + math.pi) % TAU - math.pi
 end
 local function smooth(x)
     x = math.clamp(x, 0, 1)
@@ -46,134 +56,148 @@ local function smooth(x)
 end
 
 local function newPart(props)
-    local p = Instance.new("Part")
-    p.Anchored, p.CanCollide, p.CanTouch, p.CanQuery = true, false, false, false
-    for k, v in props do
-        p[k] = v
+    local part = Instance.new("Part")
+    part.Anchored, part.CanCollide, part.CanTouch, part.CanQuery = true, false, false, false
+    for key, value in props do
+        part[key] = value
     end
-    return p
+    return part
 end
 
 ------------------------------------------------------------------------ fracture builder
 -- cells: 1-2 cap halves, 3-6 body sectors, 7 base cup (stays put)
-local function cellOf(h, a)
-    local cap = 0.13 + 0.05 * math.sin(3 * a + 1.3) + 0.025 * math.sin(7 * a + 0.4)
-    local base = -0.29 + 0.035 * math.sin(4 * a + 2.1)
-    if h > cap then
-        return wrap(a - (0.18 + 0.9 * (h - cap))) < 0 and 1 or 2
-    elseif h < base then
+-- height = egg-box Y / size Y (about -0.5..0.5), angle = around the up axis (0 faces the walkway)
+local function cellOf(height, angle)
+    local capLine = 0.13 + 0.05 * math.sin(3 * angle + 1.3) + 0.025 * math.sin(7 * angle + 0.4)
+    local baseLine = -0.29 + 0.035 * math.sin(4 * angle + 2.1)
+    if height > capLine then
+        return wrapAngle(angle - (0.18 + 0.9 * (height - capLine))) < 0 and 1 or 2
+    elseif height < baseLine then
         return 7
     end
-    local s = (a - 0.55 - 0.2 * math.sin(9 * h + 2 * a) - 0.07 * math.sin(23 * h + a)) % TAU
-    return 3 + math.floor(s / (TAU / 4)) % 4
+    local sectorAngle = (angle - 0.55 - 0.2 * math.sin(9 * height + 2 * angle) - 0.07 * math.sin(23 * height + angle))
+        % TAU
+    return 3 + math.floor(sectorAngle / (TAU / 4)) % 4
 end
 
-local sources = {} -- MeshId -> {em, center, size, faces = {{a, b, c, uvs, normals, centroid}}}
-local function source(id)
-    local c = sources[id]
-    if c then
-        return c
+local meshSources = {} -- MeshId -> {em, center, size, faces = {{a, b, c, uvs, normals, centroid}}}
+-- Reads a mesh once (cached per MeshId). Yields: async mesh load + a frame every 1500 faces.
+local function getMeshSource(meshId)
+    local cached = meshSources[meshId]
+    if cached then
+        return cached
     end
-    local em = AssetService:CreateEditableMeshAsync(Content.fromUri(id))
-    local mn, mx = Vector3.one * math.huge, -Vector3.one * math.huge
-    for _, v in em:GetVertices() do
-        local p = em:GetPosition(v)
-        mn = mn:Min(p)
-        mx = mx:Max(p)
+    local editableMesh = AssetService:CreateEditableMeshAsync(Content.fromUri(meshId))
+    local minCorner, maxCorner = Vector3.one * math.huge, -Vector3.one * math.huge
+    for _, vertexId in editableMesh:GetVertices() do
+        local position = editableMesh:GetPosition(vertexId)
+        minCorner = minCorner:Min(position)
+        maxCorner = maxCorner:Max(position)
     end
-    c = { em = em, center = (mn + mx) / 2, size = mx - mn, faces = {} }
-    for i, f in em:GetFaces() do
-        local vs = em:GetFaceVertices(f)
-        local a, b, d = em:GetPosition(vs[1]), em:GetPosition(vs[2]), em:GetPosition(vs[3])
-        local uv, nm = {}, {}
-        for k, id2 in em:GetFaceUVs(f) do
-            uv[k] = em:GetUV(id2)
+    cached = { em = editableMesh, center = (minCorner + maxCorner) / 2, size = maxCorner - minCorner, faces = {} }
+    for i, faceId in editableMesh:GetFaces() do
+        local vertexIds = editableMesh:GetFaceVertices(faceId)
+        local p1, p2, p3 =
+            editableMesh:GetPosition(vertexIds[1]),
+            editableMesh:GetPosition(vertexIds[2]),
+            editableMesh:GetPosition(vertexIds[3])
+        local uvs, normals = {}, {}
+        for k, uvId in editableMesh:GetFaceUVs(faceId) do
+            uvs[k] = editableMesh:GetUV(uvId)
         end
-        local okN, ns = pcall(em.GetFaceNormals, em, f)
-        if okN then
-            for k, id2 in ns do
-                nm[k] = em:GetNormal(id2)
+        local okNormals, normalIds = pcall(editableMesh.GetFaceNormals, editableMesh, faceId)
+        if okNormals then
+            for k, normalId in normalIds do
+                normals[k] = editableMesh:GetNormal(normalId)
             end
         end
-        c.faces[i] = { a, b, d, uv, nm, (a + b + d) / 3 }
+        cached.faces[i] = { p1, p2, p3, uvs, normals, (p1 + p2 + p3) / 3 }
         if i % 1500 == 0 then
             task.wait()
         end
     end
-    sources[id] = c
-    return c
+    meshSources[meshId] = cached
+    return cached
 end
 
 -- Returns {pieces = {[cell] = {parts = {{part, rel}}, dir, meshes}}} or nil
+-- Yields (mesh loads + a frame every 1500 triangles); returns nil if the egg is removed meanwhile.
 local function buildFracture(egg)
     local box, size = egg:GetBoundingBox()
     local pivot = egg:GetPivot()
     local pieces, sums, glow = {}, {}, {}
-    for _, d in egg:GetDescendants() do
+    for _, meshPart in egg:GetDescendants() do
         -- (the egg is still fading in when this runs, so its parts may read Transparency 1)
-        if d:IsA("MeshPart") and d.MeshId ~= "" then
-            local src = source(d.MeshId)
+        if meshPart:IsA("MeshPart") and meshPart.MeshId ~= "" then
+            local source = getMeshSource(meshPart.MeshId)
             if not egg.Parent then
                 return nil
             end
-            local scale = d.Size / src.size
+            local scale = meshPart.Size / source.size
+            -- sort triangles into fracture cells (by centroid, in egg-box space) and sum cell centroids
             local buckets = {}
-            for _, f in src.faces do
-                local world = d.CFrame:PointToWorldSpace((f[6] - src.center) * scale)
-                local l = box:PointToObjectSpace(world)
-                local cell = cellOf(l.Y / size.Y, math.atan2(l.X, -l.Z)) -- angle 0 faces the walkway
-                local b = buckets[cell]
-                if not b then
-                    b = {}
-                    buckets[cell] = b
+            for _, face in source.faces do
+                local world = meshPart.CFrame:PointToWorldSpace((face[6] - source.center) * scale)
+                local localPos = box:PointToObjectSpace(world)
+                local cell = cellOf(localPos.Y / size.Y, math.atan2(localPos.X, -localPos.Z)) -- angle 0 faces the walkway
+                local bucket = buckets[cell]
+                if not bucket then
+                    bucket = {}
+                    buckets[cell] = bucket
                 end
-                table.insert(b, f)
-                local s = sums[cell]
-                if not s then
-                    s = { Vector3.zero, 0 }
-                    sums[cell] = s
+                table.insert(bucket, face)
+                local sum = sums[cell]
+                if not sum then
+                    sum = { Vector3.zero, 0 }
+                    sums[cell] = sum
                 end
-                s[1] += l
-                s[2] += 1
+                sum[1] += localPos
+                sum[2] += 1
             end
-            local n = 0
+            -- one new MeshPart per cell, rebuilt triangle by triangle
+            local triangleCount = 0
             for cell, faces in buckets do
-                local em = AssetService:CreateEditableMesh()
-                local mn, mx = Vector3.one * math.huge, -Vector3.one * math.huge
-                for _, f in faces do
-                    local v = {}
+                local editableMesh = AssetService:CreateEditableMesh()
+                local minCorner, maxCorner = Vector3.one * math.huge, -Vector3.one * math.huge
+                for _, face in faces do
+                    local vertexIds = {}
                     for k = 1, 3 do
-                        mn = mn:Min(f[k])
-                        mx = mx:Max(f[k])
-                        v[k] = em:AddVertex(f[k])
+                        minCorner = minCorner:Min(face[k])
+                        maxCorner = maxCorner:Max(face[k])
+                        vertexIds[k] = editableMesh:AddVertex(face[k])
                     end
-                    local face = em:AddTriangle(v[1], v[2], v[3])
-                    if #f[4] == 3 then
-                        em:SetFaceUVs(face, { em:AddUV(f[4][1]), em:AddUV(f[4][2]), em:AddUV(f[4][3]) })
+                    local newFace = editableMesh:AddTriangle(vertexIds[1], vertexIds[2], vertexIds[3])
+                    if #face[4] == 3 then
+                        editableMesh:SetFaceUVs(newFace, {
+                            editableMesh:AddUV(face[4][1]),
+                            editableMesh:AddUV(face[4][2]),
+                            editableMesh:AddUV(face[4][3]),
+                        })
                     end
-                    if #f[5] == 3 then
+                    if #face[5] == 3 then
                         pcall(function()
-                            em:SetFaceNormals(
-                                face,
-                                { em:AddNormal(f[5][1]), em:AddNormal(f[5][2]), em:AddNormal(f[5][3]) }
-                            )
+                            editableMesh:SetFaceNormals(newFace, {
+                                editableMesh:AddNormal(face[5][1]),
+                                editableMesh:AddNormal(face[5][2]),
+                                editableMesh:AddNormal(face[5][3]),
+                            })
                         end)
                     end
-                    n += 1
-                    if n % 1500 == 0 then
+                    triangleCount += 1
+                    if triangleCount % 1500 == 0 then
                         task.wait()
                     end
                 end
-                local part = AssetService:CreateMeshPartAsync(Content.fromObject(em))
+                local part = AssetService:CreateMeshPartAsync(Content.fromObject(editableMesh))
                 part.Anchored, part.CanCollide, part.CanTouch, part.CanQuery = true, false, false, false
-                part.Size = ((mx - mn) * scale):Max(Vector3.one * 0.02)
+                part.Size = ((maxCorner - minCorner) * scale):Max(Vector3.one * 0.02)
                 -- a mesh made from an EditableMesh keeps its source origin (it is not re-centred)
-                part.CFrame = d.CFrame * CFrame.new(-src.center * scale)
-                part.Material, part.Color, part.Transparency = d.Material, d.Color, 0
-                part.CastShadow = d.CastShadow
-                local sa = d:FindFirstChildOfClass("SurfaceAppearance")
-                if sa then
-                    sa:Clone().Parent = part
+                part.CFrame = meshPart.CFrame * CFrame.new(-source.center * scale)
+                part.Material, part.Color, part.Transparency = meshPart.Material, meshPart.Color, 0
+                part.CastShadow = meshPart.CastShadow
+                local surfaceAppearance = meshPart:FindFirstChildOfClass("SurfaceAppearance")
+                if surfaceAppearance then
+                    surfaceAppearance:Clone().Parent = part
                 end
                 local piece = pieces[cell]
                 if not piece then
@@ -181,24 +205,25 @@ local function buildFracture(egg)
                     pieces[cell] = piece
                 end
                 table.insert(piece.parts, { part = part, rel = pivot:ToObjectSpace(part.CFrame) })
-                table.insert(piece.meshes, em)
+                table.insert(piece.meshes, editableMesh)
             end
             -- inner glow: the same egg layer shrunk to 92%, only visible through the seams
-            local g = d:Clone()
-            for _, ch in g:GetChildren() do
-                ch:Destroy()
+            local glowPart = meshPart:Clone()
+            for _, child in glowPart:GetChildren() do
+                child:Destroy()
             end
-            g.Material, g.Color, g.Transparency, g.CastShadow = Enum.Material.Neon, CORE, 1, false
-            g.Anchored, g.CanCollide, g.CanTouch, g.CanQuery = true, false, false, false
-            g.Size = d.Size * 0.92
-            local rel = pivot:ToObjectSpace(d.CFrame)
-            table.insert(glow, { part = g, rel = CFrame.new(rel.Position * 0.92) * rel.Rotation })
+            glowPart.Material, glowPart.Color, glowPart.Transparency, glowPart.CastShadow =
+                Enum.Material.Neon, CORE_COLOR, 1, false
+            glowPart.Anchored, glowPart.CanCollide, glowPart.CanTouch, glowPart.CanQuery = true, false, false, false
+            glowPart.Size = meshPart.Size * 0.92
+            local rel = pivot:ToObjectSpace(meshPart.CFrame)
+            table.insert(glow, { part = glowPart, rel = CFrame.new(rel.Position * 0.92) * rel.Rotation })
         end
     end
     -- outward direction of each piece, from the egg centre to the piece's real centroid
     for cell, piece in pieces do
-        local c = sums[cell][1] / sums[cell][2]
-        local flat = Vector3.new(c.X, 0, c.Z)
+        local centroid = sums[cell][1] / sums[cell][2]
+        local flat = Vector3.new(centroid.X, 0, centroid.Z)
         local dir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, -1)
         if cell <= 2 then
             dir = (dir + Vector3.new(0, 1.4, 0)).Unit
@@ -213,40 +238,81 @@ local function buildFracture(egg)
 end
 
 ------------------------------------------------------------------------ per-egg records
+-- record.state: "building" -> "effects" (core light/sparkle ready) -> "ready" (shell pieces built)
 local records = {} -- egg model -> record
 
-local function hideOriginal(r, hidden)
-    for _, p in r.egg:GetDescendants() do
-        if p:IsA("BasePart") or p:IsA("Decal") then
-            p.LocalTransparencyModifier = hidden and 1 or 0
+local function hideOriginal(record, hidden)
+    for _, part in record.egg:GetDescendants() do
+        if part:IsA("BasePart") or part:IsA("Decal") then
+            part.LocalTransparencyModifier = hidden and 1 or 0
         end
     end
 end
 
-local function cleanup(r)
-    if r.dead then
+local function cleanup(record)
+    if record.dead then
         return
     end
-    r.dead = true
-    records[r.egg] = nil
-    if r.hum then
-        r.hum:Destroy()
+    record.dead = true
+    records[record.egg] = nil
+    if record.hum then
+        record.hum:Destroy()
     end
-    if r.folder then
-        r.folder:Destroy()
+    if record.folder then
+        record.folder:Destroy()
     end
-    if r.fracture then
-        for _, piece in r.fracture.pieces do
-            for _, em in piece.meshes do
-                em:Destroy()
+    if record.fracture then
+        for _, piece in record.fracture.pieces do
+            for _, editableMesh in piece.meshes do
+                editableMesh:Destroy()
             end
         end
     end
-    if r.egg.Parent then
-        hideOriginal(r, false)
+    if record.egg.Parent then
+        hideOriginal(record, false)
     end
 end
 
+-- light, sparkles and highlight on an invisible core part at the egg home (parented to `folder`)
+local function createCoreEffects(record, folder, home)
+    -- invisible anchor for the light, sparkles and sounds
+    record.core = newPart({
+        Name = "HatchCore",
+        Size = Vector3.one * 0.2,
+        Transparency = 1,
+        CastShadow = false,
+        CFrame = home,
+        Parent = folder,
+    })
+    record.light = Instance.new("PointLight")
+    record.light.Color = CORE_COLOR
+    record.light.Range = 7
+    record.light.Brightness = 0
+    record.light.Shadows = false
+    record.light.Parent = record.core
+    record.sparkle = Instance.new("ParticleEmitter")
+    record.sparkle.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    record.sparkle.Rate = 0
+    record.sparkle.LightEmission = 0.9
+    record.sparkle.LightInfluence = 0
+    record.sparkle.Color = ColorSequence.new(Color3.fromRGB(255, 250, 235), Color3.fromRGB(255, 214, 140))
+    record.sparkle.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.22), NumberSequenceKeypoint.new(1, 0) })
+    record.sparkle.Lifetime = NumberRange.new(0.45, 0.85)
+    record.sparkle.Speed = NumberRange.new(2.5, 5)
+    record.sparkle.Drag = 5
+    record.sparkle.SpreadAngle = Vector2.new(180, 180)
+    record.sparkle.Parent = record.core
+    record.highlight = Instance.new("Highlight")
+    record.highlight.FillColor = Color3.new(1, 1, 1)
+    record.highlight.OutlineColor = CORE_COLOR
+    record.highlight.FillTransparency = 1
+    record.highlight.OutlineTransparency = 1
+    record.highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+    record.highlight.Adornee = folder
+    record.highlight.Parent = folder
+end
+
+-- Creates the record for an incubator egg and builds its effects + shell in a background thread.
 local function prepare(egg)
     if records[egg] or not egg:IsA("Model") then
         return
@@ -255,67 +321,33 @@ local function prepare(egg)
     if typeof(home) ~= "CFrame" then
         return
     end
-    local r = { egg = egg, home = home, state = "building" }
-    records[egg] = r
+    local record = { egg = egg, home = home, state = "building" }
+    records[egg] = record
     task.spawn(function()
         -- only build for eggs the camera is near (checked until it is)
         while
-            not r.dead
+            not record.dead
             and egg.Parent
-            and (workspace.CurrentCamera.CFrame.Position - home.Position).Magnitude > NEAR
+            and (workspace.CurrentCamera.CFrame.Position - home.Position).Magnitude > NEAR_DISTANCE
         do
             task.wait(1)
         end
-        if r.dead or not egg.Parent then
+        if record.dead or not egg.Parent then
             return
         end
         local folder = Instance.new("Folder")
         folder.Name = "LocalHatchShell"
-        r.folder = folder
+        record.folder = folder
         local _, size = egg:GetBoundingBox()
-        r.size = size
-        -- invisible anchor for the light, sparkles and sounds
-        r.core = newPart({
-            Name = "HatchCore",
-            Size = Vector3.one * 0.2,
-            Transparency = 1,
-            CastShadow = false,
-            CFrame = home,
-            Parent = folder,
-        })
-        r.light = Instance.new("PointLight")
-        r.light.Color = CORE
-        r.light.Range = 7
-        r.light.Brightness = 0
-        r.light.Shadows = false
-        r.light.Parent = r.core
-        r.sparkle = Instance.new("ParticleEmitter")
-        r.sparkle.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-        r.sparkle.Rate = 0
-        r.sparkle.LightEmission = 0.9
-        r.sparkle.LightInfluence = 0
-        r.sparkle.Color = ColorSequence.new(Color3.fromRGB(255, 250, 235), Color3.fromRGB(255, 214, 140))
-        r.sparkle.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.22), NumberSequenceKeypoint.new(1, 0) })
-        r.sparkle.Lifetime = NumberRange.new(0.45, 0.85)
-        r.sparkle.Speed = NumberRange.new(2.5, 5)
-        r.sparkle.Drag = 5
-        r.sparkle.SpreadAngle = Vector2.new(180, 180)
-        r.sparkle.Parent = r.core
-        r.highlight = Instance.new("Highlight")
-        r.highlight.FillColor = Color3.new(1, 1, 1)
-        r.highlight.OutlineColor = CORE
-        r.highlight.FillTransparency = 1
-        r.highlight.OutlineTransparency = 1
-        r.highlight.DepthMode = Enum.HighlightDepthMode.Occluded
-        r.highlight.Adornee = folder
-        r.highlight.Parent = folder
-        r.state = "effects" -- enough to animate the intact egg if the shell isn't ready in time
+        record.size = size
+        createCoreEffects(record, folder, home)
+        record.state = "effects" -- enough to animate the intact egg if the shell isn't ready in time
         local ok, result = pcall(buildFracture, egg)
-        if r.dead then
+        if record.dead then
             if ok and result then
                 for _, piece in result.pieces do
-                    for _, em in piece.meshes do
-                        em:Destroy()
+                    for _, editableMesh in piece.meshes do
+                        editableMesh:Destroy()
                     end
                 end
             end
@@ -327,48 +359,48 @@ local function prepare(egg)
             warn("Hatch fracture unavailable, using intact egg: " .. tostring(result))
             return
         end
-        r.fracture = result
-        if r.shown then
+        record.fracture = result
+        if record.shown then
             return
         end -- already hatching with the intact egg; never swap mid-sequence
         for _, piece in result.pieces do
             piece.gap, piece.target = 0, 0
-            for _, e in piece.parts do
-                e.part.Parent = folder
+            for _, entry in piece.parts do
+                entry.part.Parent = folder
             end
         end
-        for _, g in result.glow do
-            g.part.Parent = folder
+        for _, glowEntry in result.glow do
+            glowEntry.part.Parent = folder
         end
-        r.state = "ready"
+        record.state = "ready"
     end)
 end
 
 local function startHatch(egg)
     prepare(egg)
-    local r = records[egg]
-    if not r then
+    local record = records[egg]
+    if not record then
         return
     end
-    r.epoch = egg:GetAttribute("HatchEpoch") or workspace:GetServerTimeNow()
-    r.duration = egg:GetAttribute("HatchDuration") or BASE
-    r.hatching = true
-    r.beat = 0
+    record.epoch = egg:GetAttribute("HatchEpoch") or workspace:GetServerTimeNow()
+    record.duration = egg:GetAttribute("HatchDuration") or BASE_DURATION
+    record.hatching = true
+    record.beat = 0
 end
 
-Collection:GetInstanceAddedSignal("IncubatorEgg"):Connect(prepare)
-Collection:GetInstanceAddedSignal("CinematicEggHatch"):Connect(startHatch)
-Collection:GetInstanceRemovedSignal("CinematicEggHatch"):Connect(function(egg)
-    local r = records[egg]
-    if r and not r.released then
-        cleanup(r)
+CollectionService:GetInstanceAddedSignal("IncubatorEgg"):Connect(prepare)
+CollectionService:GetInstanceAddedSignal("CinematicEggHatch"):Connect(startHatch)
+CollectionService:GetInstanceRemovedSignal("CinematicEggHatch"):Connect(function(egg)
+    local record = records[egg]
+    if record and not record.released then
+        cleanup(record)
     end -- released shells finish their fall
 end)
-for _, e in Collection:GetTagged("IncubatorEgg") do
-    prepare(e)
+for _, egg in CollectionService:GetTagged("IncubatorEgg") do
+    prepare(egg)
 end
-for _, e in Collection:GetTagged("CinematicEggHatch") do
-    startHatch(e)
+for _, egg in CollectionService:GetTagged("CinematicEggHatch") do
+    startHatch(egg)
 end
 
 ------------------------------------------------------------------------ owner session
@@ -398,56 +430,61 @@ title.Text = ""
 title.TextTransparency = 1
 title.Parent = gui
 
-local session
-local function tween(obj, t, props, style)
-    local tw =
-        TweenService:Create(obj, TweenInfo.new(t, style or Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), props)
-    tw:Play()
+local session -- the owner's camera session, or nil when no cinematic is running for this player
+-- Plays a Sine InOut tween; tweens made during a session are cancelled when it finishes.
+local function tween(instance, duration, props, style)
+    local tweenObject = TweenService:Create(
+        instance,
+        TweenInfo.new(duration, style or Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+        props
+    )
+    tweenObject:Play()
     if session then
-        table.insert(session.tweens, tw)
+        table.insert(session.tweens, tweenObject)
     end
-    return tw
+    return tweenObject
 end
 
+-- Ends the owner session and restores camera, controls, hidden parts, ducked sounds and the UI.
 local function finish()
-    local s = session
-    if not s then
+    local endedSession = session
+    if not endedSession then
         return
     end
     session = nil
-    for _, tw in s.tweens do
-        tw:Cancel()
+    for _, tweenObject in endedSession.tweens do
+        tweenObject:Cancel()
     end
-    for _, c in s.connections do
-        c:Disconnect()
+    for _, connection in endedSession.connections do
+        connection:Disconnect()
     end
-    Actions:UnbindAction("CinematicHatchLock")
+    ContextActionService:UnbindAction("CinematicHatchLock")
     local cam = workspace.CurrentCamera
     if cam then
-        cam.CameraType = s.camType
-        cam.CameraSubject = s.subject
-        cam.FieldOfView = s.fov
-        if s.camType == Enum.CameraType.Scriptable then
-            cam.CFrame = s.original
+        cam.CameraType = endedSession.camType
+        cam.CameraSubject = endedSession.subject
+        cam.FieldOfView = endedSession.fov
+        if endedSession.camType == Enum.CameraType.Scriptable then
+            cam.CFrame = endedSession.original
         end
     end
-    for inst, v in s.hidden do
-        if inst.Parent then
-            inst.LocalTransparencyModifier = v
+    for instance, modifier in endedSession.hidden do
+        if instance.Parent then
+            instance.LocalTransparencyModifier = modifier
         end
     end
-    for snd, v in s.ducked do
+    for snd, volume in endedSession.ducked do
         if snd.Parent then
-            snd.Volume = v
+            snd.Volume = volume
         end
     end
-    if s.controls then
+    if endedSession.controls then
         pcall(function()
-            s.controls:Enable()
+            endedSession.controls:Enable()
         end)
     end
-    if s.cc then
-        s.cc:Destroy()
+    if endedSession.cc then
+        endedSession.cc:Destroy()
     end
     flash.BackgroundTransparency = 1
     title.Text = ""
@@ -455,27 +492,30 @@ local function finish()
     gui:SetAttribute("Active", false)
 end
 
-local function hideInstance(s, inst, value)
-    if s.hidden[inst] == nil then
-        s.hidden[inst] = inst.LocalTransparencyModifier
+-- sets LocalTransparencyModifier, remembering the first original value for finish()
+local function hideInstance(activeSession, instance, value)
+    if activeSession.hidden[instance] == nil then
+        activeSession.hidden[instance] = instance.LocalTransparencyModifier
     end
-    inst.LocalTransparencyModifier = value
+    instance.LocalTransparencyModifier = value
 end
 
-local function hideAvatars(s)
+local function hideAvatars(activeSession)
     for _, other in Players:GetPlayers() do
         local char = other.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if root and (root.Position - s.home.Position).Magnitude < 40 then
-            for _, p in char:GetDescendants() do
-                if p:IsA("BasePart") or p:IsA("Decal") then
-                    hideInstance(s, p, 1)
+        if root and (root.Position - activeSession.home.Position).Magnitude < 40 then
+            for _, part in char:GetDescendants() do
+                if part:IsA("BasePart") or part:IsA("Decal") then
+                    hideInstance(activeSession, part, 1)
                 end
             end
         end
     end
 end
 
+-- Starts the owner session: takes the camera, locks controls, hides prompts / glass / avatars,
+-- ducks playing sounds, and restores everything on death, respawn or chamber removal.
 local function begin(chamber, home, duration)
     finish()
     local cam = workspace.CurrentCamera
@@ -483,10 +523,10 @@ local function begin(chamber, home, duration)
     pcall(function()
         controls = require(player.PlayerScripts:FindFirstChild("PlayerModule")):GetControls()
     end)
-    local s = {
+    local activeSession = {
         chamber = chamber,
         home = home,
-        duration = duration or BASE,
+        duration = duration or BASE_DURATION,
         start = os.clock(),
         original = cam.CFrame,
         fov = cam.FieldOfView,
@@ -498,7 +538,7 @@ local function begin(chamber, home, duration)
         tweens = {},
         connections = {},
     }
-    session = s
+    session = activeSession
     -- Remove existing overlays before camera takeover; attribute listeners handle later cards.
     for _, overlay in player.PlayerGui:GetChildren() do
         if overlay:IsA("BillboardGui") and overlay.Name == "PromptCard" then
@@ -515,39 +555,40 @@ local function begin(chamber, home, duration)
             controls:Disable()
         end)
     end
-    Actions:BindActionAtPriority("CinematicHatchLock", function()
+    -- sink every player action at high priority while the cinematic runs
+    ContextActionService:BindActionAtPriority("CinematicHatchLock", function()
         return Enum.ContextActionResult.Sink
     end, false, 3000, table.unpack(Enum.PlayerActions:GetEnumItems()))
     -- glass stays closed; just a little clearer for this player
-    for _, p in chamber:GetDescendants() do
+    for _, part in chamber:GetDescendants() do
         if
-            p:IsA("BasePart")
-            and (p.Material == Enum.Material.Glass or p.Name:lower():find("glass") or p.Name:find("Pane"))
+            part:IsA("BasePart")
+            and (part.Material == Enum.Material.Glass or part.Name:lower():find("glass") or part.Name:find("Pane"))
         then
-            hideInstance(s, p, 0.55)
+            hideInstance(activeSession, part, 0.55)
         end
     end
-    hideAvatars(s)
+    hideAvatars(activeSession)
     -- duck what is already playing
     for _, root in { workspace, SoundService } do
         for _, snd in root:GetDescendants() do
             if snd:IsA("Sound") and snd.Playing and snd.Volume > 0 and not snd:GetAttribute("HatchFX") then
-                s.ducked[snd] = snd.Volume
+                activeSession.ducked[snd] = snd.Volume
                 tween(snd, 0.8, { Volume = snd.Volume * 0.4 })
             end
         end
     end
-    s.cc = Instance.new("ColorCorrectionEffect")
-    s.cc.Name = "HatchFlashGrade"
-    s.cc.Parent = Lighting
+    activeSession.cc = Instance.new("ColorCorrectionEffect")
+    activeSession.cc.Name = "HatchFlashGrade"
+    activeSession.cc.Parent = Lighting
     -- restore if the player dies, respawns, or the machine disappears
     local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
     if hum then
-        table.insert(s.connections, hum.Died:Connect(finish))
+        table.insert(activeSession.connections, hum.Died:Connect(finish))
     end
-    table.insert(s.connections, player.CharacterRemoving:Connect(finish))
+    table.insert(activeSession.connections, player.CharacterRemoving:Connect(finish))
     table.insert(
-        s.connections,
+        activeSession.connections,
         chamber.AncestryChanged:Connect(function()
             if not chamber:IsDescendantOf(workspace) then
                 finish()
@@ -559,7 +600,7 @@ local function begin(chamber, home, duration)
     tween(title, 0.6, { TextTransparency = 0 })
 end
 
-remote.OnClientEvent:Connect(function(action, chamber, home, value, intro, cameraToken)
+cinematicHatchCue.OnClientEvent:Connect(function(action, chamber, home, value, intro, cameraToken)
     if action == "Start" then
         begin(chamber, home, value)
         if session then
@@ -581,78 +622,82 @@ remote.OnClientEvent:Connect(function(action, chamber, home, value, intro, camer
 end)
 
 ------------------------------------------------------------------------ frame update
-local function shotFor(s, u, elapsed)
+-- `timelineTime` below is time on the BASE_DURATION-long beat timeline (real time rescaled)
+local function shotFor(activeSession, timelineTime, elapsed)
     -- slow dolly toward the egg, tighter at the tension hold, ease back for the reveal
-    local dist = 4.2 - 0.7 * smooth(u / WHITE_TO) - 0.35 * smooth((u - HOLD) / 0.6)
-    if s.reveal then
-        dist += 5.5 * smooth((os.clock() - s.reveal) / 0.3)
+    local dist = 4.2 - 0.7 * smooth(timelineTime / WHITE_TO) - 0.35 * smooth((timelineTime - HOLD) / 0.6)
+    if activeSession.reveal then
+        dist += 5.5 * smooth((os.clock() - activeSession.reveal) / 0.3)
     end
     -- a slow orbit across the whole sequence gives the shot parallax
-    local orbit = math.rad(-10 + 18 * smooth(elapsed / ((s.intro or 0) + s.duration + 1.5)))
+    local orbit = math.rad(-10 + 18 * smooth(elapsed / ((activeSession.intro or 0) + activeSession.duration + 1.5)))
     local eyeLocal = CFrame.Angles(0, orbit, 0)
-        :VectorToWorldSpace(Vector3.new(0.35, 0.55 + 0.15 * smooth(u / BASE), -dist))
+        :VectorToWorldSpace(Vector3.new(0.35, 0.55 + 0.15 * smooth(timelineTime / BASE_DURATION), -dist))
     -- gentle handheld drift (very low frequency, never a shake)
     local drift = Vector3.new(math.noise(elapsed * 0.45, 7.1) * 0.05, math.noise(3.3, elapsed * 0.4) * 0.035, 0)
-    local eye = s.home:PointToWorldSpace(eyeLocal + drift)
-    return CFrame.lookAt(eye, s.home.Position + Vector3.new(0, 0.1, 0))
+    local eye = activeSession.home:PointToWorldSpace(eyeLocal + drift)
+    return CFrame.lookAt(eye, activeSession.home.Position + Vector3.new(0, 0.1, 0))
 end
 
 -- camera travel bends out through the open space in front of the glass, so the
--- transition never cuts through the incubator frame
-local function arc(s, from, to, k)
-    local mid = s.home:PointToWorldSpace(Vector3.new(0.35, 1.4, -7.5))
-    local p = (1 - k) ^ 2 * from.Position + 2 * (1 - k) * k * mid + k ^ 2 * to.Position
-    return CFrame.new(p) * from.Rotation:Lerp(to.Rotation, k)
+-- transition never cuts through the incubator frame (quadratic Bezier, alpha 0..1)
+local function arc(activeSession, from, to, alpha)
+    local mid = activeSession.home:PointToWorldSpace(Vector3.new(0.35, 1.4, -7.5))
+    local position = (1 - alpha) ^ 2 * from.Position + 2 * (1 - alpha) * alpha * mid + alpha ^ 2 * to.Position
+    return CFrame.new(position) * from.Rotation:Lerp(to.Rotation, alpha)
 end
 
-local function beatPose(u)
+-- egg tilt (tx, tz radians), lift (studs) and camera shake strength at a timeline time
+local function beatPose(timelineTime)
     local tx, tz, lift, shake = 0, 0, 0, 0
-    for _, b in BEATS do
-        local d = u - b.t
-        if d >= 0 and d < b.len then
-            local x = d / b.len
+    for _, beat in BEATS do
+        local sinceBeat = timelineTime - beat.t
+        if sinceBeat >= 0 and sinceBeat < beat.len then
+            local x = sinceBeat / beat.len
             local env = (1 - x) ^ 2
-            local w = b.cycles <= 1 and math.sin(x * math.pi) * math.exp(-3 * x) * 2 or math.sin(x * b.cycles * TAU)
+            local wave = beat.cycles <= 1 and math.sin(x * math.pi) * math.exp(-3 * x) * 2
+                or math.sin(x * beat.cycles * TAU)
             local attack = smooth(x / 0.12) -- eases into each burst instead of snapping
-            local a = math.rad(b.amp) * env * w * attack
-            tx += a * math.sin(b.axis)
-            tz += a * math.cos(b.axis)
-            lift += math.abs(w) * env * 0.012 * b.amp
-            shake = math.max(shake, env * b.amp / 13)
+            local angle = math.rad(beat.amp) * env * wave * attack
+            tx += angle * math.sin(beat.axis)
+            tz += angle * math.cos(beat.axis)
+            lift += math.abs(wave) * env * 0.012 * beat.amp
+            shake = math.max(shake, env * beat.amp / 13)
         end
     end
-    if u > HOLD then -- tension: almost still, a fine tremble
-        local k = smooth((u - HOLD) / 0.3)
-        tx += math.rad(0.7) * k * math.sin(u * 73)
-        tz += math.rad(0.7) * k * math.sin(u * 61 + 1)
+    if timelineTime > HOLD then -- tension: almost still, a fine tremble
+        local k = smooth((timelineTime - HOLD) / 0.3)
+        tx += math.rad(0.7) * k * math.sin(timelineTime * 73)
+        tz += math.rad(0.7) * k * math.sin(timelineTime * 61 + 1)
     end
     return tx, tz, lift, shake
 end
 
-local function release(r)
-    r.released = true
-    r.releaseAt = os.clock()
+-- shell bursts: sounds, sparkle, light flare, and a launch velocity / spin for every piece
+local function release(record)
+    record.released = true
+    record.releaseAt = os.clock()
     -- SOUND: release / shatter
     UISound.Play("EggCrack", 1.25, 0.8)
     UISound.Play("Shine", 1.1, 0.55)
-    r.sparkle:Emit(16)
-    r.light.Brightness = 9
-    r.light.Range = 11
-    TweenService
-        :Create(
-            r.light,
-            TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            { Brightness = 0, Range = 7 }
-        )
-        :Play()
-    for _, g in r.glow do
-        TweenService
-            :Create(g.part, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Transparency = 1 })
-            :Play()
+    record.sparkle:Emit(16)
+    record.light.Brightness = 9
+    record.light.Range = 11
+    TweenService:Create(
+        record.light,
+        TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        { Brightness = 0, Range = 7 }
+    ):Play()
+    for _, glowEntry in record.glow do
+        TweenService:Create(
+            glowEntry.part,
+            TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+            { Transparency = 1 }
+        ):Play()
     end
-    TweenService:Create(r.highlight, TweenInfo.new(0.5), { FillTransparency = 1, OutlineTransparency = 1 }):Play()
-    for cell, piece in r.pieces do
-        local still = cell == 7
+    TweenService:Create(record.highlight, TweenInfo.new(0.5), { FillTransparency = 1, OutlineTransparency = 1 }):Play()
+    for cell, piece in record.pieces do
+        local still = cell == 7 -- the base cup stays where it is
         piece.vel = still and Vector3.zero
             or piece.dir * (2.4 + math.random() * 1.2) + Vector3.new(0, cell <= 2 and 3 or 1.9, 0)
         piece.spin = still and Vector3.zero
@@ -661,199 +706,193 @@ local function release(r)
     end
 end
 
-RunService:BindToRenderStep("CinematicHatch", Enum.RenderPriority.Camera.Value + 3, function(dt)
-    local now = workspace:GetServerTimeNow()
-    local cam = workspace.CurrentCamera
-
-    for egg, r in records do
-        if not egg:IsDescendantOf(workspace) and not r.released then
-            cleanup(r)
-        elseif
-            r.hatching
-            and (r.state == "ready" or r.state == "effects")
-            and (r.released or (cam.CFrame.Position - r.home.Position).Magnitude < NEAR)
-        then
-            local t = now - r.epoch
-            local u = t * BASE / r.duration
-            local half = r.size.Y / 2
-            if not r.shown then
-                r.shown = true
-                r.shell = r.state == "ready"
-                r.fallback = not r.shell
-                r.pieces = r.shell and r.fracture.pieces or {}
-                r.glow = r.shell and r.fracture.glow or {}
-                -- joined late (walked up mid-hatch): skip beats already missed instead of firing them all at once
-                while r.beat < #BEATS and u >= BEATS[r.beat + 1].t + 0.3 do
-                    r.beat += 1
-                    for _, cell in BEATS[r.beat].open do
-                        local p = r.pieces[cell]
-                        if p then
-                            p.target = 0.035
-                        end
-                    end
-                end
-                if not r.fallback then
-                    hideOriginal(r, true)
-                end
-                r.highlight.Adornee = r.fallback and r.egg or r.folder
-                r.folder.Parent = workspace
-                -- SOUND: rising hum starts here
-            end
-            if not r.released then
-                local tx, tz, lift, shake = beatPose(u)
-                r.shake = shake
-                local pose = r.home * CFrame.new(0, -half + lift, 0) * CFrame.Angles(tx, 0, tz) * CFrame.new(0, half, 0)
-                -- beats: crack sound, seam opens, light pops
-                while r.beat < #BEATS and u >= BEATS[r.beat + 1].t do
-                    r.beat += 1
-                    local b = BEATS[r.beat]
-                    for _, cell in b.open do
-                        local p = r.pieces[cell]
-                        if p then
-                            p.target = 0.035
-                        end
-                    end
-                    -- SOUND: crack (b.vol / b.pitch rise with each beat)
-                    UISound.Play(r.beat % 2 == 0 and "EggCrackAlt" or "EggCrack", b.pitch, b.vol)
-                    r.pop = 1
-                    r.sparkle:Emit(r.beat >= 4 and 3 or 1)
-                end
-                r.pop = math.max(0, (r.pop or 0) - dt * 5)
-                local white = smooth((u - WHITE_FROM) / (WHITE_TO - WHITE_FROM))
-                local progress = math.clamp(u / WHITE_TO, 0, 1)
-                -- light leaking through the fractures
-                -- the glow breathes between bursts and flares on each crack
-                local breathe = 0.5 + 0.5 * math.sin(u * (3 + 5 * progress))
-                for _, g in r.glow do
-                    g.part.CFrame = pose * g.rel
-                    g.part.Transparency = r.beat > 0
-                            and math.clamp(0.35 - 0.3 * breathe * progress - 0.35 * r.pop - white, 0, 1)
-                        or 1
-                end
-                r.light.Brightness = (r.beat > 0 and 0.4 or 0)
-                    + 2.2 * progress * progress
-                    + 0.6 * breathe * progress
-                    + 2.5 * r.pop
-                    + 3 * white
-                r.highlight.FillTransparency = 1 - 0.88 * white
-                r.highlight.OutlineTransparency = 1 - 0.5 * white
-                -- SOUND: cut the hum at u > BASE - 0.18 for a beat of silence before release
-                for cell, piece in r.pieces do
-                    if white > 0 and cell ~= 7 then
-                        piece.target = math.max(piece.target, 0.035 + 0.045 * white)
-                    end
-                    piece.gap += (piece.target - piece.gap) * (1 - math.exp(-dt * 14))
-                    local capLift = cell <= 2 and 0.05 * smooth((u - HOLD) / 0.5) or 0
-                    local offset = CFrame.new(piece.dir * piece.gap + Vector3.new(0, capLift, 0))
-                    for _, e in piece.parts do
-                        e.part.CFrame = pose * offset * e.rel
-                    end
-                end
-                r.core.CFrame = pose
-                r.pose = pose
-                if r.fallback then
-                    r.egg:PivotTo(pose)
-                end
-                if t >= r.duration then
-                    release(r)
-                end
-            else
-                -- shell pieces fly a short way, land inside the chamber and fade
-                local age = os.clock() - r.releaseAt
-                local floorY = -half
-                for cell, piece in r.pieces do
-                    if cell ~= 7 then
-                        -- floaty fall: softer gravity plus air drag, so the shell drifts apart
-                        piece.vel -= Vector3.new(0, 18 * dt, 0)
-                        piece.vel *= math.exp(-1.8 * dt)
-                        piece.spin *= math.exp(-1.2 * dt)
-                        piece.pos += piece.vel * dt
-                        local flat = Vector3.new(piece.pos.X, 0, piece.pos.Z)
-                        if flat.Magnitude > 1.9 then -- stay inside the glass
-                            piece.pos = flat.Unit * 1.9 + Vector3.new(0, piece.pos.Y, 0)
-                            piece.vel = Vector3.new(0, piece.vel.Y, 0)
-                        end
-                        if piece.pos.Y < floorY + 0.3 then
-                            piece.pos = Vector3.new(piece.pos.X, floorY + 0.3, piece.pos.Z)
-                            piece.vel = Vector3.new(piece.vel.X * 0.4, 0, piece.vel.Z * 0.4)
-                            piece.spin *= 0.5
-                        end
-                        piece.rot += piece.spin * dt
-                    end
-                    local fade = smooth((age - (cell == 7 and 0.1 or 0.5)) / 0.6)
-                    local spinCF = CFrame.Angles(piece.rot.X, piece.rot.Y, piece.rot.Z)
-                    for _, e in piece.parts do
-                        e.part.CFrame = r.pose * CFrame.new(piece.pos) * spinCF * e.rel
-                        e.part.Transparency = fade
-                    end
-                end
-                if r.fallback and r.egg.Parent then
-                    local fade = smooth(age / 0.25)
-                    for _, p in r.egg:GetDescendants() do
-                        if p:IsA("BasePart") then
-                            p.LocalTransparencyModifier = fade
-                        end
-                    end
-                end
-                if age > 1.7 then
-                    cleanup(r)
-                end
+-- egg intact or shell: one-time setup on the first animated frame
+local function showRecord(record, timelineTime)
+    -- first visible frame: pick shell or intact-egg fallback for the whole sequence
+    record.shown = true
+    record.shell = record.state == "ready"
+    record.fallback = not record.shell
+    record.pieces = record.shell and record.fracture.pieces or {}
+    record.glow = record.shell and record.fracture.glow or {}
+    -- joined late (walked up mid-hatch): skip beats already missed instead of firing them all at once
+    while record.beat < #BEATS and timelineTime >= BEATS[record.beat + 1].t + 0.3 do
+        record.beat += 1
+        for _, cell in BEATS[record.beat].open do
+            local piece = record.pieces[cell]
+            if piece then
+                piece.target = 0.035
             end
         end
     end
+    if not record.fallback then
+        hideOriginal(record, true)
+    end
+    record.highlight.Adornee = record.fallback and record.egg or record.folder
+    record.folder.Parent = workspace
+    -- SOUND: rising hum starts here
+end
 
-    -- owner camera
-    local s = session
-    if not s then
+-- one frame before release: beat pose, crack beats, glow / light / highlight build-up, seams opening
+local function animateHatching(record, sinceEpoch, timelineTime, half, dt)
+    local tx, tz, lift, shake = beatPose(timelineTime)
+    record.shake = shake
+    -- tilt around the bottom contact point
+    local pose = record.home * CFrame.new(0, -half + lift, 0) * CFrame.Angles(tx, 0, tz) * CFrame.new(0, half, 0)
+    -- beats: crack sound, seam opens, light pops
+    while record.beat < #BEATS and timelineTime >= BEATS[record.beat + 1].t do
+        record.beat += 1
+        local beat = BEATS[record.beat]
+        for _, cell in beat.open do
+            local piece = record.pieces[cell]
+            if piece then
+                piece.target = 0.035
+            end
+        end
+        -- SOUND: crack (beat.vol / beat.pitch rise with each beat)
+        UISound.Play(record.beat % 2 == 0 and "EggCrackAlt" or "EggCrack", beat.pitch, beat.vol)
+        record.pop = 1
+        record.sparkle:Emit(record.beat >= 4 and 3 or 1)
+    end
+    record.pop = math.max(0, (record.pop or 0) - dt * 5)
+    local white = smooth((timelineTime - WHITE_FROM) / (WHITE_TO - WHITE_FROM))
+    local progress = math.clamp(timelineTime / WHITE_TO, 0, 1)
+    -- light leaking through the fractures
+    -- the glow breathes between bursts and flares on each crack
+    local breathe = 0.5 + 0.5 * math.sin(timelineTime * (3 + 5 * progress))
+    for _, glowEntry in record.glow do
+        glowEntry.part.CFrame = pose * glowEntry.rel
+        glowEntry.part.Transparency = record.beat > 0
+                and math.clamp(0.35 - 0.3 * breathe * progress - 0.35 * record.pop - white, 0, 1)
+            or 1
+    end
+    record.light.Brightness = (record.beat > 0 and 0.4 or 0)
+        + 2.2 * progress * progress
+        + 0.6 * breathe * progress
+        + 2.5 * record.pop
+        + 3 * white
+    record.highlight.FillTransparency = 1 - 0.88 * white
+    record.highlight.OutlineTransparency = 1 - 0.5 * white
+    -- SOUND: cut the hum at timelineTime > BASE_DURATION - 0.18 for a beat of silence before release
+    for cell, piece in record.pieces do
+        if white > 0 and cell ~= 7 then
+            piece.target = math.max(piece.target, 0.035 + 0.045 * white)
+        end
+        piece.gap += (piece.target - piece.gap) * (1 - math.exp(-dt * 14))
+        local capLift = cell <= 2 and 0.05 * smooth((timelineTime - HOLD) / 0.5) or 0
+        local offset = CFrame.new(piece.dir * piece.gap + Vector3.new(0, capLift, 0))
+        for _, entry in piece.parts do
+            entry.part.CFrame = pose * offset * entry.rel
+        end
+    end
+    record.core.CFrame = pose
+    record.pose = pose
+    if record.fallback then
+        record.egg:PivotTo(pose)
+    end
+    if sinceEpoch >= record.duration then
+        release(record)
+    end
+end
+
+-- one frame after release: pieces fall inside the chamber and fade; the record is cleaned up after 1.7 s
+local function animateRelease(record, half, dt)
+    -- shell pieces fly a short way, land inside the chamber and fade
+    local age = os.clock() - record.releaseAt
+    local floorY = -half
+    for cell, piece in record.pieces do
+        if cell ~= 7 then
+            -- floaty fall: softer gravity plus air drag, so the shell drifts apart
+            piece.vel -= Vector3.new(0, 18 * dt, 0)
+            piece.vel *= math.exp(-1.8 * dt)
+            piece.spin *= math.exp(-1.2 * dt)
+            piece.pos += piece.vel * dt
+            local flat = Vector3.new(piece.pos.X, 0, piece.pos.Z)
+            if flat.Magnitude > 1.9 then -- stay inside the glass
+                piece.pos = flat.Unit * 1.9 + Vector3.new(0, piece.pos.Y, 0)
+                piece.vel = Vector3.new(0, piece.vel.Y, 0)
+            end
+            if piece.pos.Y < floorY + 0.3 then
+                piece.pos = Vector3.new(piece.pos.X, floorY + 0.3, piece.pos.Z)
+                piece.vel = Vector3.new(piece.vel.X * 0.4, 0, piece.vel.Z * 0.4)
+                piece.spin *= 0.5
+            end
+            piece.rot += piece.spin * dt
+        end
+        local fade = smooth((age - (cell == 7 and 0.1 or 0.5)) / 0.6)
+        local spinCF = CFrame.Angles(piece.rot.X, piece.rot.Y, piece.rot.Z)
+        for _, entry in piece.parts do
+            entry.part.CFrame = record.pose * CFrame.new(piece.pos) * spinCF * entry.rel
+            entry.part.Transparency = fade
+        end
+    end
+    if record.fallback and record.egg.Parent then
+        local fade = smooth(age / 0.25)
+        for _, part in record.egg:GetDescendants() do
+            if part:IsA("BasePart") then
+                part.LocalTransparencyModifier = fade
+            end
+        end
+    end
+    if age > 1.7 then
+        cleanup(record)
+    end
+end
+
+-- owner camera: intro fly-in, settled shot with shake, reveal flash, fly-back on "End"
+local function updateOwnerCamera(cam, dt)
+    local activeSession = session
+    if not activeSession then
         return
     end
     local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+    -- safety net: end the session if the chamber/humanoid is gone or the server never sent "End"
     if
-        not s.chamber:IsDescendantOf(workspace)
+        not activeSession.chamber:IsDescendantOf(workspace)
         or not hum
         or hum.Health <= 0
-        or os.clock() - s.start > s.duration + (s.intro or 0) + 6
+        or os.clock() - activeSession.start > activeSession.duration + (activeSession.intro or 0) + 6
     then
         finish()
         return
     end
-    hideAvatars(s) -- keeps late arrivals and respawned avatars out of the shot
+    hideAvatars(activeSession) -- keeps late arrivals and respawned avatars out of the shot
     cam.CameraType = Enum.CameraType.Scriptable
-    local intro = s.intro or 0
-    local elapsed = os.clock() - s.start
-    local u = math.max(0, elapsed - intro) * BASE / s.duration -- egg timeline starts after the intro
+    local intro = activeSession.intro or 0
+    local elapsed = os.clock() - activeSession.start
+    local timelineTime = math.max(0, elapsed - intro) * BASE_DURATION / activeSession.duration -- egg timeline starts after the intro
     -- zoom-in during the intro while the glass opens: moves at once, settles as the shell starts to crack
     local enter =
         TweenService:GetValue(math.clamp(elapsed / 0.2, 0, 1), Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
-    if s.cameraSettled then
+    if activeSession.cameraSettled then
         enter = 1
     end
-    local target = shotFor(s, u, elapsed)
+    local target = shotFor(activeSession, timelineTime, elapsed)
     if enter < 1 then
-        s.smoothCF = arc(s, s.original, target, enter)
+        activeSession.smoothCF = arc(activeSession, activeSession.original, target, enter)
     else
         -- critically-damped follow: glides into every change instead of snapping
-        s.smoothCF = (s.smoothCF or target):Lerp(target, 1 - math.exp(-dt * 9))
+        activeSession.smoothCF = (activeSession.smoothCF or target):Lerp(target, 1 - math.exp(-dt * 9))
     end
-    if enter >= 1 and not s.cameraSettled then
-        s.cameraSettled = true
-        s.smoothCF = target
+    if enter >= 1 and not activeSession.cameraSettled then
+        -- camera has arrived: tell the server (HatchCameraGate) so the reveal can start
+        activeSession.cameraSettled = true
+        activeSession.smoothCF = target
         cam.CFrame = target
         cam.FieldOfView = 55
-        if s.cameraToken then
-            game.ReplicatedStorage.HatchCameraReady:FireServer(s.cameraToken)
+        if activeSession.cameraToken then
+            game.ReplicatedStorage.HatchCameraReady:FireServer(activeSession.cameraToken)
         end
     end
-    local shot = s.smoothCF
-    local fov = s.fov
-        + (55 - s.fov) * enter
-        - 5 * smooth(u / WHITE_TO)
-        + (s.reveal and 6 * smooth((os.clock() - s.reveal) / 0.8) or 0)
+    local shot = activeSession.smoothCF
+    local fov = activeSession.fov
+        + (55 - activeSession.fov) * enter
+        - 5 * smooth(timelineTime / WHITE_TO)
+        + (activeSession.reveal and 6 * smooth((os.clock() - activeSession.reveal) / 0.8) or 0)
     -- restrained shake, only on the bursts
     local shake = 0
-    for _, rec in records do
-        if rec.home == s.home then
-            shake = rec.shake or 0
+    for _, otherRecord in records do
+        if otherRecord.home == activeSession.home then
+            shake = otherRecord.shake or 0
         end
     end
     local amp = shake * 0.035
@@ -865,27 +904,27 @@ RunService:BindToRenderStep("CinematicHatch", Enum.RenderPriority.Camera.Value +
         )
     end
     -- reveal flash: grows, peaks under the swap, clears gracefully (never fully opaque)
-    if s.reveal then
-        local k = os.clock() - s.reveal
-        local up, down = smooth(k / 0.12), smooth((k - 0.25) / 0.9)
-        local f = math.max(up, 0.73) * (1 - down) -- continues from the pre-flash, no dip
-        flash.BackgroundTransparency = 1 - 0.55 * f
-        s.cc.Brightness = 0.25 * f
-        s.cc.Contrast = -0.1 * f
-    elseif u > BASE - 0.1 then -- release happens just before the server's reveal cue arrives
-        local f = smooth((u - (BASE - 0.1)) / 0.15)
-        flash.BackgroundTransparency = 1 - 0.4 * f
-        s.cc.Brightness = 0.18 * f
+    if activeSession.reveal then
+        local sinceReveal = os.clock() - activeSession.reveal
+        local up, down = smooth(sinceReveal / 0.12), smooth((sinceReveal - 0.25) / 0.9)
+        local flashAlpha = math.max(up, 0.73) * (1 - down) -- continues from the pre-flash, no dip
+        flash.BackgroundTransparency = 1 - 0.55 * flashAlpha
+        activeSession.cc.Brightness = 0.25 * flashAlpha
+        activeSession.cc.Contrast = -0.1 * flashAlpha
+    elseif timelineTime > BASE_DURATION - 0.1 then -- release happens just before the server's reveal cue arrives
+        local flashAlpha = smooth((timelineTime - (BASE_DURATION - 0.1)) / 0.15)
+        flash.BackgroundTransparency = 1 - 0.4 * flashAlpha
+        activeSession.cc.Brightness = 0.18 * flashAlpha
     end
-    if s.ending then
-        s.exitFrom = s.exitFrom or shot -- fly back from a fixed point, not a moving one
+    if activeSession.ending then
+        activeSession.exitFrom = activeSession.exitFrom or shot -- fly back from a fixed point, not a moving one
         local exit = TweenService:GetValue(
-            math.clamp((os.clock() - s.ending) / 1.0, 0, 1),
+            math.clamp((os.clock() - activeSession.ending) / 1.0, 0, 1),
             Enum.EasingStyle.Sine,
             Enum.EasingDirection.InOut
         )
-        cam.CFrame = arc(s, s.exitFrom, s.original, exit)
-        cam.FieldOfView = fov + (s.fov - fov) * exit
+        cam.CFrame = arc(activeSession, activeSession.exitFrom, activeSession.original, exit)
+        cam.FieldOfView = fov + (activeSession.fov - fov) * exit
         title.TextTransparency = exit
         if exit >= 1 then
             finish()
@@ -894,4 +933,35 @@ RunService:BindToRenderStep("CinematicHatch", Enum.RenderPriority.Camera.Value +
         cam.CFrame = shot
         cam.FieldOfView = fov
     end
+end
+
+-- Runs after the default camera (Camera + 3) so the owner shot overrides it each frame.
+RunService:BindToRenderStep("CinematicHatch", Enum.RenderPriority.Camera.Value + 3, function(dt)
+    local now = workspace:GetServerTimeNow()
+    local cam = workspace.CurrentCamera
+
+    for egg, record in records do
+        if not egg:IsDescendantOf(workspace) and not record.released then
+            cleanup(record)
+        elseif
+            record.hatching
+            and (record.state == "ready" or record.state == "effects")
+            and (record.released or (cam.CFrame.Position - record.home.Position).Magnitude < NEAR_DISTANCE)
+        then
+            local sinceEpoch = now - record.epoch
+            local timelineTime = sinceEpoch * BASE_DURATION / record.duration
+            local half = record.size.Y / 2
+            if not record.shown then
+                showRecord(record, timelineTime)
+            end
+            if not record.released then
+                animateHatching(record, sinceEpoch, timelineTime, half, dt)
+            else
+                animateRelease(record, half, dt)
+            end
+        end
+    end
+
+    -- owner camera
+    updateOwnerCamera(cam, dt)
 end)
