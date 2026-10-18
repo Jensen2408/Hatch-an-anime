@@ -2,11 +2,11 @@
 local StarterGui = game:GetService("StarterGui")
 local RunService = game:GetService("RunService")
 local function hideBackpack()
- pcall(function()
-  if StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Backpack) then
-   StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
-  end
- end)
+    pcall(function()
+        if StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Backpack) then
+            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+        end
+    end)
 end
 hideBackpack()
 -- Also handle respawns and cinematics that restore all CoreGui.

@@ -1,2 +1,5 @@
-local Night=require(script.Parent.NighttimeService)
-while true do Night.Update(workspace:GetServerTimeNow());task.wait(.1)end
+local Night = require(script.Parent.NighttimeService)
+while true do
+    Night.Update(workspace:GetServerTimeNow())
+    task.wait(0.1)
+end

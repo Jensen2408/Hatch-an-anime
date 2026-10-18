@@ -6,4 +6,3 @@ local UISound = require(ReplicatedStorage:WaitForChild("UISound"))
 local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 UISound.AttachDescendants(playerGui)
-

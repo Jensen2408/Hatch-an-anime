@@ -1,9 +1,8 @@
-# Formatting for NEW or substantially rewritten files.
-# Existing sources were intentionally left unformatted (see docs/REFACTOR_REPORT.md).
+# Applied to every active Luau source (see docs/FULL_REFACTOR_REPORT.md).
 syntax = "Luau"
 column_width = 120
 line_endings = "Unix"
-indent_type = "Tabs"
+indent_type = "Spaces"
 indent_width = 4
 quote_style = "AutoPreferDouble"
 call_parentheses = "Always"

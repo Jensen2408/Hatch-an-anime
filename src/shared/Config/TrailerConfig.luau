@@ -14,9 +14,9 @@ C.IncubatorNames = { "Chamber1" }
 C.SlotNames = { "Slot0", "Slot1", "Slot2", "Slot3", "Slot4" }
 C.EntranceNames = { "Entrance", "Gate" }
 C.Models = {
-	PirateEgg = "ReplicatedStorage/GameMenu/EggPreviews/MenuEgg_Pirate",
-	Reward = "ReplicatedStorage/CharacterInventory/Portraits/Pirate",
-	Incubator = "auto", -- Chamber1 on the plot you own
+    PirateEgg = "ReplicatedStorage/GameMenu/EggPreviews/MenuEgg_Pirate",
+    Reward = "ReplicatedStorage/CharacterInventory/Portraits/Pirate",
+    Incubator = "auto", -- Chamber1 on the plot you own
 }
 C.TitleText = "HATCH AN ANIME"
 C.TaglineText = "Catch it. Hatch it. Collect them all."
@@ -45,8 +45,37 @@ C.Volume, C.SoundGroup = 0.8, "SFX"
 C.HideTags = { "RiverEgg" }
 C.HideSurfaceGuis = true
 
-C.Animations = { Fall = "rbxassetid://507767968", Land = "", Idle = "rbxassetid://507766388", Look = "", Excited = "rbxassetid://507770677", Ready = "", Run = "rbxassetid://913376220", Stumble = "", Recover = "",
-	Grab = "", Carry = "", Push = "", Lean = "", Place = "", Celebrate = "rbxassetid://507770677" }
-C.Sounds = { Music = "", RiftOpen = "", Whoosh = "", Land = "", RiftClose = "", Glint = "", Footsteps = "", Stumble = "",
-	Grab = "", Slam = "", Hum = "", Reveal = "", Place = "", Cheer = "" }
+C.Animations = {
+    Fall = "rbxassetid://507767968",
+    Land = "",
+    Idle = "rbxassetid://507766388",
+    Look = "",
+    Excited = "rbxassetid://507770677",
+    Ready = "",
+    Run = "rbxassetid://913376220",
+    Stumble = "",
+    Recover = "",
+    Grab = "",
+    Carry = "",
+    Push = "",
+    Lean = "",
+    Place = "",
+    Celebrate = "rbxassetid://507770677",
+}
+C.Sounds = {
+    Music = "",
+    RiftOpen = "",
+    Whoosh = "",
+    Land = "",
+    RiftClose = "",
+    Glint = "",
+    Footsteps = "",
+    Stumble = "",
+    Grab = "",
+    Slam = "",
+    Hum = "",
+    Reveal = "",
+    Place = "",
+    Cheer = "",
+}
 return C

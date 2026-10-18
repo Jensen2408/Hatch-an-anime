@@ -7,7 +7,9 @@ local CaptureService = game:GetService("CaptureService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
-if player.UserId ~= 168774222 and not (RunService:IsStudio() and player.UserId == 0) then return end
+if player.UserId ~= 168774222 and not (RunService:IsStudio() and player.UserId == 0) then
+    return
+end
 local remote = ReplicatedStorage:WaitForChild("CineCamRemote")
 local open = ReplicatedStorage:WaitForChild("CineCamOpen")
 local camera = workspace.CurrentCamera
@@ -66,7 +68,9 @@ local function button(message, callback)
     item.Text = message
     item.Parent = panel
     Instance.new("UICorner", item).CornerRadius = UDim.new(0, 7)
-    item.MouseButton1Click:Connect(function() callback(item) end)
+    item.MouseButton1Click:Connect(function()
+        callback(item)
+    end)
     return item
 end
 local function field(title, default)
@@ -88,7 +92,9 @@ end
 
 label("CINECAM  •  /film  •  F6 panel  •  F7 stop", 26)
 local status = label("Ready. Use Studio Play or join the game as owner.", 40)
-local function say(message) status.Text = message end
+local function say(message)
+    status.Text = message
+end
 local nameBox = field("Shot name", "River Reveal")
 local durationBox = field("Duration in seconds (max 29)", "18")
 local countdownBox = field("Countdown in seconds", "5")
@@ -118,24 +124,33 @@ local function setCoreHidden(shouldHide)
         if coreType ~= Enum.CoreGuiType.All then
             if shouldHide then
                 local ok, enabled = pcall(StarterGui.GetCoreGuiEnabled, StarterGui, coreType)
-                if ok then hiddenCore[coreType] = enabled; pcall(StarterGui.SetCoreGuiEnabled, StarterGui, coreType, false) end
+                if ok then
+                    hiddenCore[coreType] = enabled
+                    pcall(StarterGui.SetCoreGuiEnabled, StarterGui, coreType, false)
+                end
             elseif hiddenCore[coreType] ~= nil then
                 pcall(StarterGui.SetCoreGuiEnabled, StarterGui, coreType, hiddenCore[coreType])
             end
         end
     end
-    if not shouldHide then table.clear(hiddenCore) end
+    if not shouldHide then
+        table.clear(hiddenCore)
+    end
 end
 local function hideVisualUI()
-    if clean then return end
+    if clean then
+        return
+    end
     clean = true
     local function hideItem(item)
         if (item:IsA("ScreenGui") or item:IsA("BillboardGui") or item:IsA("SurfaceGui")) and item ~= gui then
-            if hiddenGui[item] == nil then hiddenGui[item] = item.Enabled end
+            if hiddenGui[item] == nil then
+                hiddenGui[item] = item.Enabled
+            end
             item.Enabled = false
         end
     end
-    for _, root in ipairs({player.PlayerGui, workspace}) do
+    for _, root in ipairs({ player.PlayerGui, workspace }) do
         for _, item in ipairs(root:GetDescendants()) do
             hideItem(item)
         end
@@ -145,11 +160,19 @@ local function hideVisualUI()
     gui.Enabled = false
 end
 local function restoreVisualUI()
-    if not clean then return end
+    if not clean then
+        return
+    end
     clean = false
-    for _, connection in ipairs(hiddenConnections) do connection:Disconnect() end
+    for _, connection in ipairs(hiddenConnections) do
+        connection:Disconnect()
+    end
     table.clear(hiddenConnections)
-    for item, enabled in pairs(hiddenGui) do if item.Parent then item.Enabled = enabled end end
+    for item, enabled in pairs(hiddenGui) do
+        if item.Parent then
+            item.Enabled = enabled
+        end
+    end
     table.clear(hiddenGui)
     setCoreHidden(false)
     gui.Enabled = true
@@ -157,7 +180,12 @@ end
 local function enterCamera()
     camera = workspace.CurrentCamera
     if not originalCamera then
-        originalCamera = {cameraType = camera.CameraType, subject = camera.CameraSubject, fov = camera.FieldOfView, cf = camera.CFrame}
+        originalCamera = {
+            cameraType = camera.CameraType,
+            subject = camera.CameraSubject,
+            fov = camera.FieldOfView,
+            cf = camera.CFrame,
+        }
     end
     camera.CameraType = Enum.CameraType.Scriptable
 end
@@ -173,25 +201,37 @@ local function stopAll()
     playToken += 1
     playing = false
     flying = false
-    if captureRunning then pcall(CaptureService.StopVideoCapture, CaptureService); captureRunning = false end
+    if captureRunning then
+        pcall(CaptureService.StopVideoCapture, CaptureService)
+        captureRunning = false
+    end
     restoreVisualUI()
     exitCamera()
     say("Stopped. Camera and UI restored.")
 end
 
 local function cfArray(cf)
-    return {cf:GetComponents()}
+    return { cf:GetComponents() }
 end
 local function pointCF(point)
     return CFrame.new(table.unpack(point.cf))
 end
 local function targetPosition()
-    if not target or not target.Parent then target = nil; return nil end
-    if target:IsA("Model") then return target:GetPivot().Position end
-    if target:IsA("BasePart") then return target.Position end
+    if not target or not target.Parent then
+        target = nil
+        return nil
+    end
+    if target:IsA("Model") then
+        return target:GetPivot().Position
+    end
+    if target:IsA("BasePart") then
+        return target.Position
+    end
     return nil
 end
-local function lerp(a, b, t) return a + (b - a) * t end
+local function lerp(a, b, t)
+    return a + (b - a) * t
+end
 local function catmull(a, b, c, d, t)
     local t2, t3 = t * t, t * t * t
     return 0.5 * ((b * 2) + (c - a) * t + (a * 2 - b * 5 + c * 4 - d) * t2 + (-a + b * 3 - c * 3 + d) * t3)
@@ -218,7 +258,9 @@ local function cameraAt(path, alpha)
     camera.Focus = CFrame.new(aim or (pos + camera.CFrame.LookVector * 100))
 end
 local function saveShots()
-    local ok, response = pcall(function() return remote:InvokeServer("save", shots) end)
+    local ok, response = pcall(function()
+        return remote:InvokeServer("save", shots)
+    end)
     if not ok or not response or not response.ok then
         say("Shot kept this session; cloud save failed: " .. tostring(response and response.error or response))
     else
@@ -227,43 +269,79 @@ local function saveShots()
 end
 
 button("Free fly  •  WASD / Q E / right mouse", function()
-    if playing then return end
+    if playing then
+        return
+    end
     enterCamera()
     flying = not flying
     say(flying and "Flying. Shift = faster, mouse wheel = speed." or "Fly paused. Add a point or replay.")
 end)
 button("Apply camera zoom", function()
     local value = tonumber(fovBox.Text)
-    if not value or value < 20 or value > 100 then say("Zoom value must be 20 to 100."); return end
+    if not value or value < 20 or value > 100 then
+        say("Zoom value must be 20 to 100.")
+        return
+    end
     enterCamera()
     camera.FieldOfView = value
     say("Camera field of view set to " .. value .. ". Add a point to save it.")
 end)
 button("Set camera point", function()
-    if playing then return end
-    if #points >= 40 then say("Maximum 40 points."); return end
+    if playing then
+        return
+    end
+    if #points >= 40 then
+        say("Maximum 40 points.")
+        return
+    end
     local cf = camera.CFrame
-    table.insert(points, {cf = cfArray(cf), fov = camera.FieldOfView})
+    table.insert(points, { cf = cfArray(cf), fov = camera.FieldOfView })
     say("Point " .. #points .. " saved with position, direction, and zoom.")
 end)
 button("Track object under mouse / clear tracking", function()
-    if target then target = nil; say("Tracking cleared."); return end
+    if target then
+        target = nil
+        say("Tracking cleared.")
+        return
+    end
     pickingTarget = true
     say("Click an egg, player, or model in the world to track it.")
 end)
 button("Undo last point", function()
-    if playing then return end
-    if #points > 0 then table.remove(points); say(#points .. " points remain.") end
+    if playing then
+        return
+    end
+    if #points > 0 then
+        table.remove(points)
+        say(#points .. " points remain.")
+    end
 end)
 button("Save current shot", function()
-    if #points < 2 then say("Add at least two camera points."); return end
+    if #points < 2 then
+        say("Add at least two camera points.")
+        return
+    end
     local duration = tonumber(durationBox.Text)
-    if not duration or duration < 1 or duration > 29 then say("Duration must be 1 to 29 seconds."); return end
+    if not duration or duration < 1 or duration > 29 then
+        say("Duration must be 1 to 29 seconds.")
+        return
+    end
     local name = nameBox.Text:sub(1, 40)
-    if name == "" then say("Enter a shot name."); return end
-    for index, shot in ipairs(shots) do if shot.name == name then table.remove(shots, index); break end end
-    if #shots >= 25 then say("Maximum 25 saved shots."); return end
-    table.insert(shots, {name = name, duration = duration, points = table.clone(points)})
+    if name == "" then
+        say("Enter a shot name.")
+        return
+    end
+    for index, shot in ipairs(shots) do
+        if shot.name == name then
+            table.remove(shots, index)
+            break
+        end
+    end
+    if #shots >= 25 then
+        say("Maximum 25 saved shots.")
+        return
+    end
+    table.insert(shots, { name = name, duration = duration, points = table.clone(points) })
     saveShots()
 end)
 button("Load named shot", function()
@@ -278,7 +356,10 @@ button("Load named shot", function()
     say("No saved shot with that exact name.")
 end)
 button("Preview saved path", function()
-    if #points < 2 or playing then say("Set or load at least two points."); return end
+    if #points < 2 or playing then
+        say("Set or load at least two points.")
+        return
+    end
     local duration = math.clamp(tonumber(durationBox.Text) or 18, 1, 29)
     local countdown = math.clamp(tonumber(countdownBox.Text) or 5, 0, 30)
     flying = false
@@ -288,33 +369,50 @@ button("Preview saved path", function()
     local token = playToken
     task.spawn(function()
         for second = countdown, 1, -1 do
-            if token ~= playToken then return end
+            if token ~= playToken then
+                return
+            end
             say("Starting in " .. second .. "…")
             task.wait(1)
         end
-        if token ~= playToken then return end
+        if token ~= playToken then
+            return
+        end
         if recording then
             local ok, result = pcall(function()
                 return CaptureService:StartVideoCaptureAsync(function(captureResult, capture)
                     captureRunning = false
-                    if capture and (captureResult == Enum.VideoCaptureResult.Success or captureResult == Enum.VideoCaptureResult.TimeLimitReached) then
-                        CaptureService:PromptSaveCapturesToGallery({capture}, function() end)
+                    if
+                        capture
+                        and (
+                            captureResult == Enum.VideoCaptureResult.Success
+                            or captureResult == Enum.VideoCaptureResult.TimeLimitReached
+                        )
+                    then
+                        CaptureService:PromptSaveCapturesToGallery({ capture }, function() end)
                     end
                 end, {})
             end)
             captureRunning = ok and result == Enum.VideoCaptureStartedResult.Success
-            if not captureRunning then say("Capture unavailable here; replaying for screen recording.") end
+            if not captureRunning then
+                say("Capture unavailable here; replaying for screen recording.")
+            end
         end
         hideVisualUI()
         local start = os.clock()
         while token == playToken do
             local alpha = (os.clock() - start) / duration
             cameraAt(points, alpha)
-            if alpha >= 1 then break end
+            if alpha >= 1 then
+                break
+            end
             RunService.RenderStepped:Wait()
         end
         if token == playToken then
-            if captureRunning then pcall(CaptureService.StopVideoCapture, CaptureService); captureRunning = false end
+            if captureRunning then
+                pcall(CaptureService.StopVideoCapture, CaptureService)
+                captureRunning = false
+            end
             playing = false
             restoreVisualUI()
             say("Replay complete. Edit points or run it again.")
@@ -329,7 +427,10 @@ end)
 button("Framing: OFF", function(item)
     guideMode = guideMode == "Off" and "Vertical 9:16" or (guideMode == "Vertical 9:16" and "Wide 16:9" or "Off")
     item.Text = "Framing: " .. guideMode
-    if frameGuide then frameGuide:Destroy(); frameGuide = nil end
+    if frameGuide then
+        frameGuide:Destroy()
+        frameGuide = nil
+    end
     if guideMode ~= "Off" then
         frameGuide = Instance.new("Frame")
         frameGuide.BackgroundTransparency = 1
@@ -345,30 +446,49 @@ button("Framing: OFF", function(item)
     end
     say("Guide is for composition; set the recording window or crop in your editor.")
 end)
-button("Stop and restore camera/UI", function() stopAll() end)
+button("Stop and restore camera/UI", function()
+    stopAll()
+end)
 label("F6: panel   F7: stop   Shift: fast fly", 23)
 
 UserInputService.InputBegan:Connect(function(input, processed)
-    if input.KeyCode == Enum.KeyCode.F6 then gui.Enabled = not gui.Enabled; return end
-    if input.KeyCode == Enum.KeyCode.F7 then stopAll(); return end
-    if processed then return end
+    if input.KeyCode == Enum.KeyCode.F6 then
+        gui.Enabled = not gui.Enabled
+        return
+    end
+    if input.KeyCode == Enum.KeyCode.F7 then
+        stopAll()
+        return
+    end
+    if processed then
+        return
+    end
     if pickingTarget and input.UserInputType == Enum.UserInputType.MouseButton1 then
         local hit = player:GetMouse().Target
         pickingTarget = false
-        if not hit then say("No object selected. Try again."); return end
+        if not hit then
+            say("No object selected. Try again.")
+            return
+        end
         target = hit:FindFirstAncestorOfClass("Model") or hit
         say("Tracking " .. target.Name .. " while it exists.")
         return
     end
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then rightMouse = true end
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        rightMouse = true
+    end
     keys[input.KeyCode] = true
 end)
 UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then rightMouse = false end
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        rightMouse = false
+    end
     keys[input.KeyCode] = nil
 end)
 UserInputService.InputChanged:Connect(function(input)
-    if not flying or playing then return end
+    if not flying or playing then
+        return
+    end
     if input.UserInputType == Enum.UserInputType.MouseWheel then
         speed = math.clamp(speed * (input.Position.Z > 0 and 1.2 or 1 / 1.2), 2, 400)
     elseif input.UserInputType == Enum.UserInputType.MouseMovement and rightMouse then
@@ -378,14 +498,28 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 RunService.RenderStepped:Connect(function(dt)
-    if not flying or playing then return end
+    if not flying or playing then
+        return
+    end
     local v = Vector3.zero
-    if keys[Enum.KeyCode.W] then v += Vector3.new(0, 0, -1) end
-    if keys[Enum.KeyCode.S] then v += Vector3.new(0, 0, 1) end
-    if keys[Enum.KeyCode.A] then v += Vector3.new(-1, 0, 0) end
-    if keys[Enum.KeyCode.D] then v += Vector3.new(1, 0, 0) end
-    if keys[Enum.KeyCode.E] then v += Vector3.new(0, 1, 0) end
-    if keys[Enum.KeyCode.Q] then v += Vector3.new(0, -1, 0) end
+    if keys[Enum.KeyCode.W] then
+        v += Vector3.new(0, 0, -1)
+    end
+    if keys[Enum.KeyCode.S] then
+        v += Vector3.new(0, 0, 1)
+    end
+    if keys[Enum.KeyCode.A] then
+        v += Vector3.new(-1, 0, 0)
+    end
+    if keys[Enum.KeyCode.D] then
+        v += Vector3.new(1, 0, 0)
+    end
+    if keys[Enum.KeyCode.E] then
+        v += Vector3.new(0, 1, 0)
+    end
+    if keys[Enum.KeyCode.Q] then
+        v += Vector3.new(0, -1, 0)
+    end
     if v.Magnitude > 0 then
         local boost = keys[Enum.KeyCode.LeftShift] and 3 or 1
         camera.CFrame += camera.CFrame:VectorToWorldSpace(v.Unit) * speed * boost * dt
@@ -394,7 +528,9 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 open.OnClientEvent:Connect(function()
-    local ok, response = pcall(function() return remote:InvokeServer("load") end)
+    local ok, response = pcall(function()
+        return remote:InvokeServer("load")
+    end)
     if not ok or not response or not response.ok then
         say("Opened. Cloud shots unavailable; this session still works.")
     else

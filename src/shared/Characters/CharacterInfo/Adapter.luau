@@ -10,18 +10,18 @@ local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
 local Adapter = {}
 
 Adapter.Attr = {
-	Name = "DesignName",
-	Rarity = "Rarity",
-	Power = "Power",
-	Income = "IncomePerSecond",
-	Quality = "RollQuality",
-	CharacterId = "CharacterId",
+    Name = "DesignName",
+    Rarity = "Rarity",
+    Power = "Power",
+    Income = "IncomePerSecond",
+    Quality = "RollQuality",
+    CharacterId = "CharacterId",
 }
 Adapter.PlacedTag = "FloatingCharacter" -- BrainrotPlacement already tags every placed character with this
 -- every world model that gets a floating label, with its label size
 Adapter.ModelTags = {
-	FloatingCharacter = "Placed", -- on a temple slot
-	HatchRewardDisplay = "Hatch", -- standing in the incubator after hatching
+    FloatingCharacter = "Placed", -- on a temple slot
+    HatchRewardDisplay = "Hatch", -- standing in the incubator after hatching
 }
 -- old plain-text labels the server still puts on some models; hidden locally so nothing doubles up
 Adapter.OldLabels = { "PowerInfo", "CharacterInfo" }
@@ -30,35 +30,42 @@ Adapter.OldLabels = { "PowerInfo", "CharacterInfo" }
 local BIG_ROLLS = { Jackpot = true, Ultra = true, Cosmic = true }
 
 local function characterId(inst)
-	return inst:GetAttribute("BrainrotId") or inst:GetAttribute("CharacterId")
+    return inst:GetAttribute("BrainrotId") or inst:GetAttribute("CharacterId")
 end
 
 function Adapter.IsCharacterTool(tool)
-	return tool:IsA("Tool") and tool:GetAttribute(Adapter.Attr.CharacterId) ~= nil
+    return tool:IsA("Tool") and tool:GetAttribute(Adapter.Attr.CharacterId) ~= nil
 end
 
 function Adapter.Read(inst)
-	local A = Adapter.Attr
-	local power = inst:GetAttribute(A.Power)
-	if power == nil then return nil end
-	local entry = Catalog.ById[characterId(inst) or ""]
-	local name = Catalog.DisplayName(inst:GetAttribute(A.Name) or (entry and entry.Name) or inst.Name)
-	if inst:GetAttribute("GoldVariant") and not name:match("^Golden%s") then name = "Golden " .. name end
-	return {
-		name = name,
-		rarity = inst:GetAttribute(A.Rarity) or (entry and entry.Rarity) or "Common",
-		power = tonumber(power) or 0,
-		income = tonumber(inst:GetAttribute(A.Income)) or 0,
-		mutation = inst:GetAttribute("Mutation"),
-		exceptional = BIG_ROLLS[inst:GetAttribute(A.Quality) or ""] == true or inst:GetAttribute("GoldVariant") == true,
-	}
+    local A = Adapter.Attr
+    local power = inst:GetAttribute(A.Power)
+    if power == nil then
+        return nil
+    end
+    local entry = Catalog.ById[characterId(inst) or ""]
+    local name = Catalog.DisplayName(inst:GetAttribute(A.Name) or (entry and entry.Name) or inst.Name)
+    if inst:GetAttribute("GoldVariant") and not name:match("^Golden%s") then
+        name = "Golden " .. name
+    end
+    return {
+        name = name,
+        rarity = inst:GetAttribute(A.Rarity) or (entry and entry.Rarity) or "Common",
+        power = tonumber(power) or 0,
+        income = tonumber(inst:GetAttribute(A.Income)) or 0,
+        mutation = inst:GetAttribute("Mutation"),
+        exceptional = BIG_ROLLS[inst:GetAttribute(A.Quality) or ""] == true or inst:GetAttribute("GoldVariant") == true,
+    }
 end
 
 function Adapter.Watched()
-	local t = {}
-	for _, v in Adapter.Attr do table.insert(t, v) end
-	table.insert(t, "GoldVariant") table.insert(t, "Mutation")
-	return t
+    local t = {}
+    for _, v in Adapter.Attr do
+        table.insert(t, v)
+    end
+    table.insert(t, "GoldVariant")
+    table.insert(t, "Mutation")
+    return t
 end
 
 -- Touch Drop: the game's existing DropHeldItemClient already shows a Drop button on touch screens,
@@ -68,7 +75,8 @@ Adapter.Drop = nil
 
 Adapter.DropKey = Enum.KeyCode.F -- DropHeldItemClient binds F
 Adapter.ReducedMotion = function()
-	return Players.LocalPlayer:GetAttribute("ReducedMotion") == true or game:GetService("GuiService").ReducedMotionEnabled
+    return Players.LocalPlayer:GetAttribute("ReducedMotion") == true
+        or game:GetService("GuiService").ReducedMotionEnabled
 end
 
 return Adapter
