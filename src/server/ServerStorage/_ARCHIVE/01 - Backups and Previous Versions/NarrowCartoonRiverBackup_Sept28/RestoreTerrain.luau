@@ -1,0 +1,1 @@
+return function() workspace.Terrain:PasteRegion(script.Parent.TerrainSnapshot,Vector3int16.new(-80,2,-3),true) end

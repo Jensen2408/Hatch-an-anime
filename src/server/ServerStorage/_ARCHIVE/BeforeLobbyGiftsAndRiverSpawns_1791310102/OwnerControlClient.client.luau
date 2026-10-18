@@ -1,0 +1,166 @@
+
+local Players=game:GetService("Players")
+local RS=game:GetService("ReplicatedStorage")
+local Tween=game:GetService("TweenService")
+local player=Players.LocalPlayer
+if player.UserId~=168774222 then return end
+local remote=RS:WaitForChild("OwnerControl")
+local gui=Instance.new("ScreenGui") gui.Name="OwnerControlPanel" gui.ResetOnSpawn=false gui.IgnoreGuiInset=true gui.DisplayOrder=500 gui.Enabled=false gui.Parent=player:WaitForChild("PlayerGui")
+local accent=Color3.fromRGB(237,68,89)
+local function round(x,r) local c=Instance.new("UICorner",x) c.CornerRadius=UDim.new(0,r or 8) end
+local function text(parent,str,pos,size,fs,color)
+ local t=Instance.new("TextLabel") t.BackgroundTransparency=1 t.Position=pos t.Size=size t.Text=str t.TextColor3=color or Color3.fromRGB(242,244,251) t.Font=Enum.Font.GothamBold t.TextSize=fs or 15 t.TextXAlignment=Enum.TextXAlignment.Left t.Parent=parent return t
+end
+local function button(parent,str,pos,size,color)
+ local b=Instance.new("TextButton") b.Position=pos b.Size=size b.Text=str b.TextColor3=Color3.fromRGB(245,245,250) b.BackgroundColor3=color or Color3.fromRGB(38,43,55) b.Font=Enum.Font.GothamBold b.TextSize=14 b.AutoButtonColor=true b.Parent=parent round(b) return b
+end
+local function box(parent,hint,pos,size)
+ local b=Instance.new("TextBox") b.Position=pos b.Size=size b.PlaceholderText=hint b.Text="" b.ClearTextOnFocus=false b.Font=Enum.Font.Gotham b.TextSize=14 b.TextColor3=Color3.new(1,1,1) b.PlaceholderColor3=Color3.fromRGB(150,157,176) b.BackgroundColor3=Color3.fromRGB(27,31,41) b.Parent=parent round(b) return b
+end
+local shade=Instance.new("Frame") shade.Size=UDim2.fromScale(1,1) shade.BackgroundColor3=Color3.new() shade.BackgroundTransparency=.35 shade.Parent=gui
+local panel=Instance.new("CanvasGroup") panel.Name="Panel" panel.BackgroundTransparency=0 panel.AnchorPoint=Vector2.new(.5,.5) panel.Position=UDim2.fromScale(.5,.5) panel.Size=UDim2.fromOffset(760,580) panel.BackgroundColor3=Color3.fromRGB(16,19,27) panel.Parent=shade round(panel,16)
+local scale=Instance.new("UIScale",panel)
+local stroke=Instance.new("UIStroke",panel) stroke.Color=Color3.fromRGB(74,47,59) stroke.Thickness=1.5
+local strip=Instance.new("Frame") strip.Size=UDim2.new(1,-32,0,3) strip.Position=UDim2.fromOffset(16,0) strip.BackgroundColor3=accent strip.BorderSizePixel=0 strip.Parent=panel
+text(panel,"OWNER CONTROL",UDim2.fromOffset(24,18),UDim2.fromOffset(480,30),23)
+text(panel,"PRIVATE ACCESS   /   CURRENT SERVER",UDim2.fromOffset(25,51),UDim2.fromOffset(600,24),11,Color3.fromRGB(154,164,188))
+local close=button(panel,"×",UDim2.new(1,-58,0,20),UDim2.fromOffset(34,34))
+local status=text(panel,"Ready. Type /owner in chat to open this panel.",UDim2.fromOffset(24,538),UDim2.fromOffset(712,28),13,Color3.fromRGB(174,186,207))
+local body=Instance.new("Frame") body.Position=UDim2.fromOffset(24,174) body.Size=UDim2.fromOffset(712,352) body.BackgroundTransparency=1 body.Parent=panel
+text(panel,"TARGET",UDim2.fromOffset(24,124),UDim2.fromOffset(76,34),12,Color3.fromRGB(161,172,194))
+local recipient=box(panel,"Exact username or User ID",UDim2.fromOffset(100,124),UDim2.fromOffset(420,34)) recipient.Text="ME"
+local me=button(panel,"ME",UDim2.fromOffset(530,124),UDim2.fromOffset(96,34)) me.Activated:Connect(function() recipient.Text="ME" end)
+local everyone=button(panel,"ALL • CASH",UDim2.fromOffset(636,124),UDim2.fromOffset(100,34)) everyone.Activated:Connect(function() recipient.Text="ALL" end)
+local data=nil local working=false local selected=nil local tab="Spawn" local pending=nil
+local modal=Instance.new("Frame") modal.Name="Confirm" modal.Size=UDim2.fromScale(1,1) modal.BackgroundColor3=Color3.fromRGB(16,19,27) modal.Visible=false modal.ZIndex=10 modal.Parent=panel round(modal,16)
+local confirmText=text(modal,"Confirm action",UDim2.fromOffset(60,165),UDim2.fromOffset(640,100),20) confirmText.TextWrapped=true confirmText.ZIndex=11
+local cancel=button(modal,"CANCEL",UDim2.fromOffset(60,300),UDim2.fromOffset(300,44)) cancel.ZIndex=11
+local confirm=button(modal,"CONFIRM",UDim2.fromOffset(390,300),UDim2.fromOffset(300,44),accent) confirm.ZIndex=11
+local function request(action,payload)
+ if working then return nil end working=true status.Text="Working…"
+ local ok,result=pcall(remote.InvokeServer,remote,action,payload or {})
+ working=false
+ if not ok then status.Text="Connection failed. Try again." status.TextColor3=accent return nil end
+ status.Text=result.Message or "Ready." status.TextColor3=result.Ok and Color3.fromRGB(142,228,185) or accent
+ return result
+end
+local function ask(action,target,payload)
+ if target=="" then status.Text="Enter an exact username or User ID first." return end
+ pending={Action=action,Target=target,Payload=payload or {}}
+ confirmText.Text=action.." for "..target..(payload and payload.Amount and (" • $"..tostring(payload.Amount)) or "").."?\n"..(action=="Ban24h" and "24-hour ban across this experience." or action=="Unban" and "Remove this account's experience ban." or "Apply this action to the selected target.")
+ modal.Visible=true
+end
+cancel.Activated:Connect(function() pending=nil modal.Visible=false end)
+confirm.Activated:Connect(function()
+ local action=pending pending=nil modal.Visible=false
+ if action then action.Payload.Target=action.Target action.Payload.Confirmed=true request(action.Action,action.Payload) end
+end)
+local render
+render=function()
+ body:ClearAllChildren()
+ if tab=="Spawn" then
+  text(body,"EGGS & CHARACTERS",UDim2.fromOffset(0,0),UDim2.fromOffset(430,24),16)
+  local list=Instance.new("ScrollingFrame") list.Size=UDim2.fromOffset(420,306) list.Position=UDim2.fromOffset(0,36) list.BackgroundTransparency=1 list.BorderSizePixel=0 list.ScrollBarThickness=4 list.CanvasSize=UDim2.fromOffset(0,#(data and data.Items or {})*44) list.Parent=body
+  local buttons={}
+  for i,item in ipairs(data and data.Items or {}) do
+   local b=button(list,item.Id.."  /  "..item.Rarity,UDim2.fromOffset(0,(i-1)*44),UDim2.fromOffset(404,38))
+   buttons[item.Id]=b
+   b.Activated:Connect(function()
+    selected=item.Id
+    for id,v in pairs(buttons) do v.BackgroundColor3=id==selected and accent or Color3.fromRGB(38,43,55) end
+   end)
+  end
+  text(body,"GIVE TO SELECTED PLAYER",UDim2.fromOffset(444,0),UDim2.fromOffset(268,24),12,Color3.fromRGB(161,172,194))
+  local egg=button(body,"SPAWN EGG",UDim2.fromOffset(444,40),UDim2.fromOffset(268,44),accent)
+  local character=button(body,"SPAWN CHARACTER",UDim2.fromOffset(444,94),UDim2.fromOffset(268,44))
+  egg.Activated:Connect(function() if selected then request("SpawnEgg",{Id=selected,Target=recipient.Text}) else status.Text="Select an egg from the list." end end)
+  character.Activated:Connect(function() if selected then request("SpawnCharacter",{Id=selected,Target=recipient.Text}) else status.Text="Select a character from the list." end end)
+  text(body,"CASH • SELECTED PLAYER",UDim2.fromOffset(444,177),UDim2.fromOffset(268,24),12,Color3.fromRGB(161,172,194))
+  local amount=box(body,"Amount, e.g. 100000",UDim2.fromOffset(444,209),UDim2.fromOffset(268,40))
+  local cash=button(body,"ADD CASH",UDim2.fromOffset(444,259),UDim2.fromOffset(268,40))
+  cash.Activated:Connect(function() if recipient.Text=="ALL" then ask("GiveCash","ALL",{Amount=amount.Text}) else request("GiveCash",{Amount=amount.Text,Target=recipient.Text}) end end)
+
+ elseif tab=="Money" then
+  text(body,"PLAYER CASH",UDim2.fromOffset(0,0),UDim2.fromOffset(712,26),18)
+  text(body,"Choose the recipient above. ME means your account.",UDim2.fromOffset(0,34),UDim2.fromOffset(712,26),14,Color3.fromRGB(177,186,204))
+  local amount=box(body,"Amount — e.g. 1000000",UDim2.fromOffset(0,80),UDim2.fromOffset(440,48))
+  local give=button(body,"GIVE MONEY",UDim2.fromOffset(0,148),UDim2.fromOffset(344,48),accent)
+  local set=button(body,"SET EXACT BALANCE",UDim2.fromOffset(368,148),UDim2.fromOffset(344,48))
+  give.Activated:Connect(function()
+   if recipient.Text=="ALL" then ask("GiveCash","ALL",{Amount=amount.Text})
+   else request("GiveCash",{Target=recipient.Text,Amount=amount.Text}) end
+  end)
+  set.Activated:Connect(function() ask("SetCash",recipient.Text,{Amount=amount.Text}) end)
+  local all=button(body,"GIVE MONEY TO EVERYONE",UDim2.fromOffset(0,214),UDim2.fromOffset(712,48))
+  all.Activated:Connect(function() ask("GiveCash","ALL",{Amount=amount.Text}) end)
+  text(body,"Cash and upgrades are session-only while saving is disabled.",UDim2.fromOffset(0,291),UDim2.fromOffset(712,28),13,Color3.fromRGB(161,172,194))
+ elseif tab=="Plots" then
+  text(body,"PLOT & PLAYER TOOLS",UDim2.fromOffset(0,0),UDim2.fromOffset(712,26),18)
+  local options={
+   {"UpgradeTemple","UPGRADE TEMPLE"},{"AddChamber","ADD INCUBATOR"},
+   {"UpgradeChamber","UPGRADE INCUBATOR 1",false,1},{"UpgradeChamber","UPGRADE INCUBATOR 2",false,2},
+   {"UpgradeChamber","UPGRADE INCUBATOR 3",false,3},{"UnlockSlots","UNLOCK ALL SLOTS"},
+   {"GoHome","SEND PLAYER HOME"},{"TeleportTo","GO TO PLAYER"},
+   {"Bring","BRING PLAYER TO ME"},{"Respawn","RESPAWN PLAYER",true},
+   {"ClearInventory","CLEAR HELD INVENTORY",true},{"ClearPlaced","CLEAR PLACED CHARACTERS",true},
+   {"ResetSlots","RESET SLOT UNLOCKS",true}
+  }
+  for i,o in ipairs(options) do
+   local x=((i-1)%2)*364 local y=42+math.floor((i-1)/2)*43
+   local b=button(body,o[2],UDim2.fromOffset(x,y),UDim2.fromOffset(348,35))
+   b.TextSize=12
+   b.Activated:Connect(function()
+    local payload={Target=recipient.Text,Index=o[4]}
+    if o[3] then ask(o[1],recipient.Text,payload) else request(o[1],payload) end
+   end)
+  end
+
+ elseif tab=="Events" then
+  text(body,"TIMED SERVER EVENTS",UDim2.fromOffset(0,0),UDim2.fromOffset(500,24),16)
+  local duration=box(body,"Duration in seconds (15–300)",UDim2.fromOffset(0,38),UDim2.fromOffset(420,40)) duration.Text="120"
+  local interval=box(body,"River spawn interval (1.5–30s)",UDim2.fromOffset(440,38),UDim2.fromOffset(272,40))
+  local apply=button(body,"SET SPAWN INTERVAL",UDim2.fromOffset(440,299),UDim2.fromOffset(272,42))
+  apply.Activated:Connect(function() request("SetSpawnInterval",{Amount=interval.Text}) end)
+  for i,event in ipairs({{"EggRush","EGG RUSH","Eggs appear twice as often."},{"DoubleCash","DOUBLE CASH","Placed characters earn 2× cash."},{"GoldenHour","GOLDEN HOUR","Warm sunset lighting across the map."}}) do
+   local b=button(body,event[2],UDim2.fromOffset(0,96+(i-1)*65),UDim2.fromOffset(240,48),i==1 and accent or nil)
+   text(body,event[3],UDim2.fromOffset(260,96+(i-1)*65),UDim2.fromOffset(452,48),14,Color3.fromRGB(177,186,204))
+   b.Activated:Connect(function() request("StartEvent",{Kind=event[1],Duration=duration.Text}) end)
+  end
+  local stop=button(body,"STOP EVENT",UDim2.fromOffset(0,299),UDim2.fromOffset(240,42))
+  stop.Activated:Connect(function() request("StopEvent") end)
+ else
+  text(body,"PLAYER MODERATION",UDim2.fromOffset(0,0),UDim2.fromOffset(500,24),16)
+  local target=box(body,"Exact username or numeric User ID",UDim2.fromOffset(0,38),UDim2.fromOffset(440,42))
+  local list=Instance.new("ScrollingFrame") list.Position=UDim2.fromOffset(0,92) list.Size=UDim2.fromOffset(440,220) list.BackgroundTransparency=1 list.BorderSizePixel=0 list.ScrollBarThickness=4 list.CanvasSize=UDim2.fromOffset(0,#(data and data.Players or {})*44) list.Parent=body
+  for i,p in ipairs(data and data.Players or {}) do
+   local b=button(list,"@"..p.Name.."  •  "..p.Id,UDim2.fromOffset(0,(i-1)*44),UDim2.fromOffset(424,38))
+   b.Activated:Connect(function() target.Text=tostring(p.Id) recipient.Text=tostring(p.Id) status.Text="Selected @"..p.Name.." ("..p.Id..")" end)
+  end
+  for i,a in ipairs({{"Kick","KICK FROM SERVER"},{"Ban24h","BAN FOR 24 HOURS"},{"Unban","UNBAN ACCOUNT"}}) do
+   local b=button(body,a[2],UDim2.fromOffset(464,38+(i-1)*56),UDim2.fromOffset(248,44),a[1]=="Ban24h" and accent or nil)
+   b.Activated:Connect(function() ask(a[1],target.Text) end)
+  end
+  text(body,"Bans apply across this experience.\nBans are available in the published game.\nYour owner account is protected.",UDim2.fromOffset(464,221),UDim2.fromOffset(248,80),12,Color3.fromRGB(163,174,195)).TextWrapped=true
+  local refresh=button(body,"REFRESH PLAYERS",UDim2.fromOffset(0,317),UDim2.fromOffset(440,34))
+  refresh.Activated:Connect(function() local r=request("Info") if r and r.Ok then data=r render() end end)
+ end
+end
+local tabs={}
+for i,name in ipairs({"Spawn","Money","Plots","Events","Players"}) do
+ local b=button(panel,name:upper(),UDim2.fromOffset(24+(i-1)*144,84),UDim2.fromOffset(136,30),i==1 and accent or nil) tabs[name]=b
+ b.Activated:Connect(function()
+  tab=name for n,v in pairs(tabs) do v.BackgroundColor3=n==tab and accent or Color3.fromRGB(38,43,55) end render()
+ end)
+end
+local function open()
+ if gui.Enabled then gui.Enabled=false return end
+ local r=request("Info") if not r or not r.Ok then return end data=r selected=nil
+ gui.Enabled=true modal.Visible=false panel.GroupTransparency=1
+ local camera=workspace.CurrentCamera local v=camera.ViewportSize scale.Scale=math.min(1,(v.X-24)/760,(v.Y-30)/580)
+ render() Tween:Create(panel,TweenInfo.new(.2),{GroupTransparency=0}):Play()
+end
+close.Activated:Connect(function() gui.Enabled=false end)
+RS:WaitForChild("OwnerPanelOpen").OnClientEvent:Connect(open)
+player.Chatted:Connect(function(message)
+ if message:lower()=="/owner" and game:GetService("TextChatService").ChatVersion==Enum.ChatVersion.LegacyChatService then open() end
+end)

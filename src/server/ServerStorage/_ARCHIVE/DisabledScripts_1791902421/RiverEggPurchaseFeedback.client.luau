@@ -1,0 +1,6 @@
+local event=game.ReplicatedStorage:WaitForChild("RiverEggPurchaseFeedback")
+event.OnClientEvent:Connect(function(reason,price)
+ pcall(function()
+  game:GetService("StarterGui"):SetCore("SendNotification",{Title="Egg purchase",Text=reason.." • "..price,Duration=3})
+ end)
+end)

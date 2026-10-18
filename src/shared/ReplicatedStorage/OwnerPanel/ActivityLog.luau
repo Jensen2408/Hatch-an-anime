@@ -1,0 +1,1 @@
+local M={Rows={}} function M.Add(action,target,result) table.insert(M.Rows,1,{Time=os.date("%H:%M:%S"),Action=action,Target=target,Ok=result.Ok==true,Response=result.Message or ""}) while #M.Rows>50 do table.remove(M.Rows) end end function M.Clear() table.clear(M.Rows) end return M
