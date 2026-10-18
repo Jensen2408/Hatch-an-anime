@@ -33,21 +33,21 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Config = require(ReplicatedStorage:WaitForChild("Construction"):WaitForChild("ConstructionConfig"))
 local TAG = "Constructing"
 
-local Service = {}
+local ConstructionService = {}
 local active = {} -- [key] = job
 
 ---------------------------------------------------------------- identity + diff
-local function round(v, s)
-    return math.floor(v / s + 0.5) * s
+local function roundTo(value, step)
+    return math.floor(value / step + 0.5) * step
 end
-local function relPath(inst, root)
-    local parts = {}
-    local cur = inst
-    while cur and cur ~= root do
-        table.insert(parts, 1, cur.Name)
-        cur = cur.Parent
+local function relPath(instance, root)
+    local names = {}
+    local current = instance
+    while current and current ~= root do
+        table.insert(names, 1, current.Name)
+        current = current.Parent
     end
-    return table.concat(parts, "/")
+    return table.concat(names, "/")
 end
 -- Stable id: explicit BuildId attribute, else path + rounded local position + size (handles repeated names)
 local function partId(part, root, rootCF)
@@ -55,36 +55,39 @@ local function partId(part, root, rootCF)
     if explicit then
         return tostring(explicit), true
     end
-    local lp = rootCF:PointToObjectSpace(part.Position)
-    local s = part.Size
+    local localPos = rootCF:PointToObjectSpace(part.Position)
+    local size = part.Size
     return string.format(
         "%s|%.2f,%.2f,%.2f|%.2f,%.2f,%.2f",
         relPath(part, root),
-        round(lp.X, 0.05),
-        round(lp.Y, 0.05),
-        round(lp.Z, 0.05),
-        round(s.X, 0.05),
-        round(s.Y, 0.05),
-        round(s.Z, 0.05)
+        roundTo(localPos.X, 0.05),
+        roundTo(localPos.Y, 0.05),
+        roundTo(localPos.Z, 0.05),
+        roundTo(size.X, 0.05),
+        roundTo(size.Y, 0.05),
+        roundTo(size.Z, 0.05)
     ),
         false
 end
-local function index(model)
-    local root = model:GetPivot()
-    local map = {}
-    for _, d in model:GetDescendants() do
-        if d:IsA("BasePart") then
-            local id, explicit = partId(d, model, root)
-            if map[id] then
-                id ..= "#" .. tostring(#d:GetFullName()) .. tostring(d)
+local function indexParts(model)
+    local rootCFrame = model:GetPivot()
+    local partsById = {}
+    for _, descendant in model:GetDescendants() do
+        if descendant:IsA("BasePart") then
+            local id, explicit = partId(descendant, model, rootCFrame)
+            if partsById[id] then
+                id ..= "#" .. tostring(#descendant:GetFullName()) .. tostring(descendant)
             end
-            map[id] = { part = d, explicit = explicit }
+            partsById[id] = { part = descendant, explicit = explicit }
         end
     end
-    return map
+    return partsById
 end
-local function sameLook(a, b)
-    return a.Color == b.Color and a.Material == b.Material and a.Transparency == b.Transparency and a.Size == b.Size
+local function sameLook(partA, partB)
+    return partA.Color == partB.Color
+        and partA.Material == partB.Material
+        and partA.Transparency == partB.Transparency
+        and partA.Size == partB.Size
 end
 
 ---------------------------------------------------------------- staging
@@ -96,18 +99,18 @@ local function stageOf(part, model, kind, relY, height)
     if type(role) == "string" and Config.RoleStage[role] then
         return Config.RoleStage[role]
     end
-    local kw = Config.Keywords[kind] or Config.Keywords.Temple
-    local cur = part
-    while cur and cur ~= model do
-        local n = cur.Name:lower()
-        for _, entry in kw do
+    local keywordGroups = Config.Keywords[kind] or Config.Keywords.Temple
+    local current = part
+    while current and current ~= model do
+        local lowerName = current.Name:lower()
+        for _, entry in keywordGroups do
             for _, word in entry[2] do
-                if n:find(word, 1, true) then
+                if lowerName:find(word, 1, true) then
                     return entry[1]
                 end
             end
         end
-        cur = cur.Parent
+        current = current.Parent
     end
     return 1 + math.clamp(math.floor(relY / math.max(height, 1) * 5.99), 0, 5) -- height fallback
 end
@@ -115,66 +118,67 @@ end
 -- assigns Cx_Batch (1..n) to each part in `animated`; returns n
 local function assignBatches(model, animated, kind)
     local pivot = model:GetPivot()
-    local cf, size = model:GetBoundingBox()
-    local bottom = cf.Position.Y - size.Y / 2
-    local buckets, keys = {}, {}
+    local boxCFrame, size = model:GetBoundingBox()
+    local bottom = boxCFrame.Position.Y - size.Y / 2
+    local buckets, bucketKeys = {}, {}
     for _, part in animated do
         local relY = part.Position.Y - part.Size.Y / 2 - bottom
         local stage = stageOf(part, model, kind, relY, size.Y)
         local band = math.floor(math.max(relY, 0) / Config.WaveBand)
-        local lx = pivot:PointToObjectSpace(part.Position).X
-        local side = (stage == 1 or math.abs(lx) < 0.75) and 0 or (lx < 0 and 1 or 2)
-        local key = stage * 10000 + band * 10 + side
-        if not buckets[key] then
-            buckets[key] = {}
-            table.insert(keys, key)
+        local localX = pivot:PointToObjectSpace(part.Position).X
+        local side = (stage == 1 or math.abs(localX) < 0.75) and 0 or (localX < 0 and 1 or 2)
+        -- bucket key packs (stage, height band, side) so sorting keys orders the build: stage, then band, then side
+        local bucketKey = stage * 10000 + band * 10 + side
+        if not buckets[bucketKey] then
+            buckets[bucketKey] = {}
+            table.insert(bucketKeys, bucketKey)
         end
-        table.insert(buckets[key], part)
+        table.insert(buckets[bucketKey], part)
     end
-    table.sort(keys, function(a, b)
-        local sa, sb = a // 10000, b // 10000
-        if sa ~= sb then
-            return sa < sb
+    table.sort(bucketKeys, function(keyA, keyB)
+        local stageA, stageB = keyA // 10000, keyB // 10000
+        if stageA ~= stageB then
+            return stageA < stageB
         end
-        local ba, bb = (a % 10000) // 10, (b % 10000) // 10
-        if ba ~= bb then
-            return ba < bb
+        local bandA, bandB = (keyA % 10000) // 10, (keyB % 10000) // 10
+        if bandA ~= bandB then
+            return bandA < bandB
         end
         -- alternate left/right per band so assembly reads as deliberate
-        local flip = ba % 2 == 1
-        local xa, xb = a % 10, b % 10
+        local flip = bandA % 2 == 1
+        local sideA, sideB = keyA % 10, keyB % 10
         if flip then
-            return xa > xb
+            return sideA > sideB
         end
-        return xa < xb
+        return sideA < sideB
     end)
     -- merge adjacent buckets down to MaxBatches
     local groups = {}
-    for _, k in keys do
-        table.insert(groups, { stage = k // 10000, parts = buckets[k] })
+    for _, bucketKey in bucketKeys do
+        table.insert(groups, { stage = bucketKey // 10000, parts = buckets[bucketKey] })
     end
     while #groups > Config.MaxBatches do
-        local bestI, bestN = 1, math.huge
+        local bestIndex, bestSize = 1, math.huge
         for i = 1, #groups - 1 do
             if groups[i].stage == groups[i + 1].stage or #groups > Config.MaxBatches * 1.5 then
-                local n = #groups[i].parts + #groups[i + 1].parts
-                if n < bestN then
-                    bestN, bestI = n, i
+                local mergedSize = #groups[i].parts + #groups[i + 1].parts
+                if mergedSize < bestSize then
+                    bestSize, bestIndex = mergedSize, i
                 end
             end
         end
-        if bestN == math.huge then
-            bestI = 1
+        if bestSize == math.huge then
+            bestIndex = 1
         end
-        for _, p in groups[bestI + 1].parts do
-            table.insert(groups[bestI].parts, p)
+        for _, part in groups[bestIndex + 1].parts do
+            table.insert(groups[bestIndex].parts, part)
         end
-        table.remove(groups, bestI + 1)
+        table.remove(groups, bestIndex + 1)
     end
-    for i, g in groups do
-        for _, p in g.parts do
-            p:SetAttribute("Cx_Batch", i)
-            p:SetAttribute("Cx_Stage", g.stage)
+    for i, group in groups do
+        for _, part in group.parts do
+            part:SetAttribute("Cx_Batch", i)
+            part:SetAttribute("Cx_Stage", group.stage)
         end
     end
     return #groups
@@ -191,27 +195,27 @@ local function suppress(job, part)
     table.insert(job.suppressed, part)
 end
 local function disablePrompts(job, model)
-    for _, d in model:GetDescendants() do
-        if d:IsA("ProximityPrompt") or d:IsA("ClickDetector") then
-            if d:IsA("ProximityPrompt") then
-                if d.Enabled then
-                    d.Enabled = false
-                    table.insert(job.prompts, d)
+    for _, descendant in model:GetDescendants() do
+        if descendant:IsA("ProximityPrompt") or descendant:IsA("ClickDetector") then
+            if descendant:IsA("ProximityPrompt") then
+                if descendant.Enabled then
+                    descendant.Enabled = false
+                    table.insert(job.prompts, descendant)
                 end
             else
-                if d.MaxActivationDistance > 0 then
-                    d:SetAttribute("Cx_OrigDist", d.MaxActivationDistance)
-                    d.MaxActivationDistance = 0
-                    table.insert(job.prompts, d)
+                if descendant.MaxActivationDistance > 0 then
+                    descendant:SetAttribute("Cx_OrigDist", descendant.MaxActivationDistance)
+                    descendant.MaxActivationDistance = 0
+                    table.insert(job.prompts, descendant)
                 end
             end
         end
     end
 end
-local function clearAttrs(inst)
-    for name in inst:GetAttributes() do
+local function clearConstructionAttrs(instance)
+    for name in instance:GetAttributes() do
         if name:sub(1, 3) == "Cx_" then
-            inst:SetAttribute(name, nil)
+            instance:SetAttribute(name, nil)
         end
     end
 end
@@ -227,9 +231,9 @@ local function finish(job, reason)
     if job.finishThread then
         task.cancel(job.finishThread)
     end
-    for _, p in job.retiring do
-        if p.Parent then
-            p:Destroy()
+    for _, part in job.retiring do
+        if part.Parent then
+            part:Destroy()
         end
     end
     if job.oldModel and job.oldModel ~= job.model and job.oldModel.Parent then
@@ -242,24 +246,24 @@ local function finish(job, reason)
             part.CanTouch = part:GetAttribute("Cx_OrigTouch") ~= false
         end
     end
-    for _, d in job.prompts do
-        if d.Parent then
-            if d:IsA("ProximityPrompt") then
-                d.Enabled = true
+    for _, control in job.prompts do
+        if control.Parent then
+            if control:IsA("ProximityPrompt") then
+                control.Enabled = true
             else
-                d.MaxActivationDistance = d:GetAttribute("Cx_OrigDist") or 32
-                d:SetAttribute("Cx_OrigDist", nil)
+                control.MaxActivationDistance = control:GetAttribute("Cx_OrigDist") or 32
+                control:SetAttribute("Cx_OrigDist", nil)
             end
         end
     end
     local model = job.model
     if model and model.Parent then
-        for _, d in model:GetDescendants() do
-            if d:IsA("BasePart") then
-                clearAttrs(d)
+        for _, control in model:GetDescendants() do
+            if control:IsA("BasePart") then
+                clearConstructionAttrs(control)
             end
         end
-        clearAttrs(model)
+        clearConstructionAttrs(model)
         if reason ~= "complete" then
             model:SetAttribute("ConstructionCancelled", true) -- clients snap to the final state
             task.delay(2, function()
@@ -280,60 +284,60 @@ local function finish(job, reason)
 end
 
 ---------------------------------------------------------------- public
-function Service.IsBusy(key)
+function ConstructionService.IsBusy(key)
     return active[key] ~= nil
 end
 
-function Service.Cancel(key)
+function ConstructionService.Cancel(key)
     local job = active[key]
     if job then
         finish(job, "cancelled")
     end
 end
 
-function Service.Upgrade(o)
-    assert(o.key and o.template and o.parent, "Upgrade needs key, template and parent")
-    if active[o.key] then
+function ConstructionService.Upgrade(options)
+    assert(options.key and options.template and options.parent, "Upgrade needs key, template and parent")
+    if active[options.key] then
         return false, "Construction already running"
     end
-    local kind = Config.Kinds[o.kind] and o.kind or "Temple"
+    local kind = Config.Kinds[options.kind] and options.kind or "Temple"
     local job = {
-        key = o.key,
+        key = options.key,
         kind = kind,
-        parent = o.parent,
-        oldModel = o.oldModel,
-        onComplete = o.onComplete,
+        parent = options.parent,
+        oldModel = options.oldModel,
+        onComplete = options.onComplete,
         suppressed = {},
         prompts = {},
         retiring = {},
     }
-    active[o.key] = job -- lock first
+    active[options.key] = job -- lock first
 
     local ok, err = pcall(function()
-        local pivot = o.pivot or (o.oldModel and o.oldModel:GetPivot()) or o.template:GetPivot()
-        local fresh = o.template:Clone()
+        local pivot = options.pivot or (options.oldModel and options.oldModel:GetPivot()) or options.template:GetPivot()
+        local fresh = options.template:Clone()
         fresh:PivotTo(pivot)
-        for _, d in fresh:GetDescendants() do
-            if d:IsA("BasePart") then
-                d.Anchored = true
+        for _, descendant in fresh:GetDescendants() do
+            if descendant:IsA("BasePart") then
+                descendant.Anchored = true
             end
         end
 
         -- decide mode
-        local mode = o.mode or "auto"
+        local mode = options.mode or "auto"
         local oldMap, newMap
-        if o.oldModel then
-            oldMap, newMap = index(o.oldModel), index(fresh)
+        if options.oldModel then
+            oldMap, newMap = indexParts(options.oldModel), indexParts(fresh)
             if mode == "auto" then
                 local matched, total = 0, 0
-                for id in newMap do
+                for partKey in newMap do
                     total += 1
-                    if oldMap[id] then
+                    if oldMap[partKey] then
                         matched += 1
                     end
                 end
-                for id in oldMap do
-                    if not newMap[id] then
+                for partKey in oldMap do
+                    if not newMap[partKey] then
                         total += 1
                     end
                 end
@@ -347,43 +351,44 @@ function Service.Upgrade(o)
         local model, animated = nil, {}
         if mode == "incremental" then
             -- mutate the existing model in place: unchanged parts never move
-            model = o.oldModel
+            model = options.oldModel
             fresh.Parent = nil
-            for id, entry in newMap do
-                local old = oldMap[id]
-                local new = entry.part
-                if old then
-                    local op = old.part
-                    if op.CFrame ~= new.CFrame or not sameLook(op, new) then
-                        op:SetAttribute("Cx_FromCF", op.CFrame)
-                        op:SetAttribute("Cx_FromSize", op.Size)
-                        op.CFrame, op.Size = new.CFrame, new.Size
-                        op.Color, op.Material, op.Transparency = new.Color, new.Material, new.Transparency
-                        table.insert(animated, op)
+            for partKey, entry in newMap do
+                local oldEntry = oldMap[partKey]
+                local newPart = entry.part
+                if oldEntry then
+                    local oldPart = oldEntry.part
+                    if oldPart.CFrame ~= newPart.CFrame or not sameLook(oldPart, newPart) then
+                        oldPart:SetAttribute("Cx_FromCF", oldPart.CFrame)
+                        oldPart:SetAttribute("Cx_FromSize", oldPart.Size)
+                        oldPart.CFrame, oldPart.Size = newPart.CFrame, newPart.Size
+                        oldPart.Color, oldPart.Material, oldPart.Transparency =
+                            newPart.Color, newPart.Material, newPart.Transparency
+                        table.insert(animated, oldPart)
                     end
                 else
                     -- added: recreate its parent chain in the old model, then move the part across
-                    local path = string.split(relPath(new.Parent, fresh), "/")
-                    local dest = model
-                    if new.Parent ~= fresh then
-                        for _, seg in path do
-                            if seg ~= "" then
-                                local nxt = dest:FindFirstChild(seg)
-                                if not nxt then
-                                    nxt = Instance.new("Model")
-                                    nxt.Name = seg
-                                    nxt.Parent = dest
+                    local path = string.split(relPath(newPart.Parent, fresh), "/")
+                    local destination = model
+                    if newPart.Parent ~= fresh then
+                        for _, segment in path do
+                            if segment ~= "" then
+                                local child = destination:FindFirstChild(segment)
+                                if not child then
+                                    child = Instance.new("Model")
+                                    child.Name = segment
+                                    child.Parent = destination
                                 end
-                                dest = nxt
+                                destination = child
                             end
                         end
                     end
-                    new.Parent = dest
-                    table.insert(animated, new)
+                    newPart.Parent = destination
+                    table.insert(animated, newPart)
                 end
             end
-            for id, entry in oldMap do
-                if not newMap[id] then
+            for partKey, entry in oldMap do
+                if not newMap[partKey] then
                     entry.part:SetAttribute("Cx_Retire", true)
                     suppress(job, entry.part)
                     table.insert(job.retiring, entry.part)
@@ -392,55 +397,55 @@ function Service.Upgrade(o)
             fresh:Destroy()
         else
             model = fresh
-            for _, d in model:GetDescendants() do
-                if d:IsA("BasePart") then
-                    table.insert(animated, d)
+            for _, descendant in model:GetDescendants() do
+                if descendant:IsA("BasePart") then
+                    table.insert(animated, descendant)
                 end
             end
-            if o.oldModel then
-                for _, d in o.oldModel:GetDescendants() do
-                    if d:IsA("BasePart") then
-                        d:SetAttribute("Cx_Retire", true)
-                        suppress(job, d)
-                        table.insert(job.retiring, d)
+            if options.oldModel then
+                for _, descendant in options.oldModel:GetDescendants() do
+                    if descendant:IsA("BasePart") then
+                        descendant:SetAttribute("Cx_Retire", true)
+                        suppress(job, descendant)
+                        table.insert(job.retiring, descendant)
                     end
                 end
-                o.oldModel:SetAttribute("Cx_RetireOnly", true)
-                CollectionService:AddTag(o.oldModel, TAG)
+                options.oldModel:SetAttribute("Cx_RetireOnly", true)
+                CollectionService:AddTag(options.oldModel, TAG)
             end
         end
         job.model = model
 
-        local n = assignBatches(model, animated, kind)
-        for _, p in animated do
-            suppress(job, p)
+        local batchCount = assignBatches(model, animated, kind)
+        for _, part in animated do
+            suppress(job, part)
         end
         disablePrompts(job, model)
-        local tl = Config.Timeline(kind, n, mode == "replace" and o.oldModel ~= nil)
-        local start = workspace:GetServerTimeNow()
-        local id = HttpService:GenerateGUID(false)
-        for _, m in { model, o.oldModel } do
-            if m then
-                m:SetAttribute("Cx_Id", id)
-                m:SetAttribute("Cx_Start", start)
-                m:SetAttribute("Cx_Kind", kind)
-                m:SetAttribute("Cx_Batches", n)
-                m:SetAttribute("Cx_Replace", mode == "replace" and o.oldModel ~= nil)
-                m:SetAttribute("Cx_Owner", o.owner and o.owner.UserId or 0)
+        local timeline = Config.Timeline(kind, batchCount, mode == "replace" and options.oldModel ~= nil)
+        local startTime = workspace:GetServerTimeNow()
+        local constructionId = HttpService:GenerateGUID(false)
+        for _, target in { model, options.oldModel } do
+            if target then
+                target:SetAttribute("Cx_Id", constructionId)
+                target:SetAttribute("Cx_Start", startTime)
+                target:SetAttribute("Cx_Kind", kind)
+                target:SetAttribute("Cx_Batches", batchCount)
+                target:SetAttribute("Cx_Replace", mode == "replace" and options.oldModel ~= nil)
+                target:SetAttribute("Cx_Owner", options.owner and options.owner.UserId or 0)
             end
         end
-        o.parent:SetAttribute("Constructing", true)
+        options.parent:SetAttribute("Constructing", true)
         CollectionService:AddTag(model, TAG) -- tag BEFORE parenting so clients hide parts on arrival
-        if model.Parent ~= o.parent then
-            model.Parent = o.parent
+        if model.Parent ~= options.parent then
+            model.Parent = options.parent
         end
 
         if #job.retiring > 0 then
-            job.retireThread = task.delay(tl.retireEnd + 0.1, function()
+            job.retireThread = task.delay(timeline.retireEnd + 0.1, function()
                 job.retireThread = nil
-                for _, p in job.retiring do
-                    if p.Parent then
-                        p:Destroy()
+                for _, part in job.retiring do
+                    if part.Parent then
+                        part:Destroy()
                     end
                 end
                 job.retiring = {}
@@ -449,7 +454,7 @@ function Service.Upgrade(o)
                 end
             end)
         end
-        job.finishThread = task.delay(tl.lockInEnd, function()
+        job.finishThread = task.delay(timeline.lockInEnd, function()
             job.finishThread = nil
             finish(job, "complete")
         end)
@@ -458,9 +463,15 @@ function Service.Upgrade(o)
     if not ok then
         warn("[Construction] upgrade failed, restoring:", err)
         -- recovery: if the new model never got parented, the old one is untouched
-        if job.model and job.model ~= o.oldModel and job.model.Parent and o.oldModel and o.oldModel.Parent then
+        if
+            job.model
+            and job.model ~= options.oldModel
+            and job.model.Parent
+            and options.oldModel
+            and options.oldModel.Parent
+        then
             job.model:Destroy()
-            job.model = o.oldModel
+            job.model = options.oldModel
         end
         job.oldModel = nil
         finish(job, "failed")
@@ -478,4 +489,4 @@ game:GetService("RunService").Heartbeat:Connect(function()
     end
 end)
 
-return Service
+return ConstructionService

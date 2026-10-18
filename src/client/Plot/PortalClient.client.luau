@@ -6,34 +6,35 @@ Draws and animates every Summon Gate (tag "AnimePortal") locally:
     energy ripple + spark burst at the crossing, rarity-coloured outline that burns off, then a wave.
 Needs CharacterAnimator (for the Walk / Wave limbs). Cosmetic only; the server already placed the character.
 ]]
-local RS = game:GetService("ReplicatedStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local SoundService = game:GetService("SoundService")
-local C = require(RS:WaitForChild("Portal"):WaitForChild("PortalConfig"))
+local Config = require(ReplicatedStorage:WaitForChild("Portal"):WaitForChild("PortalConfig"))
 
-local player = Players.LocalPlayer
+local localPlayer = Players.LocalPlayer
 local TEX_SPARK = "rbxasset://textures/particles/sparkles_main.dds"
 local TEX_SMOKE = "rbxasset://textures/particles/smoke_main.dds"
-local WHITE, INK = Color3.new(1, 1, 1), C.Palette.Ink
-local portals = {}
+local WHITE, INK = Color3.new(1, 1, 1), Config.Palette.Ink
+local portals = {} -- [portal Model] = portalState (UI layers, emitters, lights, colour, current emerge)
 
-local function new(class, props, parent)
-    local i = Instance.new(class)
-    for k, v in props do
-        i[k] = v
+-- Instance.new + property table + parent in one call.
+local function create(class, props, parent)
+    local instance = Instance.new(class)
+    for key, value in props do
+        instance[key] = value
     end
-    i.Parent = parent
-    return i
+    instance.Parent = parent
+    return instance
 end
 local function seq(points)
-    local k = {}
-    for _, p in points do
-        table.insert(k, NumberSequenceKeypoint.new(p[1], p[2]))
+    local keypoints = {}
+    for _, point in points do
+        table.insert(keypoints, NumberSequenceKeypoint.new(point[1], point[2]))
     end
-    return NumberSequence.new(k)
+    return NumberSequence.new(keypoints)
 end
 local function clamp01(x)
     return math.clamp(x, 0, 1)
@@ -42,138 +43,143 @@ local function smooth(x)
     x = clamp01(x)
     return x * x * (3 - 2 * x)
 end
-local function reduced()
-    return player:GetAttribute(C.ReducedMotionAttribute) == true
+local function reducedMotion()
+    return localPlayer:GetAttribute(Config.ReducedMotionAttribute) == true
 end
-local function round(f, r)
-    new("UICorner", { CornerRadius = UDim.new(r or 0.5, 0) }, f)
+local function roundCorners(frame, radius)
+    create("UICorner", { CornerRadius = UDim.new(radius or 0.5, 0) }, frame)
 end
 
-local function sound(slot, parent, looped)
-    local id = C.Sounds[slot]
-    if not id or id == "" then
+local function makeSound(soundName, parent, looped)
+    local soundId = Config.Sounds[soundName]
+    if not soundId or soundId == "" then
         return nil
     end
-    local s = new("Sound", {
-        SoundId = id:match("^rbxasset") and id or "rbxassetid://" .. id:gsub("%D", ""),
-        Volume = C.Volume,
+    local sound = create("Sound", {
+        SoundId = soundId:match("^rbxasset") and soundId or "rbxassetid://" .. soundId:gsub("%D", ""),
+        Volume = Config.Volume,
         Looped = looped or false,
         RollOffMaxDistance = 60,
     }, parent)
-    local grp = SoundService:FindFirstChild(C.SoundGroupName)
-    if grp and grp:IsA("SoundGroup") then
-        s.SoundGroup = grp
+    local soundGroup = SoundService:FindFirstChild(Config.SoundGroupName)
+    if soundGroup and soundGroup:IsA("SoundGroup") then
+        sound.SoundGroup = soundGroup
     end
-    return s
+    return sound
 end
-local function play(s)
-    if s and not player:GetAttribute(C.MuteAttribute) then
-        s:Play()
+local function playSound(sound)
+    if sound and not localPlayer:GetAttribute(Config.MuteAttribute) then
+        sound:Play()
     end
 end
 
 -- ── vortex face ───────────────────────────────────────────────────────────────
-local function buildFace(st, face)
-    local gui = new("SurfaceGui", {
+local function buildFace(portalState, face)
+    local vortexGui = create("SurfaceGui", {
         Name = "PortalVortex",
         Face = face,
         SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud,
-        PixelsPerStud = C.PixelsPerStud,
+        PixelsPerStud = Config.PixelsPerStud,
         LightInfluence = 0,
         Brightness = 2.2,
         ClipsDescendants = true,
         ZOffset = 0,
-    }, st.surface)
-    local root = new("Frame", {
+    }, portalState.surface)
+    local root = create("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5),
         Size = UDim2.fromScale(1, 1),
         BackgroundTransparency = 1,
-    }, gui)
-    local scale = new("UIScale", {}, root)
-    table.insert(st.scales, scale)
+    }, vortexGui)
+    local scale = create("UIScale", {}, root)
+    table.insert(portalState.scales, scale)
 
     -- depth: 9 nested stadiums, dark rim -> bright heart
     for i = 1, 9 do
-        local k = (i - 1) / 8
-        local f = new("Frame", {
+        local depth = (i - 1) / 8
+        local layerFrame = create("Frame", {
             AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromScale(0.5, 0.5 + 0.02 * k),
-            Size = UDim2.fromScale(1 - k * 0.8, 1 - k * 0.78),
+            Position = UDim2.fromScale(0.5, 0.5 + 0.02 * depth),
+            Size = UDim2.fromScale(1 - depth * 0.8, 1 - depth * 0.78),
             BorderSizePixel = 0,
             BackgroundTransparency = i == 1 and 0.02 or 0.35,
             ZIndex = i,
         }, root)
-        round(f)
-        table.insert(st.layers, { f = f, k = k })
+        roundCorners(layerFrame)
+        table.insert(portalState.layers, { f = layerFrame, k = depth })
     end
     -- textured swirl: a CanvasGroup clips rotating images to the stadium (plain frames can't clip rotated children)
-    local function img(id)
+    local function toAssetId(id)
         return id ~= "" and (id:match("^rbxasset") and id or "rbxassetid://" .. id:gsub("%D", "")) or nil
     end
-    local swirlId, coreId = img(C.Textures.Swirl), img(C.Textures.Core)
+    local swirlId, coreId = toAssetId(Config.Textures.Swirl), toAssetId(Config.Textures.Core)
     if swirlId or coreId then
-        st.textured = true
-        local cg = new("CanvasGroup", {
+        portalState.textured = true
+        local swirlClip = create("CanvasGroup", {
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
             Size = UDim2.fromScale(0.97, 0.97),
             BackgroundTransparency = 1,
             ZIndex = 10,
         }, root)
-        round(cg)
+        roundCorners(swirlClip)
         local specs = swirlId and { { swirlId, 1.6, 1, 0 }, { swirlId, 1.05, 0.55, 0.3 } } or {}
         if coreId then
             table.insert(specs, { coreId, 0.9, 0, 0 })
         end
-        for i, s in specs do
-            local im = new("ImageLabel", {
-                Image = s[1],
+        for i, spec in specs do
+            local imageLabel = create("ImageLabel", {
+                Image = spec[1],
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 Position = UDim2.fromScale(0.5, 0.52),
-                Size = UDim2.fromScale(s[2], s[2]),
+                Size = UDim2.fromScale(spec[2], spec[2]),
                 BackgroundTransparency = 1,
-                ImageTransparency = s[4],
+                ImageTransparency = spec[4],
                 ZIndex = i,
                 Rotation = i * 40,
-            }, cg)
-            new("UIAspectRatioConstraint", { AspectRatio = 1, DominantAxis = Enum.DominantAxis.Height }, im)
-            table.insert(st.swirls, { img = im, speed = s[3], core = s[1] == coreId and s[3] == 0 })
+            }, swirlClip)
+            create("UIAspectRatioConstraint", { AspectRatio = 1, DominantAxis = Enum.DominantAxis.Height }, imageLabel)
+            table.insert(
+                portalState.swirls,
+                { img = imageLabel, speed = spec[3], core = spec[1] == coreId and spec[3] == 0 }
+            )
         end
     end
     -- energy arcs: rings whose stroke gradient leaves 1–2 bright crescents; inner rings spin faster
-    local rng = Random.new(st.seed)
+    local rng = Random.new(portalState.seed)
     for i = 1, 8 do
-        local k = (i - 1) / 7
-        local ring = new("Frame", {
+        local depth = (i - 1) / 7
+        local ring = create("Frame", {
             AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromScale(0.5, 0.5 + 0.015 * k),
-            Size = UDim2.fromScale(0.94 - k * 0.72, 0.95 - k * 0.7),
+            Position = UDim2.fromScale(0.5, 0.5 + 0.015 * depth),
+            Size = UDim2.fromScale(0.94 - depth * 0.72, 0.95 - depth * 0.7),
             BackgroundTransparency = 1,
             ZIndex = 20 + i,
         }, root)
-        round(ring)
-        local stroke = new(
+        roundCorners(ring)
+        local stroke = create(
             "UIStroke",
-            { Thickness = math.floor(14 - k * 8), ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Transparency = 0 },
+            { Thickness = math.floor(14 - depth * 8), ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Transparency = 0 },
             ring
         )
         local twoArcs = i % 2 == 0
-        local grad = new("UIGradient", {
+        local gradient = create("UIGradient", {
             Rotation = rng:NextNumber(0, 360),
             Transparency = twoArcs and seq({ { 0, 0 }, { 0.3, 1 }, { 0.7, 1 }, { 1, 0 } })
                 or seq({ { 0, 0 }, { 0.5, 1 }, { 1, 1 } }),
         }, stroke)
-        local dir = i % 2 == 0 and -1 or 1
-        table.insert(
-            st.rings,
-            { stroke = stroke, grad = grad, k = k, speed = dir * (70 + 260 * k) * rng:NextNumber(0.85, 1.15) }
-        )
+        local spinDirection = i % 2 == 0 and -1 or 1
+        table.insert(portalState.rings, {
+            stroke = stroke,
+            grad = gradient,
+            k = depth,
+            speed = spinDirection * (70 + 260 * depth) * rng:NextNumber(0.85, 1.15),
+        })
     end
     -- rim + heart
-    local rim = new("UIStroke", { Thickness = 10, Transparency = 0 }, st.layers[#st.layers - 8].f)
-    table.insert(st.rims, rim)
-    local heart = new("Frame", {
+    local rim = create("UIStroke", { Thickness = 10, Transparency = 0 }, portalState.layers[#portalState.layers - 8].f)
+    table.insert(portalState.rims, rim)
+    local heart = create("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.52),
         Size = UDim2.fromScale(0.2, 0.17),
@@ -181,41 +187,42 @@ local function buildFace(st, face)
         BackgroundColor3 = WHITE,
         ZIndex = 40,
     }, root)
-    round(heart)
-    table.insert(st.hearts, heart)
-    return gui, root
+    roundCorners(heart)
+    table.insert(portalState.hearts, heart)
+    return vortexGui, root
 end
 
-local function recolor(st, c)
-    local dark, light = c:Lerp(INK, 0.72), c:Lerp(WHITE, 0.55)
-    for _, L in st.layers do
-        L.f.BackgroundColor3 = L.k == 0 and dark or dark:Lerp(c, L.k * 0.9):Lerp(light, math.max(0, L.k - 0.6) * 1.6)
+local function recolor(portalState, color)
+    local dark, light = color:Lerp(INK, 0.72), color:Lerp(WHITE, 0.55)
+    for _, layer in portalState.layers do
+        layer.f.BackgroundColor3 = layer.k == 0 and dark
+            or dark:Lerp(color, layer.k * 0.9):Lerp(light, math.max(0, layer.k - 0.6) * 1.6)
     end
-    for _, R in st.rings do
-        R.stroke.Color = c:Lerp(WHITE, 0.25 + 0.55 * R.k)
+    for _, ring in portalState.rings do
+        ring.stroke.Color = color:Lerp(WHITE, 0.25 + 0.55 * ring.k)
     end
-    for _, r in st.rims do
-        r.Color = light
+    for _, rim in portalState.rims do
+        rim.Color = light
     end
-    for _, w in st.swirls do
-        w.img.ImageColor3 = w.core and c:Lerp(WHITE, 0.6) or c:Lerp(WHITE, 0.2)
+    for _, swirl in portalState.swirls do
+        swirl.img.ImageColor3 = swirl.core and color:Lerp(WHITE, 0.6) or color:Lerp(WHITE, 0.2)
     end
-    local cs = ColorSequence.new(c:Lerp(WHITE, 0.6), c)
-    for _, e in st.emitters do
-        e.Color = cs
+    local emitterColors = ColorSequence.new(color:Lerp(WHITE, 0.6), color)
+    for _, emitter in portalState.emitters do
+        emitter.Color = emitterColors
     end
-    st.mist.Color = ColorSequence.new(c:Lerp(WHITE, 0.4))
-    st.pool.Color = c
-    st.point.Color = c
-    st.slight.Color = c
-    if st.highlight then
-        st.highlight.FillColor = light
-        st.highlight.OutlineColor = c:Lerp(WHITE, 0.3)
+    portalState.mist.Color = ColorSequence.new(color:Lerp(WHITE, 0.4))
+    portalState.pool.Color = color
+    portalState.point.Color = color
+    portalState.slight.Color = color
+    if portalState.highlight then
+        portalState.highlight.FillColor = light
+        portalState.highlight.OutlineColor = color:Lerp(WHITE, 0.3)
     end
 end
 
 -- ── build per portal ──────────────────────────────────────────────────────────
-local function add(portal)
+local function addPortal(portal)
     if portals[portal] then
         return
     end
@@ -223,7 +230,7 @@ local function add(portal)
     if not surface or not portal.Parent then
         return
     end
-    local st = {
+    local portalState = {
         portal = portal,
         surface = surface,
         layers = {},
@@ -234,27 +241,27 @@ local function add(portal)
         emitters = {},
         swirls = {},
         seed = math.random(1, 1e6),
-        color = C.IdleColor,
-        target = C.IdleColor,
+        color = Config.IdleColor,
+        target = Config.IdleColor,
         surge = 0,
         kick = 0,
         t = 0,
         visible = true,
         ripples = {},
     }
-    portals[portal] = st
-    st.front = buildFace(st, Enum.NormalId.Front)
-    buildFace(st, Enum.NormalId.Back)
+    portals[portal] = portalState
+    portalState.front = buildFace(portalState, Enum.NormalId.Front)
+    buildFace(portalState, Enum.NormalId.Back)
 
-    local fx = new("Folder", { Name = "PortalFXLocal" }, portal)
-    st.fx = fx
-    local base = portal:GetPivot()
-    local cf = surface.CFrame
-    local function fxPart(name, size, at)
-        return new("Part", {
+    local fx = create("Folder", { Name = "PortalFXLocal" }, portal)
+    portalState.fx = fx
+    local gatePivot = portal:GetPivot()
+    local surfaceCFrame = surface.CFrame
+    local function fxPart(name, size, cframe)
+        return create("Part", {
             Name = name,
             Size = size,
-            CFrame = at,
+            CFrame = cframe,
             Anchored = true,
             CanCollide = false,
             CanQuery = false,
@@ -264,8 +271,8 @@ local function add(portal)
         }, fx)
     end
     -- motes pulled into the vortex
-    local intake = fxPart("Intake", Vector3.new(C.Opening.X + 3, C.Opening.Y + 2, 6), cf)
-    st.intake = new("ParticleEmitter", {
+    local intake = fxPart("Intake", Vector3.new(Config.Opening.X + 3, Config.Opening.Y + 2, 6), surfaceCFrame)
+    portalState.intake = create("ParticleEmitter", {
         Texture = TEX_SPARK,
         Rate = 18,
         Lifetime = NumberRange.new(1.0, 1.4),
@@ -281,7 +288,7 @@ local function add(portal)
         RotSpeed = NumberRange.new(-180, 180),
     }, intake)
     -- sparks shed from the surface
-    st.sparks = new("ParticleEmitter", {
+    portalState.sparks = create("ParticleEmitter", {
         Texture = TEX_SPARK,
         Rate = 10,
         Lifetime = NumberRange.new(0.6, 1.1),
@@ -295,9 +302,9 @@ local function add(portal)
         Acceleration = Vector3.new(0, 1.5, 0),
     }, surface)
     -- burst used at the crossing (moved to the character's chest)
-    local burstAt = new("Attachment", { Name = "BurstAt" }, surface)
-    st.burstAt = burstAt
-    st.burst = new("ParticleEmitter", {
+    local burstAt = create("Attachment", { Name = "BurstAt" }, surface)
+    portalState.burstAt = burstAt
+    portalState.burst = create("ParticleEmitter", {
         Texture = TEX_SPARK,
         Rate = 0,
         Lifetime = NumberRange.new(0.5, 0.9),
@@ -310,10 +317,10 @@ local function add(portal)
         LightEmission = 1,
         Rotation = NumberRange.new(0, 360),
     }, burstAt)
-    st.emitters = { st.intake, st.sparks, st.burst }
+    portalState.emitters = { portalState.intake, portalState.sparks, portalState.burst }
     -- ground mist spilling out of the gate
-    local mistPad = fxPart("Mist", Vector3.new(7.5, 0.2, 3), base * CFrame.new(0, C.GroundY + 0.15, -1.6))
-    st.mist = new("ParticleEmitter", {
+    local mistPad = fxPart("Mist", Vector3.new(7.5, 0.2, 3), gatePivot * CFrame.new(0, Config.GroundY + 0.15, -1.6))
+    portalState.mist = create("ParticleEmitter", {
         Texture = TEX_SMOKE,
         Rate = 7,
         Lifetime = NumberRange.new(2.5, 4),
@@ -327,12 +334,12 @@ local function add(portal)
         RotSpeed = NumberRange.new(-20, 20),
     }, mistPad)
     -- glow pool on the slab + lights
-    st.pool = new("Part", {
+    portalState.pool = create("Part", {
         Name = "GlowPool",
         Shape = Enum.PartType.Cylinder,
         Size = Vector3.new(0.04, 8, 8),
         Material = Enum.Material.Neon,
-        CFrame = base * CFrame.new(0, C.GroundY + 0.02, -1.4) * CFrame.Angles(0, 0, math.pi / 2),
+        CFrame = gatePivot * CFrame.new(0, Config.GroundY + 0.02, -1.4) * CFrame.Angles(0, 0, math.pi / 2),
         Transparency = 0.8,
         Anchored = true,
         CanCollide = false,
@@ -340,21 +347,22 @@ local function add(portal)
         CanTouch = false,
         CastShadow = false,
     }, fx)
-    local lightAt = new("Attachment", { Position = Vector3.new(0, 0, -2.5) }, surface)
-    st.point = new("PointLight", { Range = 20, Brightness = 1.6, Shadows = true }, lightAt)
-    st.slight = new("SurfaceLight", { Face = Enum.NormalId.Front, Range = 16, Angle = 80, Brightness = 1.2 }, surface)
-    st.hum = sound("Hum", surface, true)
-    play(st.hum)
-    st.sSurge = sound("Surge", surface)
-    st.sWhoosh = sound("Whoosh", surface)
-    st.sArrive = sound("Arrive", surface)
+    local lightAt = create("Attachment", { Position = Vector3.new(0, 0, -2.5) }, surface)
+    portalState.point = create("PointLight", { Range = 20, Brightness = 1.6, Shadows = true }, lightAt)
+    portalState.slight =
+        create("SurfaceLight", { Face = Enum.NormalId.Front, Range = 16, Angle = 80, Brightness = 1.2 }, surface)
+    portalState.hum = makeSound("Hum", surface, true)
+    playSound(portalState.hum)
+    portalState.sSurge = makeSound("Surge", surface)
+    portalState.sWhoosh = makeSound("Whoosh", surface)
+    portalState.sArrive = makeSound("Arrive", surface)
 
-    recolor(st, st.color)
+    recolor(portalState, portalState.color)
     portal:GetAttributeChangedSignal("EmergeToken"):Connect(function()
-        st.pending = true
+        portalState.pending = true
     end)
     if portal:GetAttribute("EmergeToken") then
-        st.pending = true
+        portalState.pending = true
     end
     portal.AncestryChanged:Connect(function()
         if not portal:IsDescendantOf(workspace) then
@@ -364,265 +372,284 @@ local function add(portal)
     print(
         "[Portal] vortex drawn on "
             .. portal:GetFullName()
-            .. (st.textured and " (textured)" or " (no textures set: ring fallback)")
+            .. (portalState.textured and " (textured)" or " (no textures set: ring fallback)")
     )
 end
 
 -- ── emerge ────────────────────────────────────────────────────────────────────
 local function feetOrigin(model)
-    local cf, size = model:GetBoundingBox()
-    return CFrame.new(cf.Position - Vector3.new(0, size.Y / 2, 0)) * cf.Rotation
+    local boxCFrame, size = model:GetBoundingBox()
+    return CFrame.new(boxCFrame.Position - Vector3.new(0, size.Y / 2, 0)) * boxCFrame.Rotation
 end
 
-local function endEmerge(st)
-    local e = st.emerge
-    if not e then
+local function endEmerge(portalState)
+    local emerge = portalState.emerge
+    if not emerge then
         return
     end
-    st.emerge = nil
-    if e.model.Parent then
-        for _, p in e.parts do
-            p.LocalTransparencyModifier = 0
+    portalState.emerge = nil
+    if emerge.model.Parent then
+        for _, part in emerge.parts do
+            part.LocalTransparencyModifier = 0
         end
-        e.model:PivotTo(e.final)
-        e.model:SetAttribute("Animation", e.prevAnim)
+        emerge.model:PivotTo(emerge.final)
+        emerge.model:SetAttribute("Animation", emerge.prevAnim)
     end
-    if st.highlight then
-        st.highlight:Destroy()
-        st.highlight = nil
+    if portalState.highlight then
+        portalState.highlight:Destroy()
+        portalState.highlight = nil
     end
-    st.target = C.IdleColor
+    portalState.target = Config.IdleColor
 end
 
-local function startEmerge(st)
-    st.pending = false
-    endEmerge(st)
-    local portal = st.portal
-    local start, token = portal:GetAttribute("EmergeStart"), portal:GetAttribute("EmergeToken")
-    if not (start and token) then
+-- Triggered by EmergeToken changes. Waits (max 3 s) for the server's EmergeTarget character, hides it and
+-- starts the local walk-out; ignored if the emerge is already over or a newer token arrived meanwhile.
+local function startEmerge(portalState)
+    portalState.pending = false
+    endEmerge(portalState)
+    local portal = portalState.portal
+    local startTime, token = portal:GetAttribute("EmergeStart"), portal:GetAttribute("EmergeToken")
+    if not (startTime and token) then
         return
     end
-    if workspace:GetServerTimeNow() - start > C.Total() then
+    if workspace:GetServerTimeNow() - startTime > Config.Total() then
         return
     end
-    local ref = portal:WaitForChild("EmergeTarget", 3)
-    local t0 = os.clock()
-    while ref and not ref.Value and os.clock() - t0 < 3 do
+    local targetValue = portal:WaitForChild("EmergeTarget", 3)
+    local waitStart = os.clock()
+    while targetValue and not targetValue.Value and os.clock() - waitStart < 3 do
         task.wait()
     end
-    local model = ref and ref.Value
+    local model = targetValue and targetValue.Value
     if not model or portal:GetAttribute("EmergeToken") ~= token then
         return
     end
-    while model.Parent and not model:FindFirstChild("Torso", true) and os.clock() - t0 < 3 do
+    while model.Parent and not model:FindFirstChild("Torso", true) and os.clock() - waitStart < 3 do
         task.wait()
     end
 
     local parts = {}
-    for _, d in model:GetDescendants() do
-        if d:IsA("BasePart") then
-            table.insert(parts, d)
-            d.LocalTransparencyModifier = 1
+    for _, descendant in model:GetDescendants() do
+        if descendant:IsA("BasePart") then
+            table.insert(parts, descendant)
+            descendant.LocalTransparencyModifier = 1
         end
     end
     local final = model:GetPivot()
     local feet = feetOrigin(model)
-    st.emerge = {
+    portalState.emerge = {
         model = model,
         parts = parts,
-        start = start,
+        start = startTime,
         final = final,
         feet = feet,
         offset = feet:ToObjectSpace(final),
-        prevAnim = model:GetAttribute("Animation") or C.EndAnimation,
+        prevAnim = model:GetAttribute("Animation") or Config.EndAnimation,
         chest = model:FindFirstChild("Torso", true),
         phase = 0,
     }
-    st.target = C.Color(portal:GetAttribute("EmergeRarity"))
-    st.highlight = new("Highlight", {
+    portalState.target = Config.Color(portal:GetAttribute("EmergeRarity"))
+    portalState.highlight = create("Highlight", {
         Adornee = model,
         DepthMode = Enum.HighlightDepthMode.Occluded,
         FillTransparency = 1,
         OutlineTransparency = 1,
         Enabled = false,
-    }, st.fx)
-    play(st.sSurge)
+    }, portalState.fx)
+    playSound(portalState.sSurge)
 end
 
-local function ripple(st, worldPos)
-    if not st.front then
+local function ripple(portalState, worldPos)
+    if not portalState.front then
         return
     end
-    local lp = st.surface.CFrame:PointToObjectSpace(worldPos)
-    local u, v = 0.5 - lp.X / C.Opening.X, 0.5 - lp.Y / C.Opening.Y
-    local root = st.front:FindFirstChildOfClass("Frame")
-    local r = new("Frame", {
+    local localPos = portalState.surface.CFrame:PointToObjectSpace(worldPos)
+    local u, v = 0.5 - localPos.X / Config.Opening.X, 0.5 - localPos.Y / Config.Opening.Y
+    local root = portalState.front:FindFirstChildOfClass("Frame")
+    local rippleFrame = create("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(u, v),
         Size = UDim2.fromScale(0.1, 0.085),
         BackgroundTransparency = 1,
         ZIndex = 50,
     }, root)
-    round(r)
-    local s = new("UIStroke", { Thickness = 18, Color = st.color:Lerp(WHITE, 0.7), Transparency = 0 }, r)
+    roundCorners(rippleFrame)
+    local rippleStroke = create(
+        "UIStroke",
+        { Thickness = 18, Color = portalState.color:Lerp(WHITE, 0.7), Transparency = 0 },
+        rippleFrame
+    )
     local info = TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    TweenService:Create(r, info, { Size = UDim2.fromScale(1.2, 1.0) }):Play()
-    TweenService:Create(s, info, { Transparency = 1, Thickness = 2 }):Play()
+    TweenService:Create(rippleFrame, info, { Size = UDim2.fromScale(1.2, 1.0) }):Play()
+    TweenService:Create(rippleStroke, info, { Transparency = 1, Thickness = 2 }):Play()
     task.delay(0.75, function()
-        r:Destroy()
+        rippleFrame:Destroy()
     end)
 end
 
-local function stepEmerge(st)
-    local e = st.emerge
-    if not e.model.Parent then
-        endEmerge(st)
+-- Per-frame emerge driven by server time since EmergeStart. emerge.phase: 0 = surge (character hidden behind
+-- the surface), 1 = walking out, 2 = chest crossed the surface (burst, ripple, outline), 3 = arrived (wave).
+local function stepEmerge(portalState)
+    local emerge = portalState.emerge
+    if not emerge.model.Parent then
+        endEmerge(portalState)
         return
     end
-    local t = workspace:GetServerTimeNow() - e.start
-    local walkT = C.WalkTime()
-    local dist = C.StartBehind + C.WalkOut
-    if t >= C.Total() then
-        endEmerge(st)
+    local elapsed = workspace:GetServerTimeNow() - emerge.start
+    local walkT = Config.WalkTime()
+    local walkDistance = Config.StartBehind + Config.WalkOut
+    if elapsed >= Config.Total() then
+        endEmerge(portalState)
         return
     end
 
-    if t < C.Surge then
-        st.surge = smooth(t / C.Surge)
-        for _, p in e.parts do
-            p.LocalTransparencyModifier = 1
+    if elapsed < Config.Surge then
+        portalState.surge = smooth(elapsed / Config.Surge)
+        for _, part in emerge.parts do
+            part.LocalTransparencyModifier = 1
         end
-        e.model:PivotTo(e.feet * CFrame.new(0, 0, dist) * e.offset)
+        emerge.model:PivotTo(emerge.feet * CFrame.new(0, 0, walkDistance) * emerge.offset)
         return
     end
-    if e.phase == 0 then
-        e.phase = 1
-        e.model:SetAttribute("Animation", "Walk")
+    if emerge.phase == 0 then
+        emerge.phase = 1
+        emerge.model:SetAttribute("Animation", "Walk")
     end
 
-    local u = clamp01((t - C.Surge) / walkT)
-    local along = u < 0.85 and u or 0.85 + (1 - (1 - (u - 0.85) / 0.15) ^ 2) * 0.15 -- ease out the last steps
-    e.model:PivotTo(e.feet * CFrame.new(0, 0, (1 - along) * dist) * e.offset)
+    local walkProgress = clamp01((elapsed - Config.Surge) / walkT)
+    local along = walkProgress < 0.85 and walkProgress or 0.85 + (1 - (1 - (walkProgress - 0.85) / 0.15) ^ 2) * 0.15 -- ease out the last steps
+    emerge.model:PivotTo(emerge.feet * CFrame.new(0, 0, (1 - along) * walkDistance) * emerge.offset)
 
-    local n, o = st.surface.CFrame.LookVector, st.surface.Position
-    local out = 1
-    for _, p in e.parts do
-        local d = (p.Position - o):Dot(n)
-        local hide = clamp01(0.5 - d / C.FadeBand)
-        p.LocalTransparencyModifier = hide
-        out = math.min(out, 1 - hide)
+    local surfaceNormal, surfaceOrigin = portalState.surface.CFrame.LookVector, portalState.surface.Position
+    local minVisible = 1
+    for _, part in emerge.parts do
+        local depth = (part.Position - surfaceOrigin):Dot(surfaceNormal)
+        local hidden = clamp01(0.5 - depth / Config.FadeBand)
+        part.LocalTransparencyModifier = hidden
+        minVisible = math.min(minVisible, 1 - hidden)
     end
-    local chestD = e.chest and (e.chest.Position - o):Dot(n) or -1
-    if e.phase == 1 and chestD > 0 then
-        e.phase = 2
-        st.kick = 1
-        st.highlight.Enabled = true
-        st.burstAt.WorldPosition = e.chest.Position
-        st.burst:Emit(reduced() and 14 or 30)
-        ripple(st, e.chest.Position)
-        play(st.sWhoosh)
+    local chestDepth = emerge.chest and (emerge.chest.Position - surfaceOrigin):Dot(surfaceNormal) or -1
+    if emerge.phase == 1 and chestDepth > 0 then
+        emerge.phase = 2
+        portalState.kick = 1
+        portalState.highlight.Enabled = true
+        portalState.burstAt.WorldPosition = emerge.chest.Position
+        portalState.burst:Emit(reducedMotion() and 14 or 30)
+        ripple(portalState, emerge.chest.Position)
+        playSound(portalState.sWhoosh)
     end
-    if e.phase >= 2 then
-        if out >= 1 and not e.outAt then
-            e.outAt = t
+    if emerge.phase >= 2 then
+        if minVisible >= 1 and not emerge.outAt then
+            emerge.outAt = elapsed
         end
-        local g = e.outAt and clamp01((t - e.outAt) / C.GlowFade) or 0
-        st.highlight.FillTransparency = 0.35 + 0.65 * g
-        st.highlight.OutlineTransparency = g
+        local glowFade = emerge.outAt and clamp01((elapsed - emerge.outAt) / Config.GlowFade) or 0
+        portalState.highlight.FillTransparency = 0.35 + 0.65 * glowFade
+        portalState.highlight.OutlineTransparency = glowFade
     end
-    if u >= 1 and e.phase < 3 then
-        e.phase = 3
-        e.model:SetAttribute("Animation", "Wave")
-        st.target = C.IdleColor:Lerp(st.target, 0.5)
-        play(st.sArrive)
+    if walkProgress >= 1 and emerge.phase < 3 then
+        emerge.phase = 3
+        emerge.model:SetAttribute("Animation", "Wave")
+        portalState.target = Config.IdleColor:Lerp(portalState.target, 0.5)
+        playSound(portalState.sArrive)
     end
-    st.surge = e.phase == 3 and math.max(0, 1 - (t - C.Surge - walkT) / 1.2) or 1
+    portalState.surge = emerge.phase == 3 and math.max(0, 1 - (elapsed - Config.Surge - walkT) / 1.2) or 1
 end
 
 -- ── per frame ─────────────────────────────────────────────────────────────────
 RunService.RenderStepped:Connect(function(dt)
-    local cam = workspace.CurrentCamera
-    local camPos = cam and cam.CFrame.Position or Vector3.zero
-    local rm = reduced()
-    for portal, st in portals do
+    local camera = workspace.CurrentCamera
+    local camPos = camera and camera.CFrame.Position or Vector3.zero
+    local isReducedMotion = reducedMotion()
+    for portal, portalState in portals do
         if not portal.Parent then
             portals[portal] = nil
             continue
         end
-        if st.pending then
-            task.spawn(startEmerge, st)
-            st.pending = false
+        if portalState.pending then
+            task.spawn(startEmerge, portalState)
+            portalState.pending = false
         end
-        if st.emerge then
-            stepEmerge(st)
-        elseif st.surge > 0 then
-            st.surge = math.max(0, st.surge - dt)
+        if portalState.emerge then
+            stepEmerge(portalState)
+        elseif portalState.surge > 0 then
+            portalState.surge = math.max(0, portalState.surge - dt)
         end
 
-        local near = (st.surface.Position - camPos).Magnitude < C.EffectsDistance
-        if near ~= st.visible then
-            st.visible = near
-            for _, em in st.emitters do
-                em.Enabled = near and em ~= st.burst
+        local near = (portalState.surface.Position - camPos).Magnitude < Config.EffectsDistance
+        if near ~= portalState.visible then
+            portalState.visible = near
+            for _, emitter in portalState.emitters do
+                emitter.Enabled = near and emitter ~= portalState.burst
             end
-            st.mist.Enabled = near
+            portalState.mist.Enabled = near
         end
-        if not near and not st.emerge then
+        if not near and not portalState.emerge then
             continue
         end
 
-        st.t += dt
-        local s, t = st.surge, st.t
-        st.kick = math.max(0, st.kick - dt * 3)
+        portalState.t += dt
+        local surge, elapsed = portalState.surge, portalState.t
+        portalState.kick = math.max(0, portalState.kick - dt * 3)
         -- colour
-        if (st.color.R - st.target.R) ^ 2 + (st.color.G - st.target.G) ^ 2 + (st.color.B - st.target.B) ^ 2 > 1e-5 then
-            st.color = st.color:Lerp(st.target, 1 - math.exp(-dt * 3.5))
-            recolor(st, st.color)
+        if
+            (portalState.color.R - portalState.target.R) ^ 2 + (portalState.color.G - portalState.target.G) ^ 2 + (portalState.color.B - portalState.target.B) ^ 2
+            > 1e-5
+        then
+            portalState.color = portalState.color:Lerp(portalState.target, 1 - math.exp(-dt * 3.5))
+            recolor(portalState, portalState.color)
         end
         -- spin + breathe
-        local spin = dt * (1 + 2.2 * s) * (rm and 0.5 or 1)
-        for _, R in st.rings do
-            R.grad.Rotation = (R.grad.Rotation + R.speed * spin) % 360
-            R.stroke.Transparency = math.min(
+        local spin = dt * (1 + 2.2 * surge) * (isReducedMotion and 0.5 or 1)
+        for _, ring in portalState.rings do
+            ring.grad.Rotation = (ring.grad.Rotation + ring.speed * spin) % 360
+            ring.stroke.Transparency = math.min(
                 1,
-                0.15 + 0.25 * (0.5 + 0.5 * math.sin(t * 2 + R.k * 6)) - 0.15 * s + (st.textured and 0.45 or 0)
+                0.15
+                    + 0.25 * (0.5 + 0.5 * math.sin(elapsed * 2 + ring.k * 6))
+                    - 0.15 * surge
+                    + (portalState.textured and 0.45 or 0)
             )
         end
-        local deg = C.SwirlSpeed * dt * (1 + 2.4 * s) * (rm and 0.5 or 1)
-        for _, w in st.swirls do
-            if w.core then
-                w.img.ImageTransparency = clamp01(0.25 - 0.25 * s - 0.1 * math.sin(t * 3.1))
+        local swirlDegrees = Config.SwirlSpeed * dt * (1 + 2.4 * surge) * (isReducedMotion and 0.5 or 1)
+        for _, swirl in portalState.swirls do
+            if swirl.core then
+                swirl.img.ImageTransparency = clamp01(0.25 - 0.25 * surge - 0.1 * math.sin(elapsed * 3.1))
             else
-                w.img.Rotation = (w.img.Rotation - deg * w.speed) % 360
+                swirl.img.Rotation = (swirl.img.Rotation - swirlDegrees * swirl.speed) % 360
             end
         end
-        local breathe = 1 + 0.012 * math.sin(t * 1.7) + 0.04 * s + 0.06 * st.kick * (rm and 0.5 or 1)
-        for _, sc in st.scales do
-            sc.Scale = breathe
+        local breathe = 1
+            + 0.012 * math.sin(elapsed * 1.7)
+            + 0.04 * surge
+            + 0.06 * portalState.kick * (isReducedMotion and 0.5 or 1)
+        for _, uiScale in portalState.scales do
+            uiScale.Scale = breathe
         end
-        for _, h in st.hearts do
-            h.BackgroundTransparency = clamp01(0.25 + 0.12 * math.sin(t * 3.1) - 0.25 * s)
-            h.Size =
-                UDim2.fromScale(0.2 + 0.08 * s + 0.02 * math.sin(t * 2.3), 0.17 + 0.07 * s + 0.02 * math.sin(t * 2.3))
+        for _, heart in portalState.hearts do
+            heart.BackgroundTransparency = clamp01(0.25 + 0.12 * math.sin(elapsed * 3.1) - 0.25 * surge)
+            heart.Size = UDim2.fromScale(
+                0.2 + 0.08 * surge + 0.02 * math.sin(elapsed * 2.3),
+                0.17 + 0.07 * surge + 0.02 * math.sin(elapsed * 2.3)
+            )
         end
-        for _, r in st.rims do
-            r.Thickness = 9 + 3 * math.sin(t * 2.6) + 8 * s
+        for _, rim in portalState.rims do
+            rim.Thickness = 9 + 3 * math.sin(elapsed * 2.6) + 8 * surge
         end
-        st.point.Brightness = 1.5 + 0.3 * math.sin(t * 2.3) + 2.8 * s + 2 * st.kick
-        st.slight.Brightness = 1.1 + 1.8 * s
-        st.pool.Transparency = 0.82 - 0.25 * s - 0.04 * math.sin(t * 2.3)
-        st.intake.Rate = (rm and 0.5 or 1) * (16 + 50 * s)
-        st.sparks.Rate = (rm and 0.5 or 1) * (8 + 24 * s)
-        if st.hum then
-            st.hum.PlaybackSpeed = 1 + 0.25 * s
+        portalState.point.Brightness = 1.5 + 0.3 * math.sin(elapsed * 2.3) + 2.8 * surge + 2 * portalState.kick
+        portalState.slight.Brightness = 1.1 + 1.8 * surge
+        portalState.pool.Transparency = 0.82 - 0.25 * surge - 0.04 * math.sin(elapsed * 2.3)
+        portalState.intake.Rate = (isReducedMotion and 0.5 or 1) * (16 + 50 * surge)
+        portalState.sparks.Rate = (isReducedMotion and 0.5 or 1) * (8 + 24 * surge)
+        if portalState.hum then
+            portalState.hum.PlaybackSpeed = 1 + 0.25 * surge
         end
     end
 end)
 
-print("[Portal] client running, " .. #CollectionService:GetTagged(C.Tag) .. " portal(s) found so far")
-for _, p in CollectionService:GetTagged(C.Tag) do
-    task.spawn(add, p)
+print("[Portal] client running, " .. #CollectionService:GetTagged(Config.Tag) .. " portal(s) found so far")
+for _, portal in CollectionService:GetTagged(Config.Tag) do
+    task.spawn(addPortal, portal)
 end
-CollectionService:GetInstanceAddedSignal(C.Tag):Connect(function(p)
-    task.spawn(add, p)
+CollectionService:GetInstanceAddedSignal(Config.Tag):Connect(function(portal)
+    task.spawn(addPortal, portal)
 end)

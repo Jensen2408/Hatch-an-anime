@@ -1,73 +1,88 @@
-local M = {}
-local function visible(root, on)
-    for _, v in root:GetDescendants() do
-        if v:IsA("BasePart") then
-            if v:GetAttribute("ClaimTransparency") == nil then
-                v:SetAttribute("ClaimTransparency", v.Transparency)
-                v:SetAttribute("ClaimCollide", v.CanCollide)
-                v:SetAttribute("ClaimQuery", v.CanQuery)
+--[[ ServerScriptService.TempleOccupancy  (ModuleScript, server)
+Shows/hides the "claimed plot" decoration depending on whether the plot has an owner.
+Original property values are cached once per instance in attributes (ClaimTransparency, ClaimCollide,
+ClaimQuery, ClaimEnabled, ClaimNeon) so hiding and showing again restores the authored look.
+  TempleOccupancy.Apply(plot, claimed)      -- fence, signs, slots, chamber yard + temple lights/neon
+  TempleOccupancy.ApplyPaths(plot, claimed) -- only FENCE.Ground / FENCE.Stone_Slabs
+Called by PlotManager (refresh on every owner/level change and when fence pieces stream in).
+]]
+local TempleOccupancy = {}
+
+-- Plot children that are only visible while the plot is claimed.
+local function setClaimVisible(root, visible)
+    for _, item in root:GetDescendants() do
+        if item:IsA("BasePart") then
+            if item:GetAttribute("ClaimTransparency") == nil then
+                item:SetAttribute("ClaimTransparency", item.Transparency)
+                item:SetAttribute("ClaimCollide", item.CanCollide)
+                item:SetAttribute("ClaimQuery", item.CanQuery)
             end
-            v.Transparency = on and v:GetAttribute("ClaimTransparency") or 1
-            v.CanCollide = on and v:GetAttribute("ClaimCollide") or false
-            v.CanQuery = on and v:GetAttribute("ClaimQuery") or false
-        elseif v:IsA("Decal") or v:IsA("Texture") then
-            if v:GetAttribute("ClaimTransparency") == nil then
-                v:SetAttribute("ClaimTransparency", v.Transparency)
+            item.Transparency = visible and item:GetAttribute("ClaimTransparency") or 1
+            item.CanCollide = visible and item:GetAttribute("ClaimCollide") or false
+            item.CanQuery = visible and item:GetAttribute("ClaimQuery") or false
+        elseif item:IsA("Decal") or item:IsA("Texture") then
+            if item:GetAttribute("ClaimTransparency") == nil then
+                item:SetAttribute("ClaimTransparency", item.Transparency)
             end
-            v.Transparency = on and v:GetAttribute("ClaimTransparency") or 1
-        elseif v:IsA("SurfaceGui") or v:IsA("BillboardGui") or v:IsA("ProximityPrompt") then
-            if v:GetAttribute("ClaimEnabled") == nil then
-                v:SetAttribute("ClaimEnabled", v.Enabled)
+            item.Transparency = visible and item:GetAttribute("ClaimTransparency") or 1
+        elseif item:IsA("SurfaceGui") or item:IsA("BillboardGui") or item:IsA("ProximityPrompt") then
+            if item:GetAttribute("ClaimEnabled") == nil then
+                item:SetAttribute("ClaimEnabled", item.Enabled)
             end
-            v.Enabled = on and v:GetAttribute("ClaimEnabled") or false
+            item.Enabled = visible and item:GetAttribute("ClaimEnabled") or false
         end
     end
+    -- The root itself (e.g. a path part). Note: CanQuery is not cached here, it simply follows `visible`.
     if root:IsA("BasePart") then
         if root:GetAttribute("ClaimTransparency") == nil then
             root:SetAttribute("ClaimTransparency", root.Transparency)
             root:SetAttribute("ClaimCollide", root.CanCollide)
         end
-        root.Transparency = on and root:GetAttribute("ClaimTransparency") or 1
-        root.CanCollide = on and root:GetAttribute("ClaimCollide") or false
-        root.CanQuery = on
+        root.Transparency = visible and root:GetAttribute("ClaimTransparency") or 1
+        root.CanCollide = visible and root:GetAttribute("ClaimCollide") or false
+        root.CanQuery = visible
     end
 end
-function M.ApplyPaths(plot, on)
+
+function TempleOccupancy.ApplyPaths(plot, claimed)
     local fence = plot:FindFirstChild("FENCE")
     if not fence then
         return
     end
-    for _, name in { "Ground", "Stone_Slabs" } do
-        local path = fence:FindFirstChild(name)
+    for _, pathName in { "Ground", "Stone_Slabs" } do
+        local path = fence:FindFirstChild(pathName)
         if path then
-            visible(path, on)
+            setClaimVisible(path, claimed)
         end
     end
 end
-function M.Apply(plot, on)
-    for _, v in plot:GetChildren() do
+
+function TempleOccupancy.Apply(plot, claimed)
+    for _, child in plot:GetChildren() do
         if
-            v.Name == "FENCE"
-            or v.Name == "OwnerSign"
-            or v.Name == "SignPost"
-            or v.Name == "Slots"
-            or v.Name == "ChamberYard"
-            or v.Name == "AppearanceSign"
-            or v.Name == "AppearanceSignPost"
+            child.Name == "FENCE"
+            or child.Name == "OwnerSign"
+            or child.Name == "SignPost"
+            or child.Name == "Slots"
+            or child.Name == "ChamberYard"
+            or child.Name == "AppearanceSign"
+            or child.Name == "AppearanceSignPost"
         then
-            visible(v, on)
+            setClaimVisible(child, claimed)
         end
     end
-    for _, v in plot.Temple:GetDescendants() do
-        if v:IsA("Light") then
-            if v:GetAttribute("ClaimEnabled") == nil then
-                v:SetAttribute("ClaimEnabled", v.Enabled)
+    -- Unclaimed temples go dark: lights off, neon parts become SmoothPlastic (ClaimNeon remembers them).
+    for _, item in plot.Temple:GetDescendants() do
+        if item:IsA("Light") then
+            if item:GetAttribute("ClaimEnabled") == nil then
+                item:SetAttribute("ClaimEnabled", item.Enabled)
             end
-            v.Enabled = on and v:GetAttribute("ClaimEnabled") or false
-        elseif v:IsA("BasePart") and (v.Material == Enum.Material.Neon or v:GetAttribute("ClaimNeon")) then
-            v:SetAttribute("ClaimNeon", true)
-            v.Material = on and Enum.Material.Neon or Enum.Material.SmoothPlastic
+            item.Enabled = claimed and item:GetAttribute("ClaimEnabled") or false
+        elseif item:IsA("BasePart") and (item.Material == Enum.Material.Neon or item:GetAttribute("ClaimNeon")) then
+            item:SetAttribute("ClaimNeon", true)
+            item.Material = claimed and Enum.Material.Neon or Enum.Material.SmoothPlastic
         end
     end
 end
-return M
+
+return TempleOccupancy

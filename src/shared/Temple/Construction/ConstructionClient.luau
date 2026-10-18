@@ -11,75 +11,84 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local CollectionService = game:GetService("CollectionService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local _ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(script.Parent:WaitForChild("ConstructionConfig"))
 local TAG = "Constructing"
 local SMOKE = "rbxasset://textures/particles/smoke_main.dds"
-local player = Players.LocalPlayer
+local localPlayer = Players.LocalPlayer
 
-local Client = {}
-local jobs = {} -- [model] = job
-local stepConn
+local ConstructionClient = {}
+-- [model] = job. A job holds: state[part] = { final, size, batch, retire, fromCF, fromSize, ltm },
+-- batches[i] = { parts, stage, offset, tilt, center, done }, retirees, timeline (tl), quality factor (q),
+-- far (skip animation) and its effect instances (fx, sil, hl, sweepPart).
+local jobs = {}
+local stepConn -- the single RenderStepped connection; disconnected when no job is left
 local rng = Random.new()
 
 ---------------------------------------------------------------- helpers
-local function ease(a, style, dir)
-    return TweenService:GetValue(math.clamp(a, 0, 1), style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out)
+local function ease(alpha, style, direction)
+    return TweenService:GetValue(
+        math.clamp(alpha, 0, 1),
+        style or Enum.EasingStyle.Quart,
+        direction or Enum.EasingDirection.Out
+    )
 end
 local function quality()
-    local q = Config.Effects.Quality
-    if q == "High" then
+    local setting = Config.Effects.Quality
+    if setting == "High" then
         return 1
-    elseif q == "Low" then
+    elseif setting == "Low" then
         return 0.4
     end
-    local ok, lvl = pcall(function()
+    local ok, qualityLevel = pcall(function()
         return UserSettings():GetService("UserGameSettings").SavedQualityLevel.Value
     end)
-    if not ok or lvl == 0 then
+    if not ok or qualityLevel == 0 then
         return 0.8
     end -- 0 = automatic
-    return math.clamp(lvl / 10, 0.35, 1)
+    return math.clamp(qualityLevel / 10, 0.35, 1)
 end
 local function reducedMotion()
-    return player:GetAttribute("ReducedMotion") == true
+    return localPlayer:GetAttribute("ReducedMotion") == true
 end
 
 ---------------------------------------------------------------- camera shake (additive, decaying, no drift)
 local Shake = { impulses = {}, bound = false, last = CFrame.identity }
-function Shake.add(amp, dur)
+function Shake.add(amplitude, duration)
     if Config.Effects.CameraShake <= 0 or reducedMotion() then
         return
     end
-    table.insert(
-        Shake.impulses,
-        { t0 = os.clock(), amp = amp * Config.Effects.CameraShake, dur = dur, seed = rng:NextNumber(0, 1000) }
-    )
+    table.insert(Shake.impulses, {
+        t0 = os.clock(),
+        amp = amplitude * Config.Effects.CameraShake,
+        dur = duration,
+        seed = rng:NextNumber(0, 1000),
+    })
     if not Shake.bound then
         Shake.bound = true
         RunService:BindToRenderStep("ConstructionShake", Enum.RenderPriority.Camera.Value + 1, Shake.step)
     end
 end
 function Shake.step()
-    local cam = workspace.CurrentCamera
+    local camera = workspace.CurrentCamera
     local now = os.clock()
-    local x, y, r = 0, 0, 0
+    local offsetX, offsetY, roll = 0, 0, 0
     for i = #Shake.impulses, 1, -1 do
-        local s = Shake.impulses[i]
-        local k = (now - s.t0) / s.dur
-        if k >= 1 then
+        local impulse = Shake.impulses[i]
+        local progress = (now - impulse.t0) / impulse.dur
+        if progress >= 1 then
             table.remove(Shake.impulses, i)
         else
-            local fall = (1 - k) ^ 2
-            x += math.noise(s.seed, now * 22) * s.amp * fall
-            y += math.noise(s.seed + 7, now * 22) * s.amp * fall
-            r += math.noise(s.seed + 13, now * 18) * s.amp * 0.4 * fall
+            local falloff = (1 - progress) ^ 2
+            offsetX += math.noise(impulse.seed, now * 22) * impulse.amp * falloff
+            offsetY += math.noise(impulse.seed + 7, now * 22) * impulse.amp * falloff
+            roll += math.noise(impulse.seed + 13, now * 18) * impulse.amp * 0.4 * falloff
         end
     end
     -- the default camera controller rewrites CFrame each frame before us, so offsets never accumulate
-    if cam and cam.CameraType ~= Enum.CameraType.Scriptable then
-        cam.CFrame *= CFrame.new(x * 0.06, y * 0.06, 0) * CFrame.Angles(0, 0, math.rad(r * 0.5))
+    if camera and camera.CameraType ~= Enum.CameraType.Scriptable then
+        camera.CFrame *= CFrame.new(offsetX * 0.06, offsetY * 0.06, 0) * CFrame.Angles(0, 0, math.rad(roll * 0.5))
     end
     if #Shake.impulses == 0 then
         RunService:UnbindFromRenderStep("ConstructionShake")
@@ -88,9 +97,9 @@ function Shake.step()
 end
 
 ---------------------------------------------------------------- sounds
-local function play(job, slot, vol, gapKey)
-    local id = Config.Sounds[slot]
-    if not id or id == "" or not job.fx then
+local function playSound(job, soundName, volume, gapKey)
+    local soundId = Config.Sounds[soundName]
+    if not soundId or soundId == "" or not job.fx then
         return
     end
     if gapKey then
@@ -100,28 +109,29 @@ local function play(job, slot, vol, gapKey)
         end
         job[gapKey] = now
     end
-    local s = Instance.new("Sound")
-    s.SoundId = id
-    s.Volume = (vol or 1) * Config.Effects.Volume
-    s.RollOffMaxDistance = 140
-    s.Parent = job.fx
-    s:Play()
-    s.Ended:Once(function()
-        s:Destroy()
+    local sound = Instance.new("Sound")
+    sound.SoundId = soundId
+    sound.Volume = (volume or 1) * Config.Effects.Volume
+    sound.RollOffMaxDistance = 140
+    sound.Parent = job.fx
+    sound:Play()
+    sound.Ended:Once(function()
+        sound:Destroy()
     end)
 end
 
 ---------------------------------------------------------------- dust (pooled per construction)
-local function groundColor(pos, ignore)
+local function groundColor(position, ignoreList)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = ignore
-    local hit = workspace:Raycast(pos + Vector3.new(0, 4, 0), Vector3.new(0, -30, 0), params)
+    params.FilterDescendantsInstances = ignoreList
+    local hit = workspace:Raycast(position + Vector3.new(0, 4, 0), Vector3.new(0, -30, 0), params)
     if not hit then
-        return Color3.fromRGB(176, 160, 136), pos.Y
+        return Color3.fromRGB(176, 160, 136), position.Y
     end
-    local c = hit.Instance:IsA("Terrain") and workspace.Terrain:GetMaterialColor(hit.Material) or hit.Instance.Color
-    return c:Lerp(Color3.fromRGB(200, 188, 168), 0.35), hit.Position.Y
+    local surfaceColor = hit.Instance:IsA("Terrain") and workspace.Terrain:GetMaterialColor(hit.Material)
+        or hit.Instance.Color
+    return surfaceColor:Lerp(Color3.fromRGB(200, 188, 168), 0.35), hit.Position.Y
 end
 local function makeFx(job)
     local holder = Instance.new("Part")
@@ -134,49 +144,49 @@ local function makeFx(job)
     holder.Parent = workspace
     job.fx = holder
     job.emitters = {}
-    local col, gy = groundColor(job.base, { job.model, job.retireModel, player.Character })
-    job.dustColor, job.groundY = col, gy
+    local dustColor, groundY = groundColor(job.base, { job.model, job.retireModel, localPlayer.Character })
+    job.dustColor, job.groundY = dustColor, groundY
     for i = 1, Config.Effects.MaxDustPerConstruction do
-        local a = Instance.new("Attachment")
-        a.Parent = holder
-        local e = Instance.new("ParticleEmitter")
-        e.Texture = SMOKE
-        e.Rate = 0
-        e.Color = ColorSequence.new(col)
-        e.LightInfluence = 1
-        e.LightEmission = 0
-        e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.9), NumberSequenceKeypoint.new(1, 2.6) })
-        e.Transparency = NumberSequence.new({
+        local attachment = Instance.new("Attachment")
+        attachment.Parent = holder
+        local emitter = Instance.new("ParticleEmitter")
+        emitter.Texture = SMOKE
+        emitter.Rate = 0
+        emitter.Color = ColorSequence.new(dustColor)
+        emitter.LightInfluence = 1
+        emitter.LightEmission = 0
+        emitter.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.9), NumberSequenceKeypoint.new(1, 2.6) })
+        emitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 0.55),
             NumberSequenceKeypoint.new(0.3, 0.7),
             NumberSequenceKeypoint.new(1, 1),
         })
-        e.Lifetime = NumberRange.new(0.7, 1.2)
-        e.Speed = NumberRange.new(2.5, 5)
-        e.SpreadAngle = Vector2.new(80, 10)
-        e.EmissionDirection = Enum.NormalId.Top
-        e.Acceleration = Vector3.new(0, -1.5, 0)
-        e.Drag = 3
-        e.RotSpeed = NumberRange.new(-30, 30)
-        e.Rotation = NumberRange.new(0, 360)
-        e.Parent = a
-        job.emitters[i] = { att = a, em = e }
+        emitter.Lifetime = NumberRange.new(0.7, 1.2)
+        emitter.Speed = NumberRange.new(2.5, 5)
+        emitter.SpreadAngle = Vector2.new(80, 10)
+        emitter.EmissionDirection = Enum.NormalId.Top
+        emitter.Acceleration = Vector3.new(0, -1.5, 0)
+        emitter.Drag = 3
+        emitter.RotSpeed = NumberRange.new(-30, 30)
+        emitter.Rotation = NumberRange.new(0, 360)
+        emitter.Parent = attachment
+        job.emitters[i] = { att = attachment, em = emitter }
     end
     job.nextEm = 1
 end
-local function puff(job, pos, count, spread)
+local function puff(job, position, count, spread)
     if not job.fx or job.far then
         return
     end
-    local slot = job.emitters[job.nextEm]
+    local emitterSlot = job.emitters[job.nextEm]
     job.nextEm = job.nextEm % #job.emitters + 1
-    slot.att.WorldPosition = Vector3.new(pos.X, job.groundY + 0.2, pos.Z)
-    slot.em.SpreadAngle = Vector2.new(spread or 80, 10)
-    slot.em:Emit(math.max(1, math.floor(count * Config.Effects.DustDensity * job.q + 0.5)))
+    emitterSlot.att.WorldPosition = Vector3.new(position.X, job.groundY + 0.2, position.Z)
+    emitterSlot.em.SpreadAngle = Vector2.new(spread or 80, 10)
+    emitterSlot.em:Emit(math.max(1, math.floor(count * Config.Effects.DustDensity * job.q + 0.5)))
 end
 local function footprintPuff(job, count)
-    local cf, size = job.boxCF, job.boxSize
-    for _, c in
+    local boxCFrame, size = job.boxCF, job.boxSize
+    for _, corner in
         {
             Vector3.new(-0.5, 0, -0.5),
             Vector3.new(0.5, 0, -0.5),
@@ -186,11 +196,12 @@ local function footprintPuff(job, count)
             Vector3.new(0, 0, -0.5),
         }
     do
-        puff(job, (cf * CFrame.new(c.X * size.X * 0.9, 0, c.Z * size.Z * 0.9)).Position, count, 85)
+        puff(job, (boxCFrame * CFrame.new(corner.X * size.X * 0.9, 0, corner.Z * size.Z * 0.9)).Position, count, 85)
     end
 end
 
 ---------------------------------------------------------------- per-construction setup
+-- Registers a Cx_* tagged part with the job and hides it locally until its batch animates in.
 local function hide(job, part)
     if job.state[part] then
         return
@@ -200,7 +211,7 @@ local function hide(job, part)
     if not batch and not retire then
         return
     end
-    local st = {
+    local partState = {
         final = part.CFrame,
         size = part.Size,
         batch = batch,
@@ -209,15 +220,15 @@ local function hide(job, part)
         fromSize = part:GetAttribute("Cx_FromSize"),
         ltm = part.LocalTransparencyModifier,
     }
-    job.state[part] = st
+    job.state[part] = partState
     if batch then
-        local b = job.batches[batch]
-        if not b then
-            b = { parts = {}, stage = part:GetAttribute("Cx_Stage") or 1, landed = false }
-            job.batches[batch] = b
+        local batchInfo = job.batches[batch]
+        if not batchInfo then
+            batchInfo = { parts = {}, stage = part:GetAttribute("Cx_Stage") or 1, landed = false }
+            job.batches[batch] = batchInfo
         end
-        table.insert(b.parts, part)
-        if not st.fromCF then
+        table.insert(batchInfo.parts, part)
+        if not partState.fromCF then
             part.LocalTransparencyModifier = 1
         end -- hidden until its wave
     else
@@ -225,33 +236,34 @@ local function hide(job, part)
     end
 end
 
-local function batchOffsets(job, i, b)
-    local k = Config.Kinds[job.kind]
-    local r = Random.new(i * 7919 + (job.seed or 0))
-    local first = b.stage == 1
-    local rise = first and k.RiseDistance or k.UpperRise
-    local side = (i % 2 == 0) and 1 or -1
-    b.offset = Vector3.new(
-        first and 0 or side * r:NextNumber(0.2, 1) * k.Lateral,
+-- Lazily computes a batch's start offset/tilt (deterministic per batch index + model seed).
+local function batchOffsets(job, batchIndex, batchInfo)
+    local kindConfig = Config.Kinds[job.kind]
+    local random = Random.new(batchIndex * 7919 + (job.seed or 0))
+    local first = batchInfo.stage == 1
+    local rise = first and kindConfig.RiseDistance or kindConfig.UpperRise
+    local side = (batchIndex % 2 == 0) and 1 or -1
+    batchInfo.offset = Vector3.new(
+        first and 0 or side * random:NextNumber(0.2, 1) * kindConfig.Lateral,
         -rise,
-        first and 0 or r:NextNumber(-0.5, 0.5) * k.Lateral
+        first and 0 or random:NextNumber(-0.5, 0.5) * kindConfig.Lateral
     )
-    b.tilt = first and CFrame.identity
+    batchInfo.tilt = first and CFrame.identity
         or CFrame.Angles(
-            math.rad(r:NextNumber(-1, 1) * k.Tilt),
-            math.rad(r:NextNumber(-1, 1) * k.Tilt * 0.6),
-            math.rad(r:NextNumber(-1, 1) * k.Tilt)
+            math.rad(random:NextNumber(-1, 1) * kindConfig.Tilt),
+            math.rad(random:NextNumber(-1, 1) * kindConfig.Tilt * 0.6),
+            math.rad(random:NextNumber(-1, 1) * kindConfig.Tilt)
         )
     -- pivot each batch around its own bottom-centre so rotations look like a block settling
-    local sum, minY, n = Vector3.zero, math.huge, 0
-    for _, p in b.parts do
-        local s = job.state[p]
-        sum += s.final.Position
-        minY = math.min(minY, s.final.Position.Y - s.size.Y / 2)
-        n += 1
+    local sum, minY, partCount = Vector3.zero, math.huge, 0
+    for _, part in batchInfo.parts do
+        local partState = job.state[part]
+        sum += partState.final.Position
+        minY = math.min(minY, partState.final.Position.Y - partState.size.Y / 2)
+        partCount += 1
     end
-    local c = n > 0 and sum / n or job.base
-    b.center = Vector3.new(c.X, minY, c.Z)
+    local centre = partCount > 0 and sum / partCount or job.base
+    batchInfo.center = Vector3.new(centre.X, minY, centre.Z)
 end
 
 local function silhouette(job)
@@ -259,49 +271,51 @@ local function silhouette(job)
         return
     end
     -- largest parts only: previews the real shape without cloning the whole model
-    local list = {}
-    for p, s in job.state do
-        if s.batch and not s.fromCF then
-            table.insert(list, p)
+    local largestParts = {}
+    for part, partState in job.state do
+        if partState.batch and not partState.fromCF then
+            table.insert(largestParts, part)
         end
     end
-    table.sort(list, function(a, b)
-        local sa, sb = a.Size, b.Size
-        return sa.X * sa.Y * sa.Z > sb.X * sb.Y * sb.Z
+    table.sort(largestParts, function(partA, partB)
+        local sizeA, sizeB = partA.Size, partB.Size
+        return sizeA.X * sizeA.Y * sizeA.Z > sizeB.X * sizeB.Y * sizeB.Z
     end)
     local folder = Instance.new("Folder")
     folder.Name = "ConstructionSilhouette"
     folder.Parent = workspace
     job.sil = folder
-    for i = 1, math.min(36, #list) do
-        local src = list[i]
-        local g = Instance.new("Part")
-        g.Anchored, g.CanCollide, g.CanQuery, g.CanTouch, g.CastShadow = true, false, false, false, false
-        g.Material = Enum.Material.SmoothPlastic
-        g.Color = Color3.fromRGB(255, 244, 222)
-        g.Size = src.Size * 0.995
-        g.CFrame = job.state[src].final
-        g.Transparency = 1
-        g.Parent = folder
+    for i = 1, math.min(36, #largestParts) do
+        local sourcePart = largestParts[i]
+        local ghost = Instance.new("Part")
+        ghost.Anchored, ghost.CanCollide, ghost.CanQuery, ghost.CanTouch, ghost.CastShadow =
+            true, false, false, false, false
+        ghost.Material = Enum.Material.SmoothPlastic
+        ghost.Color = Color3.fromRGB(255, 244, 222)
+        ghost.Size = sourcePart.Size * 0.995
+        ghost.CFrame = job.state[sourcePart].final
+        ghost.Transparency = 1
+        ghost.Parent = folder
     end
 end
 
+-- Puts every part at its exact server transform (used at the end and on any error).
 local function snapAll(job)
-    local parts, cfs = {}, {}
-    for p, s in job.state do
-        if p.Parent and not s.retire then
-            table.insert(parts, p)
-            table.insert(cfs, s.final)
-            if s.fromSize then
-                p.Size = s.size
+    local parts, cframes = {}, {}
+    for part, partState in job.state do
+        if part.Parent and not partState.retire then
+            table.insert(parts, part)
+            table.insert(cframes, partState.final)
+            if partState.fromSize then
+                part.Size = partState.size
             end
-            p.LocalTransparencyModifier = s.ltm or 0
-        elseif p.Parent and s.retire then
-            p.LocalTransparencyModifier = 1
+            part.LocalTransparencyModifier = partState.ltm or 0
+        elseif part.Parent and partState.retire then
+            part.LocalTransparencyModifier = 1
         end
     end
     if #parts > 0 then
-        workspace:BulkMoveTo(parts, cfs, Enum.BulkMoveMode.FireCFrameChanged)
+        workspace:BulkMoveTo(parts, cframes, Enum.BulkMoveMode.FireCFrameChanged)
     end
 end
 
@@ -312,8 +326,8 @@ local function cleanup(job)
     job.cleaned = true
     snapAll(job)
     if job.conns then
-        for _, c in job.conns do
-            c:Disconnect()
+        for _, connection in job.conns do
+            connection:Disconnect()
         end
     end
     if job.sil then
@@ -340,50 +354,51 @@ end
 
 ---------------------------------------------------------------- the shared step
 local function stepJob(job, now)
-    local t = now - job.start
-    local tl, k = job.tl, Config.Kinds[job.kind]
-    if t >= tl.total or job.far then
+    local elapsed = now - job.start
+    local timeline, kindConfig = job.tl, Config.Kinds[job.kind]
+    if elapsed >= timeline.total or job.far then
         cleanup(job)
         return
     end
-    local parts, cfs = {}, {}
-    local mine = job.isMine
+    local parts, cframes = {}, {}
+    local isMine = job.isMine
 
     -- retire (replacement / removed parts): sink and fade
     if #job.retirees > 0 then
-        local a = math.clamp(t / math.max(tl.retireEnd, 0.3), 0, 1)
-        local e = ease(a, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-        for _, p in job.retirees do
-            if p.Parent then
-                local s = job.state[p]
-                table.insert(parts, p)
-                table.insert(cfs, s.final - Vector3.new(0, 1.2 * e, 0))
-                p.LocalTransparencyModifier = math.max(s.ltm or 0, e)
+        local alpha = math.clamp(elapsed / math.max(timeline.retireEnd, 0.3), 0, 1)
+        local eased = ease(alpha, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        for _, part in job.retirees do
+            if part.Parent then
+                local partState = job.state[part]
+                table.insert(parts, part)
+                table.insert(cframes, partState.final - Vector3.new(0, 1.2 * eased, 0))
+                part.LocalTransparencyModifier = math.max(partState.ltm or 0, eased)
             end
         end
-        if not job.retirePuff and t > 0.05 then
+        if not job.retirePuff and elapsed > 0.05 then
             job.retirePuff = true
             footprintPuff(job, 3)
         end
     end
 
     -- anticipation
-    if not job.antDone and t >= tl.retireEnd then
+    if not job.antDone and elapsed >= timeline.retireEnd then
         job.antDone = true
-        play(job, "Rumble", 0.7)
-        if mine then
-            Shake.add(0.5, k.Anticipation + 0.15)
+        playSound(job, "Rumble", 0.7)
+        if isMine then
+            Shake.add(0.5, kindConfig.Anticipation + 0.15)
         end
         footprintPuff(job, 2)
         silhouette(job)
     end
     if job.sil then
-        local a = (t - tl.retireEnd) / math.max(k.Anticipation, 0.05)
-        local tr = a < 0.35 and 1 - 0.18 * (a / 0.35) or 0.82 + 0.18 * math.clamp((a - 0.35) / 0.65, 0, 1)
-        for _, g in job.sil:GetChildren() do
-            g.Transparency = tr
+        local alpha = (elapsed - timeline.retireEnd) / math.max(kindConfig.Anticipation, 0.05)
+        local transparency = alpha < 0.35 and 1 - 0.18 * (alpha / 0.35)
+            or 0.82 + 0.18 * math.clamp((alpha - 0.35) / 0.65, 0, 1)
+        for _, ghost in job.sil:GetChildren() do
+            ghost.Transparency = transparency
         end
-        if a >= 1 then
+        if alpha >= 1 then
             job.sil:Destroy()
             job.sil = nil
         end
@@ -391,113 +406,114 @@ local function stepJob(job, now)
 
     -- batches
     for i = 1, job.n do
-        local b = job.batches[i]
-        if b then
-            if not b.offset then
-                batchOffsets(job, i, b)
+        local batchInfo = job.batches[i]
+        if batchInfo then
+            if not batchInfo.offset then
+                batchOffsets(job, i, batchInfo)
             end
-            local bs = tl.batchStart(i)
-            local a = (t - bs) / k.BatchMove
-            if a >= 0 and not b.done then
-                local e = ease(a, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-                local rot = CFrame.identity:Lerp(b.tilt, 1 - e)
-                local off = b.offset * (1 - e)
-                local fadeIn = math.clamp(a / 0.25, 0, 1)
-                for _, p in b.parts do
-                    local s = job.state[p]
-                    if p.Parent then
-                        if s.fromCF then
-                            local cf = s.fromCF:Lerp(s.final, e)
-                            table.insert(parts, p)
-                            table.insert(cfs, cf)
-                            if s.fromSize then
-                                p.Size = s.fromSize:Lerp(s.size, e)
+            local batchStart = timeline.batchStart(i)
+            local alpha = (elapsed - batchStart) / kindConfig.BatchMove
+            if alpha >= 0 and not batchInfo.done then
+                local eased = ease(alpha, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+                local rotation = CFrame.identity:Lerp(batchInfo.tilt, 1 - eased)
+                local offset = batchInfo.offset * (1 - eased)
+                local fadeIn = math.clamp(alpha / 0.25, 0, 1)
+                for _, part in batchInfo.parts do
+                    local partState = job.state[part]
+                    if part.Parent then
+                        if partState.fromCF then
+                            local cframe = partState.fromCF:Lerp(partState.final, eased)
+                            table.insert(parts, part)
+                            table.insert(cframes, cframe)
+                            if partState.fromSize then
+                                part.Size = partState.fromSize:Lerp(partState.size, eased)
                             end
                         else
-                            local rel = CFrame.new(b.center):ToObjectSpace(s.final)
-                            table.insert(parts, p)
-                            table.insert(cfs, CFrame.new(b.center + off) * rot * rel)
-                            p.LocalTransparencyModifier = (b.stage == 1) and (s.ltm or 0)
-                                or (1 - fadeIn) * (1 - (s.ltm or 0)) + (s.ltm or 0)
+                            local relative = CFrame.new(batchInfo.center):ToObjectSpace(partState.final)
+                            table.insert(parts, part)
+                            table.insert(cframes, CFrame.new(batchInfo.center + offset) * rotation * relative)
+                            part.LocalTransparencyModifier = (batchInfo.stage == 1) and (partState.ltm or 0)
+                                or (1 - fadeIn) * (1 - (partState.ltm or 0)) + (partState.ltm or 0)
                         end
                     end
                 end
-                if a >= 1 then
-                    b.done = true
+                if alpha >= 1 then
+                    batchInfo.done = true
                     -- exact final transform
-                    for _, p in b.parts do
-                        local s = job.state[p]
-                        if p.Parent then
-                            table.insert(parts, p)
-                            table.insert(cfs, s.final)
-                            if s.fromSize then
-                                p.Size = s.size
+                    for _, part in batchInfo.parts do
+                        local partState = job.state[part]
+                        if part.Parent then
+                            table.insert(parts, part)
+                            table.insert(cframes, partState.final)
+                            if partState.fromSize then
+                                part.Size = partState.size
                             end
-                            p.LocalTransparencyModifier = s.ltm or 0
+                            part.LocalTransparencyModifier = partState.ltm or 0
                         end
                     end
-                    if b.stage == 1 then
-                        puff(job, b.center, 4, 85)
-                        play(job, "Place", 0.8, "_placeT")
-                        if mine then
+                    if batchInfo.stage == 1 then
+                        puff(job, batchInfo.center, 4, 85)
+                        playSound(job, "Place", 0.8, "_placeT")
+                        if isMine then
                             Shake.add(0.25, 0.18)
                         end
                     elseif i % 3 == 0 then
-                        puff(job, b.center, 1, 60)
+                        puff(job, batchInfo.center, 1, 60)
                     end
-                    if b.stage > 1 then
-                        play(job, k.Mechanical and "Click" or "Place", 0.5, "_placeT")
+                    if batchInfo.stage > 1 then
+                        playSound(job, kindConfig.Mechanical and "Click" or "Place", 0.5, "_placeT")
                     end
                 end
             end
         end
     end
     if #parts > 0 then
-        workspace:BulkMoveTo(parts, cfs, Enum.BulkMoveMode.FireCFrameChanged)
+        workspace:BulkMoveTo(parts, cframes, Enum.BulkMoveMode.FireCFrameChanged)
     end
 
     -- lock-in
-    if not job.locked and t >= tl.landed then
+    if not job.locked and elapsed >= timeline.landed then
         job.locked = true
-        play(job, "Impact", 1)
-        if mine then
+        playSound(job, "Impact", 1)
+        if isMine then
             Shake.add(0.8, 0.35)
         end
         footprintPuff(job, 5)
         if Config.Effects.SweepStrength > 0 and not job.far and job.q >= 0.4 then
-            local hl = Instance.new("Highlight")
-            hl.Adornee = job.model
-            hl.DepthMode = Enum.HighlightDepthMode.Occluded
-            hl.FillColor = Color3.fromRGB(255, 240, 210)
-            hl.OutlineColor = Color3.fromRGB(255, 236, 196)
-            hl.FillTransparency, hl.OutlineTransparency = 1, 1
-            hl.Parent = job.fx
-            job.hl = hl
-            local sp = Instance.new("Part")
-            sp.Anchored, sp.CanCollide, sp.CanQuery, sp.CanTouch, sp.Transparency = true, false, false, false, 1
-            sp.Size = Vector3.new(0.2, 0.2, 0.2)
-            sp.CFrame = CFrame.new(job.base)
-            sp.Parent = workspace
+            local highlight = Instance.new("Highlight")
+            highlight.Adornee = job.model
+            highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+            highlight.FillColor = Color3.fromRGB(255, 240, 210)
+            highlight.OutlineColor = Color3.fromRGB(255, 236, 196)
+            highlight.FillTransparency, highlight.OutlineTransparency = 1, 1
+            highlight.Parent = job.fx
+            job.hl = highlight
+            local sweepPart = Instance.new("Part")
+            sweepPart.Anchored, sweepPart.CanCollide, sweepPart.CanQuery, sweepPart.CanTouch, sweepPart.Transparency =
+                true, false, false, false, 1
+            sweepPart.Size = Vector3.new(0.2, 0.2, 0.2)
+            sweepPart.CFrame = CFrame.new(job.base)
+            sweepPart.Parent = workspace
             local light = Instance.new("PointLight")
             light.Color = Color3.fromRGB(255, 232, 190)
             light.Range = math.max(job.boxSize.X, job.boxSize.Z) * 0.8
             light.Brightness = 0
             light.Shadows = false
-            light.Parent = sp
-            job.sweepPart, job.sweepLight = sp, light
+            light.Parent = sweepPart
+            job.sweepPart, job.sweepLight = sweepPart, light
         end
     end
     if job.hl then
-        local a = (t - tl.landed) / k.LockIn
-        local pulse = math.sin(math.clamp(a, 0, 1) * math.pi)
-        local str = Config.Effects.SweepStrength
-        job.hl.OutlineTransparency = 1 - 0.55 * pulse * str
-        job.hl.FillTransparency = 1 - 0.08 * pulse * str
+        local alpha = (elapsed - timeline.landed) / kindConfig.LockIn
+        local pulse = math.sin(math.clamp(alpha, 0, 1) * math.pi)
+        local sweepStrength = Config.Effects.SweepStrength
+        job.hl.OutlineTransparency = 1 - 0.55 * pulse * sweepStrength
+        job.hl.FillTransparency = 1 - 0.08 * pulse * sweepStrength
         job.sweepPart.CFrame = CFrame.new(
-            job.base + Vector3.new(0, job.boxSize.Y * ease(a, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), 0)
+            job.base + Vector3.new(0, job.boxSize.Y * ease(alpha, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), 0)
         )
-        job.sweepLight.Brightness = 2.2 * pulse * str
-        if a >= 1 then
+        job.sweepLight.Brightness = 2.2 * pulse * sweepStrength
+        if alpha >= 1 then
             job.hl:Destroy()
             job.hl = nil
             job.sweepPart:Destroy()
@@ -518,43 +534,44 @@ local function step()
 end
 
 ---------------------------------------------------------------- tag handling
+-- Called for every model tagged "Constructing" (incl. ones already tagged when Start runs).
 local function begin(model)
     if jobs[model] or not model:IsA("Model") then
         return
     end
-    local start = model:GetAttribute("Cx_Start")
-    if not start then
+    local startTime = model:GetAttribute("Cx_Start")
+    if not startTime then
         return
     end
     local kind = model:GetAttribute("Cx_Kind") or "Temple"
-    local n = model:GetAttribute("Cx_Batches") or 1
+    local batchCount = model:GetAttribute("Cx_Batches") or 1
     local replace = model:GetAttribute("Cx_Replace") == true
-    local tl = Config.Timeline(kind, n, replace)
+    local timeline = Config.Timeline(kind, batchCount, replace)
     local now = workspace:GetServerTimeNow()
     local job = {
         model = model,
         kind = kind,
-        n = n,
-        start = start,
-        tl = tl,
+        n = batchCount,
+        start = startTime,
+        tl = timeline,
         state = {},
         batches = {},
         retirees = {},
-        isMine = model:GetAttribute("Cx_Owner") == player.UserId,
+        isMine = model:GetAttribute("Cx_Owner") == localPlayer.UserId,
         seed = #model.Name,
         conns = {},
     }
-    for _, d in model:GetDescendants() do
-        if d:IsA("BasePart") then
-            hide(job, d)
+    for _, descendant in model:GetDescendants() do
+        if descendant:IsA("BasePart") then
+            hide(job, descendant)
         end
     end
     -- late arrivals (StreamingEnabled) are hidden too
     table.insert(
         job.conns,
-        model.DescendantAdded:Connect(function(d)
-            if d:IsA("BasePart") then
-                task.defer(hide, job, d)
+        model.DescendantAdded:Connect(function(descendant)
+            if descendant:IsA("BasePart") then
+                task.defer(hide, job, descendant)
             end
         end)
     )
@@ -568,19 +585,19 @@ local function begin(model)
     )
     table.insert(
         job.conns,
-        model.AncestryChanged:Connect(function(_, p)
-            if not p then
+        model.AncestryChanged:Connect(function(_, newParent)
+            if not newParent then
                 cleanup(job)
             end
         end)
     )
-    local cf, size = model:GetBoundingBox()
-    job.boxCF, job.boxSize = cf * CFrame.new(0, -size.Y / 2, 0), size
+    local boxCFrame, size = model:GetBoundingBox()
+    job.boxCF, job.boxSize = boxCFrame * CFrame.new(0, -size.Y / 2, 0), size
     job.base = job.boxCF.Position
-    local cam = workspace.CurrentCamera
-    local dist = cam and (cam.CFrame.Position - job.base).Magnitude or 0
-    job.q = quality() * (dist > Config.Effects.EffectsDistance and 0 or 1)
-    job.far = dist > Config.Effects.AnimateDistance or now - start >= tl.total
+    local camera = workspace.CurrentCamera
+    local distance = camera and (camera.CFrame.Position - job.base).Magnitude or 0
+    job.q = quality() * (distance > Config.Effects.EffectsDistance and 0 or 1)
+    job.far = distance > Config.Effects.AnimateDistance or now - startTime >= timeline.total
     jobs[model] = job
     if job.far then
         cleanup(job)
@@ -592,11 +609,11 @@ local function begin(model)
     end
 end
 
-function Client.Start()
-    for _, m in CollectionService:GetTagged(TAG) do
-        task.spawn(begin, m)
+function ConstructionClient.Start()
+    for _, model in CollectionService:GetTagged(TAG) do
+        task.spawn(begin, model)
     end
     CollectionService:GetInstanceAddedSignal(TAG):Connect(begin)
 end
 
-return Client
+return ConstructionClient

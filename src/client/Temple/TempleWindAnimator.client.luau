@@ -1,11 +1,15 @@
+-- StarterPlayerScripts.TempleWindAnimator  (LocalScript)
 -- Airborne visual wind across the central temple courtyard.
 -- Authored beams provide an edit-mode preview; animation runs locally.
+-- Each child of workspace.TempleWindStreams is an anchor part with an "AirStreak" Beam and the attributes
+-- Origin (Vector3), Duration (seconds per pass) and optional Phase (0..1). Updates run at ~30 Hz.
 local RunService = game:GetService("RunService")
-local folder = workspace:WaitForChild("TempleWindStreams")
+local windFolder = workspace:WaitForChild("TempleWindStreams")
 local elapsed = 0
 local accumulator = 0
 local streams = {}
 
+-- Starts animating an anchor once it has its beam and attributes (ignored otherwise).
 local function register(anchor)
     if not anchor:IsA("BasePart") or streams[anchor] then
         return
@@ -24,17 +28,17 @@ local function register(anchor)
     }
 end
 
-for _, anchor in folder:GetChildren() do
+for _, anchor in windFolder:GetChildren() do
     register(anchor)
 end
-folder.ChildAdded:Connect(register)
-folder.ChildRemoved:Connect(function(anchor)
+windFolder.ChildAdded:Connect(register)
+windFolder.ChildRemoved:Connect(function(anchor)
     streams[anchor] = nil
 end)
 
 local connection
 connection = RunService.Heartbeat:Connect(function(dt)
-    if not folder.Parent then
+    if not windFolder.Parent then
         connection:Disconnect()
         return
     end
@@ -46,11 +50,12 @@ connection = RunService.Heartbeat:Connect(function(dt)
     accumulator = 0
     for anchor, stream in pairs(streams) do
         local phase = (elapsed / stream.duration + stream.phase) % 1
-        local t = elapsed + stream.phase * 10
+        local rippleTime = elapsed + stream.phase * 10
+        -- phase 0..1 = one pass: 500 studs along X with a gentle 2-stud vertical bob
         anchor.Position = stream.origin + Vector3.new(phase * 500, math.sin(phase * math.pi * 2) * 2, phase * 17)
         -- the line itself ripples (S-curve that travels), the streak path stays steady
-        stream.beam.CurveSize0 = math.sin(t * 3.2) * 7
-        stream.beam.CurveSize1 = math.sin(t * 3.2 + 2.2) * 7
+        stream.beam.CurveSize0 = math.sin(rippleTime * 3.2) * 7
+        stream.beam.CurveSize1 = math.sin(rippleTime * 3.2 + 2.2) * 7
         stream.beam.TextureSpeed = 2.5
         local fade = math.clamp(math.min(phase / 0.12, (1 - phase) / 0.16), 0, 1)
         stream.beam.Transparency = NumberSequence.new({

@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 106 |
+| Pending | 90 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 78 |
+| Refactored | 94 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -146,22 +146,22 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Plot/ConstructionClientStart.client.luau` | LocalScript | 2 | 2 | Pending | — | — |
-| `client/Plot/PortalClient.client.luau` | LocalScript | 350 | 628 | Pending | — | — |
-| `client/Temple/GoldTempleEffects.client.luau` | LocalScript | 98 | 215 | Pending | — | — |
-| `client/Temple/TempleWindAnimator.client.luau` | LocalScript | 48 | 63 | Pending | — | — |
-| `client/Temple/UpgradeCameraShake.client.luau` | LocalScript | 98 | 220 | Pending | — | — |
-| `server/Plots/HomeAndBubbles.server.luau` | Script | 66 | 174 | Pending | — | — |
-| `server/Plots/PlotChambers.server.luau` | Script | 122 | 226 | Pending | — | — |
-| `server/Plots/PlotManager.server.luau` | Script | 171 | 300 | Pending | — | — |
-| `server/Plots/PlotReadyFlag.server.luau` | Script | 7 | 17 | Pending | — | — |
-| `server/Temple/Construction/ConstructionService.luau` | ModuleScript | 347 | 481 | Pending | — | — |
-| `server/Temple/TempleOccupancy.luau` | ModuleScript | 42 | 73 | Pending | — | — |
-| `server/Temple/TempleSlotUnlocks.luau` | ModuleScript | 111 | 217 | Pending | — | — |
-| `server/World/Portal/PortalBuilder.luau` | ModuleScript | 107 | 197 | Pending | — | — |
-| `server/World/Portal/PortalServer.server.luau` | Script | 47 | 65 | Pending | — | — |
-| `server/World/Portal/PortalService.luau` | ModuleScript | 71 | 105 | Pending | — | — |
-| `shared/Temple/Construction/ConstructionClient.luau` | ModuleScript | 404 | 602 | Pending | — | — |
+| `client/Plot/ConstructionClientStart.client.luau` | LocalScript | 2 | 4 | Refactored | SAME | Header extended (what it boots, tag, server counterpart) |
+| `client/Plot/PortalClient.client.luau` | LocalScript | 350 | 655 | Refactored | SAME | Renames (portalState, create, roundCorners, makeSound, playSound, addPortal, emerge, elapsed...), comments on emerge phases/startEmerge |
+| `client/Temple/GoldTempleEffects.client.luau` | LocalScript | 98 | 228 | Refactored | SAME | Header (effect list, distance, timings), renames (activeTemples, addGoldEffects, queueGoldEffects, emitter, attachment, ribbon), comments |
+| `client/Temple/TempleWindAnimator.client.luau` | LocalScript | 48 | 68 | Refactored | SAME | Header extended (TempleWindStreams anchor attributes, 30 Hz), windFolder, rippleTime, comments |
+| `client/Temple/UpgradeCameraShake.client.luau` | LocalScript | 98 | 231 | Refactored | SAME | Header (disabled legacy effect, UpgradeAssembly tag, timing), CollectionService, renames, _radius, trauma/schedule comments |
+| `server/Plots/HomeAndBubbles.server.luau` | Script | 66 | 181 | Refactored | CHANGED | Header with GoHome protocol, renames, refresh now calls clearBubble (identical body), comments incl. known GoHome cooldown issue and double MaxDistance |
+| `server/Plots/PlotChambers.server.luau` | Script | 122 | 257 | Refactored | SAME | Header (remotes, attributes, SavedChambers), constants MAX_CHAMBERS/MAX_CHAMBER_LEVEL/UPGRADE_MAX_DISTANCE/ADMIN_USER_ID, descriptive renames, comments on generation/busy, _target |
+| `server/Plots/PlotManager.server.luau` | Script | 171 | 388 | Refactored | SAME | Header (plot lifecycle + dependent systems/attribute contracts), sections, UPPER_SNAKE constants, renames (assignedPlots, waitingQueue, upgradeCooldowns, swapInstantly...), _player/_level |
+| `server/Plots/PlotReadyFlag.server.luau` | Script | 7 | 25 | Refactored | SAME | Header (polling window, attribute unused per audit), renames markIfPlotAssigned/player/plot |
+| `server/Temple/Construction/ConstructionService.luau` | ModuleScript | 347 | 492 | Refactored | SAME | Renames throughout (options, indexParts, roundTo, bucketKey, timeline, partKey, constructionId...), ConstructionService table name, bucket-key comment |
+| `server/Temple/TempleOccupancy.luau` | ModuleScript | 42 | 88 | Refactored | SAME | Header (API, cached Claim* attributes), module renamed TempleOccupancy, setClaimVisible/claimed/item/child, comments |
+| `server/Temple/TempleSlotUnlocks.luau` | ModuleScript | 111 | 247 | Refactored | SAME | Header with full API + slot attributes, constants SLOTS_PER_LEVEL/MAX_TEMPLE_LEVEL/FALLBACK_PRICE/MAX_PURCHASE_DISTANCE, renames, InventoryFormat |
+| `server/World/Portal/PortalBuilder.luau` | ModuleScript | 107 | 258 | Refactored | SAME | Synced with refactored shared copy; now identical except header line 1 and the near-copy cross-reference on line 7 (points to the shared file) |
+| `server/World/Portal/PortalServer.server.luau` | Script | 47 | 69 | Refactored | SAME | Config/PortalService names, runDemo/buildGate, descriptive locals, comments |
+| `server/World/Portal/PortalService.luau` | ModuleScript | 71 | 110 | Refactored | SAME | Config/PortalService names, emergeJob/targetValue/gatePivot, header lists IsBusy and the client cue attributes |
+| `shared/Temple/Construction/ConstructionClient.luau` | ModuleScript | 404 | 619 | Refactored | SAME | Renames (elapsed, timeline, kindConfig, batchInfo, partState, playSound...), job structure comment, helper comments, _ReplicatedStorage, ConstructionClient table |
 
 ## Batch 11 — Economy, shops and game menu server
 
@@ -1066,147 +1066,147 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Plot/ConstructionClientStart.client.luau`
 
-- **Type:** LocalScript · **Batch:** 10 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 10 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.ConstructionClientStart  (LocalScript)
 - **Dependencies:** ConstructionClient
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** Minimal header
 
 ### `client/Plot/PortalClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 10 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 10 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** StarterPlayer.StarterPlayerScripts.PortalClient  (LocalScript)
 - **Dependencies:** PortalConfig
 - **Public functions:** —
 - **Events:** Connect×4, RunService×1
-- **Readability problems:** 26 dense one-line statements; 1 lines >160 chars; 11 one-letter locals
+- **Readability problems:** RS/C aliases; pervasive one-letter names (st, e, s, t, u, n, o, R, L, w, h, sc, rm, cg, im, f, k); generic helper names new/round/sound/play/add
 
 ### `client/Temple/GoldTempleEffects.client.luau`
 
-- **Type:** LocalScript · **Batch:** 10 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 10 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×2, RunService×1
-- **Readability problems:** 8 dense one-line statements; 5 lines >160 chars; 2 one-letter locals
+- **Readability problems:** No header; names active/pending/add/queue/e/a/cf/x/z/r/v
 
 ### `client/Temple/TempleWindAnimator.client.luau`
 
-- **Type:** LocalScript · **Batch:** 10 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 10 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Airborne visual wind across the central temple courtyard. Authored beams provide an edit-mode preview; animation runs locally.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 4 dense one-line statements; 1 one-letter locals
+- **Readability problems:** Header lacked runtime location and authored attribute contract; t/folder names
 
 ### `client/Temple/UpgradeCameraShake.client.luau`
 
-- **Type:** LocalScript · **Batch:** 10 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 10 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×1, RunService×2
-- **Readability problems:** 18 dense one-line statements; 7 lines >160 chars; 2 one-letter locals
+- **Readability problems:** No header (and Disabled in Rojo); Collection alias; names a/dir/eq/fn/at/m/final/finish/owner; unused radius
 
 ### `server/Plots/HomeAndBubbles.server.luau`
 
-- **Type:** Script · **Batch:** 10 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 10 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** HomeAndBubbles: Home button teleport (RemoteEvent RS.GoHome) + owner avatar bubble above every claimed temple.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×5, OnServerEvent×1, PlayerRemoving×1
-- **Readability problems:** 12 dense one-line statements; 8 lines >160 chars
+- **Readability problems:** RS alias; one-letter names (p, att, bb, st, ns, img, ref); local `spawn` shadowed global; refresh() duplicated clearBubble() body
 
 ### `server/Plots/PlotChambers.server.luau`
 
-- **Type:** Script · **Batch:** 10 · **Priority:** Medium · **Status:** Pending
+- **Type:** Script · **Batch:** 10 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** ConstructionService, UpgradePrices
 - **Public functions:** —
 - **Events:** Connect×4
-- **Readability problems:** 23 dense one-line statements; 3 lines >160 chars; 1 one-letter locals
+- **Readability problems:** No header; vague names (sign, owned, anchor, make, place, wire, add, ownership, token, lv); magic numbers 3/80/admin id; unused param
 
 ### `server/Plots/PlotManager.server.luau`
 
-- **Type:** Script · **Batch:** 10 · **Priority:** Medium · **Status:** Pending
+- **Type:** Script · **Batch:** 10 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** ConstructionService, TempleAppearanceThemes, TempleOccupancy, TempleSlotUnlocks, UpgradePrices
 - **Public functions:** —
 - **Events:** Connect×7, PlayerAdded×1, PlayerRemoving×1
-- **Readability problems:** 28 dense one-line statements; 1 lines >160 chars; 4 one-letter locals
+- **Readability problems:** No header; cryptic locals (t, c, r, old, hum, snap, i, p); magic numbers (admin id, cooldown, distance, footprint); no sections in a 300-line lifecycle script
 
 ### `server/Plots/PlotReadyFlag.server.luau`
 
-- **Type:** Script · **Batch:** 10 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 10 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×1, PlayerAdded×1
-- **Readability problems:** 2 dense one-line statements
+- **Readability problems:** No header; names p/pl/check
 
 ### `server/Temple/Construction/ConstructionService.luau`
 
-- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ServerScriptService.Construction.ConstructionService  (ModuleScript, server)
 - **Dependencies:** ConstructionConfig, ConstructionService
 - **Public functions:** Service.Cancel, Service.IsBusy, Service.Upgrade
 - **Events:** Connect×1, RunService×1
-- **Readability problems:** 35 dense one-line statements; 1 lines >160 chars; 2 one-letter locals
+- **Readability problems:** Good header but many one-letter locals (o, d, n, tl, op, cf, sa/sb, ba/bb, k, g, p, m); module table named Service
 
 ### `server/Temple/TempleOccupancy.luau`
 
-- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** M.Apply, M.ApplyPaths
 - **Events:** —
-- **Readability problems:** 8 dense one-line statements; 3 lines >160 chars; 1 one-letter locals
+- **Readability problems:** No header; M / visible / v / on names
 
 ### `server/Temple/TempleSlotUnlocks.luau`
 
-- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** InventoryFormat
 - **Public functions:** Slots.CanUpgrade, Slots.Capacity, Slots.Format, Slots.Purchase, Slots.Refresh, Slots.Reset, Slots.Setup
 - **Events:** Connect×2
-- **Readability problems:** 8 dense one-line statements; 5 lines >160 chars; 1 one-letter locals
+- **Readability problems:** No header; magic numbers (12, 3, 250000, 12 studs); short names (cap, st, tst, pc, pg, ps, amt, apad, gui, char, hum); Format alias
 
 ### `server/World/Portal/PortalBuilder.luau`
 
-- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ServerScriptService.Portal.PortalBuilder  (ModuleScript, server)
 - **Dependencies:** PortalConfig
 - **Public functions:** Builder.Build
 - **Events:** —
-- **Readability problems:** 6 dense one-line statements; 9 one-letter locals
+- **Readability problems:** Unrefactored near-copy of the shared PortalBuilder (C/P/part/p names)
 
 ### `server/World/Portal/PortalServer.server.luau`
 
-- **Type:** Script · **Batch:** 10 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 10 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ServerScriptService.Portal.PortalServer  (Script)
 - **Dependencies:** PortalConfig, PortalService
 - **Public functions:** —
 - **Events:** Connect×1
-- **Readability problems:** 5 dense one-line statements; 3 one-letter locals
+- **Readability problems:** C / Portal aliases; names i, list, src, ch, c, n, s, base
 
 ### `server/World/Portal/PortalService.luau`
 
-- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ServerScriptService.Portal.PortalService  (ModuleScript, server)
 - **Dependencies:** PortalBuilder, PortalConfig
 - **Public functions:** S.Build, S.Cancel, S.Emerge, S.IsBusy
 - **Events:** —
-- **Readability problems:** 10 dense one-line statements; 4 one-letter locals
+- **Readability problems:** C/S aliases; b/v/ref/d names; IsBusy missing from header
 
 ### `shared/Temple/Construction/ConstructionClient.luau`
 
-- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 10 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.Construction.ConstructionClient  (ModuleScript, client)
 - **Dependencies:** ConstructionClient, ConstructionConfig
 - **Public functions:** Client.Start, Shake.add, Shake.step
 - **Events:** Connect×5, RunService×3
-- **Readability problems:** 46 dense one-line statements; 2 lines >160 chars; 11 one-letter locals
+- **Readability problems:** Dense one-letter locals in step/animation code (t, tl, k, e, a, b, s, p, st, hl, sp, str, c); unused ReplicatedStorage; Client table name
 
 ### `client/Plot/MoneyStandClient.client.luau`
 

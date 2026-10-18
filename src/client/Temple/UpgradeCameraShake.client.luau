@@ -1,10 +1,17 @@
-local Collection = game:GetService("CollectionService")
+--[[ StarterPlayerScripts.UpgradeCameraShake  (LocalScript, DISABLED in default.project.json)
+Legacy ground-assembly effect for models tagged "UpgradeAssembly" by ServerScriptService.UpgradeEffects:
+a ring of dust/debris emitters around the footprint, thump sounds, earth chips on the final pulse and, for
+the purchaser (BuildOwner), a trauma-based camera shake. Timing is anchored to the model's BuildStart
+(server time); effects are skipped when the build is older than 3.4 s or the camera is > 200 studs away.
+Superseded by ConstructionClient (which has its own shake); kept for reference.
+]]
+local CollectionService = game:GetService("CollectionService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
-local player = game.Players.LocalPlayer
-local active = {}
-local trauma = 0
+local localPlayer = game.Players.LocalPlayer
+local activeModels = {}
+local trauma = 0 -- 0..0.65; shake strength is trauma^2, decays 0.9 per second
 local lastOffset = CFrame.identity
 -- Undo only our previous offset before Roblox updates its camera.
 RunService:BindToRenderStep("ConstructionShakeReset", Enum.RenderPriority.Camera.Value - 1, function()
@@ -26,12 +33,12 @@ RunService:BindToRenderStep("LegacyUpgradeCameraShake", Enum.RenderPriority.Came
         * CFrame.Angles(0, 0, math.noise(t, t) * math.rad(0.4) * amount)
     camera.CFrame = camera.CFrame * lastOffset
 end)
-local function play(model)
-    if active[model] or not model:IsDescendantOf(workspace) then
+local function playAssemblyEffects(model)
+    if activeModels[model] or not model:IsDescendantOf(workspace) then
         return
     end
-    local start = model:GetAttribute("BuildStart")
-    if not start or workspace:GetServerTimeNow() > start + 3.4 then
+    local buildStart = model:GetAttribute("BuildStart")
+    if not buildStart or workspace:GetServerTimeNow() > buildStart + 3.4 then
         return
     end
     local pivot = model:GetPivot()
@@ -40,14 +47,14 @@ local function play(model)
     local center = (model:GetAttribute("BuildCenter") or Vector3.new(pivot.X, ground, pivot.Z))
         + Vector3.new(0, 0.06, 0)
     local footprint = model:GetAttribute("BuildFootprint") or Vector3.new(16, 0, 16)
-    local rng = Random.new(math.floor(start * 1000) % 100000)
+    local rng = Random.new(math.floor(buildStart * 1000) % 100000)
     local camera = workspace.CurrentCamera
     if not camera or (camera.CFrame.Position - center).Magnitude > 200 then
         return
     end
-    active[model] = true
-    local owner = model:GetAttribute("BuildOwner") == player.UserId
-    local radius = math.clamp(model:GetAttribute("BuildRadius") or 8, 4, 34)
+    activeModels[model] = true
+    local isOwner = model:GetAttribute("BuildOwner") == localPlayer.UserId
+    local _radius = math.clamp(model:GetAttribute("BuildRadius") or 8, 4, 34)
     local host = Instance.new("Part")
     host.Name = "ConstructionGroundFX"
     host.Anchored = true
@@ -62,13 +69,14 @@ local function play(model)
     local emitters = {}
     for i = 1, 20 do
         local angle = i / 20 * math.pi * 2
-        local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
-        local edge = Vector3.new(dir.X * (footprint.X * 0.52 + 1), 0, dir.Z * (footprint.Z * 0.52 + 1))
-        local factor = 1 / math.max(math.abs(dir.X), math.abs(dir.Z))
+        local outward = Vector3.new(math.cos(angle), 0, math.sin(angle))
+        local edge = Vector3.new(outward.X * (footprint.X * 0.52 + 1), 0, outward.Z * (footprint.Z * 0.52 + 1))
+        -- push the point out to the footprint's bounding square
+        local factor = 1 / math.max(math.abs(outward.X), math.abs(outward.Z))
         edge *= factor
-        local a = Instance.new("Attachment")
-        a.CFrame = CFrame.lookAt(edge, edge + dir + Vector3.new(0, 0.12, 0))
-        a.Parent = host
+        local attachment = Instance.new("Attachment")
+        attachment.CFrame = CFrame.lookAt(edge, edge + outward + Vector3.new(0, 0.12, 0))
+        attachment.Parent = host
         local dust = Instance.new("ParticleEmitter")
         dust.Name = "GroundDust"
         dust.Texture = "rbxasset://textures/particles/smoke_main.dds"
@@ -92,7 +100,7 @@ local function play(model)
             NumberSequenceKeypoint.new(0.2, 0.4),
             NumberSequenceKeypoint.new(1, 1),
         })
-        dust.Parent = a
+        dust.Parent = attachment
         local grit = Instance.new("ParticleEmitter")
         grit.Name = "TinyDebris"
         grit.Texture = "rbxasset://textures/particles/sparkles_main.dds"
@@ -104,36 +112,36 @@ local function play(model)
         grit.Acceleration = Vector3.new(0, -18, 0)
         grit.Lifetime = NumberRange.new(0.25, 0.5)
         grit.SpreadAngle = Vector2.new(55, 55)
-        grit.Parent = a
+        grit.Parent = attachment
         table.insert(emitters, { dust, grit })
     end
-    local function pulse(strength, final)
+    local function pulse(strength, isFinal)
         if not host.Parent then
             return
         end
         for _, pair in emitters do
-            pair[1]:Emit(final and 5 or 2)
-            pair[2]:Emit(final and 2 or 1)
+            pair[1]:Emit(isFinal and 5 or 2)
+            pair[2]:Emit(isFinal and 2 or 1)
         end
-        if owner then
+        if isOwner then
             trauma = math.min(0.65, trauma + strength)
         end
         local sound = Instance.new("Sound")
         sound.SoundId = "rbxasset://sounds/action_footsteps_plastic.mp3"
-        sound.Volume = final and 0.26 or 0.12
-        sound.PlaybackSpeed = final and 0.42 or 0.58
+        sound.Volume = isFinal and 0.26 or 0.12
+        sound.PlaybackSpeed = isFinal and 0.42 or 0.58
         sound.RollOffMinDistance = 8
         sound.RollOffMaxDistance = 100
         sound.Parent = host
-        local eq = Instance.new("EqualizerSoundEffect")
-        eq.LowGain = 5
-        eq.MidGain = -5
-        eq.HighGain = -18
-        eq.Parent = sound
+        local equalizer = Instance.new("EqualizerSoundEffect")
+        equalizer.LowGain = 5
+        equalizer.MidGain = -5
+        equalizer.HighGain = -18
+        equalizer.Parent = sound
         sound:Play()
         Debris:AddItem(sound, 1.5)
         -- A few solid earth chips tumble out with the final pressure release.
-        if final then
+        if isFinal then
             for i = 1, 14 do
                 local attachment = emitters[(i * 3) % #emitters + 1][1].Parent
                 local origin = attachment.WorldPosition
@@ -150,10 +158,10 @@ local function play(model)
                 chip.CastShadow = false
                 chip.CFrame = CFrame.new(origin)
                 chip.Parent = host
-                local finish = origin + direction * rng:NextNumber(1, 2.8)
+                local landing = origin + direction * rng:NextNumber(1, 2.8)
                 TweenService
                     :Create(chip, TweenInfo.new(0.17, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                        CFrame = CFrame.new((origin + finish) * 0.5 + Vector3.new(0, rng:NextNumber(0.35, 0.8), 0))
+                        CFrame = CFrame.new((origin + landing) * 0.5 + Vector3.new(0, rng:NextNumber(0.35, 0.8), 0))
                             * CFrame.Angles(0.5, 0, 0.7),
                     })
                     :Play()
@@ -161,20 +169,23 @@ local function play(model)
                     if not chip.Parent then
                         return
                     end
-                    TweenService:Create(
-                        chip,
-                        TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                        { CFrame = CFrame.new(finish) * CFrame.Angles(1, 0, 1.4), Transparency = 1 }
-                    ):Play()
+                    TweenService
+                        :Create(
+                            chip,
+                            TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                            { CFrame = CFrame.new(landing) * CFrame.Angles(1, 0, 1.4), Transparency = 1 }
+                        )
+                        :Play()
                 end)
                 Debris:AddItem(chip, 0.5)
             end
         end
     end
-    local function schedule(at, fn)
-        task.delay(math.max(0, start + at - workspace:GetServerTimeNow()), function()
+    -- Runs callback at BuildStart + delaySeconds (server time), if the model and effect host still exist.
+    local function schedule(delaySeconds, callback)
+        task.delay(math.max(0, buildStart + delaySeconds - workspace:GetServerTimeNow()), function()
             if model.Parent and host.Parent then
-                fn()
+                callback()
             end
         end)
     end
@@ -206,15 +217,15 @@ local function play(model)
         pulse(0.38, true)
     end)
     task.delay(5.5, function()
-        active[model] = nil
+        activeModels[model] = nil
         if host.Parent then
             host:Destroy()
         end
     end)
 end
-Collection:GetInstanceAddedSignal("UpgradeAssembly"):Connect(function(m)
-    task.spawn(play, m)
+CollectionService:GetInstanceAddedSignal("UpgradeAssembly"):Connect(function(model)
+    task.spawn(playAssemblyEffects, model)
 end)
-for _, m in Collection:GetTagged("UpgradeAssembly") do
-    task.spawn(play, m)
+for _, model in CollectionService:GetTagged("UpgradeAssembly") do
+    task.spawn(playAssemblyEffects, model)
 end

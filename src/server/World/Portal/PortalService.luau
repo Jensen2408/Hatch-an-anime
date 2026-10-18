@@ -6,49 +6,54 @@
       opts.target     feet CFrame where it stops                   default: in front of the gate, facing out
       opts.onComplete function(character, cancelled)
   PortalService.Cancel(portal)
+  PortalService.IsBusy(portal) -> bool
 
 The server puts the character at its final spot straight away (so it's always correct for late joiners).
 Each client then plays the walk-out locally from the attributes below and lands on the same spot.
 Character = the R6 rigs from RigEggCharacter (Torso/Head/Left Arm/...); animated by CharacterAnimator.
+Client cue on the portal: EmergeTarget (ObjectValue -> character), EmergeRarity, EmergeStart (server time),
+EmergeToken (incremented per emerge; read by PortalClient).
 ]]
 local CollectionService = game:GetService("CollectionService")
-local C = require(game:GetService("ReplicatedStorage"):WaitForChild("Portal"):WaitForChild("PortalConfig"))
+local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("Portal"):WaitForChild("PortalConfig"))
 local Builder = require(script.Parent:WaitForChild("PortalBuilder"))
 
-local S = {}
-local busy = {} -- portal -> { thread, character }
+local PortalService = {}
+local busy = {} -- portal -> { thread, character, onComplete }
 
-function S.Build(base, parent)
+function PortalService.Build(base, parent)
     return Builder.Build(base, parent)
 end
 
+-- Bottom-centre of the model's bounding box, keeping its rotation.
 local function feetOrigin(model)
-    local cf, size = model:GetBoundingBox()
-    return CFrame.new(cf.Position - Vector3.new(0, size.Y / 2, 0)) * cf.Rotation
+    local boxCFrame, size = model:GetBoundingBox()
+    return CFrame.new(boxCFrame.Position - Vector3.new(0, size.Y / 2, 0)) * boxCFrame.Rotation
 end
 
+-- Ends an emerge: clears the client cue (EmergeToken / EmergeTarget) and runs onComplete once.
 local function finish(portal, cancelled)
-    local b = busy[portal]
-    if not b then
+    local emergeJob = busy[portal]
+    if not emergeJob then
         return
     end
     busy[portal] = nil
-    if cancelled and b.thread then
-        pcall(task.cancel, b.thread)
+    if cancelled and emergeJob.thread then
+        pcall(task.cancel, emergeJob.thread)
     end
     if portal.Parent then
         portal:SetAttribute("EmergeToken", nil)
     end
-    local v = portal:FindFirstChild("EmergeTarget")
-    if v then
-        v.Value = nil
+    local targetValue = portal:FindFirstChild("EmergeTarget")
+    if targetValue then
+        targetValue.Value = nil
     end
-    if b.onComplete then
-        task.spawn(b.onComplete, b.character, cancelled)
+    if emergeJob.onComplete then
+        task.spawn(emergeJob.onComplete, emergeJob.character, cancelled)
     end
 end
 
-function S.Emerge(portal, character, opts)
+function PortalService.Emerge(portal, character, opts)
     opts = opts or {}
     if busy[portal] then
         return false, "portal busy"
@@ -57,12 +62,12 @@ function S.Emerge(portal, character, opts)
         return false, "bad portal or character"
     end
 
-    local base = portal:GetPivot()
-    local target = opts.target or base * CFrame.new(0, C.GroundY, -C.WalkOut)
-    for _, d in character:GetDescendants() do
-        if d:IsA("BasePart") then
-            d.Anchored = true
-            d.CanCollide = false
+    local gatePivot = portal:GetPivot()
+    local target = opts.target or gatePivot * CFrame.new(0, Config.GroundY, -Config.WalkOut)
+    for _, descendant in character:GetDescendants() do
+        if descendant:IsA("BasePart") then
+            descendant.Anchored = true
+            descendant.CanCollide = false
         end
     end
     -- CharacterAnimator moves limbs relative to the model pivot; a limb PrimaryPart would drag the pivot with it
@@ -72,34 +77,34 @@ function S.Emerge(portal, character, opts)
     end
     character:PivotTo(target * feetOrigin(character):ToObjectSpace(character:GetPivot()))
     if not character:GetAttribute("Animation") then
-        character:SetAttribute("Animation", C.EndAnimation)
+        character:SetAttribute("Animation", Config.EndAnimation)
     end
     CollectionService:AddTag(character, "AnimatedCharacter")
 
-    local ref = portal:FindFirstChild("EmergeTarget") or Instance.new("ObjectValue")
-    ref.Name = "EmergeTarget"
-    ref.Parent = portal
+    local targetValue = portal:FindFirstChild("EmergeTarget") or Instance.new("ObjectValue")
+    targetValue.Name = "EmergeTarget"
+    targetValue.Parent = portal
     -- set the cue first, then parent the character in the same frame (clients hide it immediately)
-    ref.Value = character
+    targetValue.Value = character
     portal:SetAttribute("EmergeRarity", opts.rarity or "")
     portal:SetAttribute("EmergeStart", workspace:GetServerTimeNow())
     portal:SetAttribute("EmergeToken", (portal:GetAttribute("EmergeToken") or 0) % 1e6 + 1)
     character.Parent = opts.parent or workspace
 
-    local b = { character = character, onComplete = opts.onComplete }
-    busy[portal] = b
-    b.thread = task.delay(C.Total(), function()
-        b.thread = false
+    local emergeJob = { character = character, onComplete = opts.onComplete }
+    busy[portal] = emergeJob
+    emergeJob.thread = task.delay(Config.Total(), function()
+        emergeJob.thread = false
         finish(portal, false)
     end)
     return true
 end
 
-function S.Cancel(portal)
+function PortalService.Cancel(portal)
     finish(portal, true)
 end
-function S.IsBusy(portal)
+function PortalService.IsBusy(portal)
     return busy[portal] ~= nil
 end
 
-return S
+return PortalService

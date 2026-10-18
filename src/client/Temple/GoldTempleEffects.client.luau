@@ -1,7 +1,15 @@
+--[[ StarterPlayerScripts.GoldTempleEffects  (LocalScript)
+Local-only shimmer for temples whose model has TempleAppearance == "Gold": gold motes at the corners and top,
+two pulsing point lights, a faint Highlight sheen, four rising Beam ribbons and a ground pulse ring every 8 s.
+New gold temples get the effect 4.5 s after they appear (after the rise animation) with an initial burst.
+Effects switch off beyond 140 studs from the camera and are removed when the model leaves workspace or
+loses the Gold appearance. Updated at ~10 Hz.
+]]
 local RunService = game:GetService("RunService")
-local active, pending = {}, {}
+local activeTemples, pendingTemples = {}, {}
 local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
+-- Expanding neon ring on the ground plus a small burst from every emitter.
 local function pulse(item)
     local ring = Instance.new("Part")
     ring.Name = "GoldPowerPulse"
@@ -23,15 +31,19 @@ local function pulse(item)
         { Size = Vector3.new(0.06, item.radius * 2.3, item.radius * 2.3), Transparency = 1 }
     ):Play()
     Debris:AddItem(ring, 1.5)
-    for _, e in ipairs(item.emitters) do
-        e:Emit(3)
+    for _, emitter in ipairs(item.emitters) do
+        emitter:Emit(3)
     end
 end
-local function add(model, burst)
-    if not model:IsDescendantOf(workspace) or model:GetAttribute("TempleAppearance") ~= "Gold" or active[model] then
+local function addGoldEffects(model, burst)
+    if
+        not model:IsDescendantOf(workspace)
+        or model:GetAttribute("TempleAppearance") ~= "Gold"
+        or activeTemples[model]
+    then
         return
     end
-    local cf, size = model:GetBoundingBox()
+    local boxCFrame, size = model:GetBoundingBox()
     local root = Instance.new("Part")
     root.Name = "LocalGoldShimmer"
     root.Size = Vector3.one
@@ -41,47 +53,48 @@ local function add(model, burst)
     root.CanTouch = false
     root.CanQuery = false
     root.CastShadow = false
-    root.CFrame = cf
+    root.CFrame = boxCFrame
     root.Parent = workspace
     local emitters, lights = {}, {}
+    -- emitters 1-4 sit near the four footprint corners, 5 above the roof
     for i = 1, 5 do
-        local a = Instance.new("Attachment")
-        local x, z = 0, 0
+        local attachment = Instance.new("Attachment")
+        local offsetX, offsetZ = 0, 0
         if i <= 4 then
-            x = (i <= 2 and -1 or 1) * size.X * 0.38
-            z = (i % 2 == 0 and -1 or 1) * size.Z * 0.38
+            offsetX = (i <= 2 and -1 or 1) * size.X * 0.38
+            offsetZ = (i % 2 == 0 and -1 or 1) * size.Z * 0.38
         end
-        a.Position = Vector3.new(x, i == 5 and size.Y * 0.44 or size.Y * 0.05, z)
-        a.Parent = root
-        local e = Instance.new("ParticleEmitter")
-        e.Name = "GoldMotes"
-        e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-        e.Color = ColorSequence.new(Color3.fromRGB(255, 242, 178), Color3.fromRGB(255, 175, 36))
-        e.LightEmission = 1
-        e.LightInfluence = 0.1
-        e.Rate = i == 5 and 1.5 or 1
-        e.Lifetime = NumberRange.new(1.8, 3)
-        e.Speed = NumberRange.new(0.6, 1.8)
-        e.Acceleration = Vector3.new(0, 0.3, 0)
-        e.SpreadAngle = Vector2.new(35, 35)
-        e.Rotation = NumberRange.new(0, 180)
-        e.RotSpeed = NumberRange.new(-30, 30)
-        e.Size = NumberSequence.new({
+        attachment.Position = Vector3.new(offsetX, i == 5 and size.Y * 0.44 or size.Y * 0.05, offsetZ)
+        attachment.Parent = root
+        local emitter = Instance.new("ParticleEmitter")
+        emitter.Name = "GoldMotes"
+        emitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+        emitter.Color = ColorSequence.new(Color3.fromRGB(255, 242, 178), Color3.fromRGB(255, 175, 36))
+        emitter.LightEmission = 1
+        emitter.LightInfluence = 0.1
+        emitter.Rate = i == 5 and 1.5 or 1
+        emitter.Lifetime = NumberRange.new(1.8, 3)
+        emitter.Speed = NumberRange.new(0.6, 1.8)
+        emitter.Acceleration = Vector3.new(0, 0.3, 0)
+        emitter.SpreadAngle = Vector2.new(35, 35)
+        emitter.Rotation = NumberRange.new(0, 180)
+        emitter.RotSpeed = NumberRange.new(-30, 30)
+        emitter.Size = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 0),
             NumberSequenceKeypoint.new(0.25, 0.28),
             NumberSequenceKeypoint.new(0.6, 0.12),
             NumberSequenceKeypoint.new(1, 0),
         })
-        e.Transparency = NumberSequence.new({
+        emitter.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
             NumberSequenceKeypoint.new(0.2, 0.1),
             NumberSequenceKeypoint.new(0.7, 0.4),
             NumberSequenceKeypoint.new(1, 1),
         })
-        e.Parent = a
-        table.insert(emitters, e)
+        emitter.Parent = attachment
+        table.insert(emitters, emitter)
         if burst then
-            e:Emit(i == 5 and 14 or 5)
+            emitter:Emit(i == 5 and 14 or 5)
         end
         if i == 1 or i == 4 then
             local light = Instance.new("PointLight")
@@ -89,7 +102,7 @@ local function add(model, burst)
             light.Brightness = 0.45
             light.Range = 14
             light.Shadows = false
-            light.Parent = a
+            light.Parent = attachment
             table.insert(lights, light)
         end
     end
@@ -142,31 +155,31 @@ local function add(model, burst)
         height = size.Y,
         nextPulse = os.clock() + 2,
     }
-    active[model] = item
+    activeTemples[model] = item
     if burst then
         pulse(item)
     end
 end
-local function queue(model)
+local function queueGoldEffects(model)
     if
         not model:IsA("Model")
         or model:GetAttribute("TempleAppearance") ~= "Gold"
-        or pending[model]
-        or active[model]
+        or pendingTemples[model]
+        or activeTemples[model]
     then
         return
     end
-    pending[model] = true
+    pendingTemples[model] = true
     -- Wait until the ground-rise assembly has reached its final positions.
     task.delay(4.5, function()
-        pending[model] = nil
-        add(model, true)
+        pendingTemples[model] = nil
+        addGoldEffects(model, true)
     end)
 end
-workspace.DescendantAdded:Connect(queue)
-for _, v in ipairs(workspace:GetDescendants()) do
-    if v:IsA("Model") then
-        add(v, false)
+workspace.DescendantAdded:Connect(queueGoldEffects)
+for _, descendant in ipairs(workspace:GetDescendants()) do
+    if descendant:IsA("Model") then
+        addGoldEffects(descendant, false)
     end
 end
 local elapsed = 0
@@ -178,26 +191,26 @@ RunService.Heartbeat:Connect(function(dt)
     elapsed = 0
     local camera = workspace.CurrentCamera
     local now = os.clock()
-    for model, item in pairs(active) do
+    for model, item in pairs(activeTemples) do
         if not model:IsDescendantOf(workspace) or model:GetAttribute("TempleAppearance") ~= "Gold" then
             item.root:Destroy()
-            active[model] = nil
+            activeTemples[model] = nil
         else
             local near = camera and (camera.CFrame.Position - item.root.Position).Magnitude < 140 or false
-            for _, e in ipairs(item.emitters) do
-                e.Enabled = near
+            for _, emitter in ipairs(item.emitters) do
+                emitter.Enabled = near
             end
             for _, light in ipairs(item.lights) do
                 light.Enabled = near
                 light.Brightness = 0.35 + 0.12 * (0.5 + 0.5 * math.sin(now * 1.5 + item.phase))
             end
-            for _, r in ipairs(item.ribbons) do
-                r.beam.Enabled = near
+            for _, ribbon in ipairs(item.ribbons) do
+                ribbon.beam.Enabled = near
                 if near then
-                    local angle = now * 0.22 + r.angle
-                    r.low.Position =
+                    local angle = now * 0.22 + ribbon.angle
+                    ribbon.low.Position =
                         Vector3.new(math.cos(angle) * item.radius, -item.height * 0.48, math.sin(angle) * item.radius)
-                    r.high.Position = Vector3.new(
+                    ribbon.high.Position = Vector3.new(
                         math.cos(angle + 0.55) * item.radius * 0.65,
                         item.height * 0.38,
                         math.sin(angle + 0.55) * item.radius * 0.65
