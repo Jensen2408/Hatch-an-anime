@@ -1,10 +1,29 @@
+--[[ ServerScriptService.RiverEggCarryService  (ModuleScript, SERVER)
+"Carry it home" phase after a river egg is bought (PirateEggFreeConveyor) or a dropped egg is picked up
+(TwoHandItemCarryService.DropTool). The egg Tool is already in the player's Backpack; while carrying it is
+disabled (Enabled = false, attribute ReturningToBase = true) and held with the two-hand carry visual.
+
+Public API
+  Service.Begin(player, tool) -> boolean    start a carry (cancels any previous one)
+  Service.Drop(player)        -> boolean    end the carry as "Dropped" and drop the Tool on the ground
+
+Ends (server decides, checked every Heartbeat):
+  "Secured"   root inside the player's own plot box (relative to TempleAnchor), after 0.5 s -> Tool re-enabled + equipped
+  "Cancelled" character changed / died, Tool gone, plot lost, or a new Begin
+  "Dropped"   via Service.Drop
+Replication: player attributes RiverEggCarryBase / RiverEggCarryId / RiverEggCarryType, and
+ReplicatedStorage.RiverEggCarryState (place-owned RemoteEvent, server -> client):
+  FireClient(player, "Stolen", { basePosition, id, eggType, name, rarity, price })  on Begin
+  FireClient(player, state, { id })                                                on every end
+Note: TwoHandItemCarryService is required lazily (it requires this module back from DropTool).
+]]
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Service = {}
-local active = {}
-local event = RS:WaitForChild("RiverEggCarryState")
-local function home(player)
+local activeCarries = {} -- [Player] = { tool, enabled, plot, char, started, id, visual? }
+local carryStateEvent = ReplicatedStorage:WaitForChild("RiverEggCarryState")
+local function homePlot(player)
     for _, plot in workspace.Plots:GetChildren() do
         if plot:GetAttribute("OwnerUserId") == player.UserId then
             return plot
@@ -12,71 +31,72 @@ local function home(player)
     end
 end
 local function finish(player, state)
-    local rec = active[player]
-    if not rec then
+    local carry = activeCarries[player]
+    if not carry then
         return
     end
-    active[player] = nil
-    if rec.visual then
-        rec.visual:Destroy()
+    activeCarries[player] = nil
+    -- `visual` is never set in the current code (the carry visual is TwoHandItemCarryService's); kept for safety.
+    if carry.visual then
+        carry.visual:Destroy()
     end
-    if rec.tool and rec.tool.Parent then
-        rec.tool.Enabled = rec.enabled
-        rec.tool:SetAttribute("ReturningToBase", nil)
+    if carry.tool and carry.tool.Parent then
+        carry.tool.Enabled = carry.enabled
+        carry.tool:SetAttribute("ReturningToBase", nil)
     end
     player:SetAttribute("RiverEggCarryBase", nil)
     player:SetAttribute("RiverEggCarryId", nil)
     player:SetAttribute("RiverEggCarryType", nil)
-    if state == "Secured" and rec.tool and rec.tool.Parent then
-        local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health > 0 then
-            hum:EquipTool(rec.tool)
+    if state == "Secured" and carry.tool and carry.tool.Parent then
+        local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.Health > 0 then
+            humanoid:EquipTool(carry.tool)
             task.defer(function()
-                if rec.tool.Parent == player.Character then
-                    require(game.ServerScriptService.TwoHandItemCarryService).Attach(player, rec.tool)
+                if carry.tool.Parent == player.Character then
+                    require(game.ServerScriptService.TwoHandItemCarryService).Attach(player, carry.tool)
                 end
             end)
         end
     end
-    event:FireClient(player, state, { id = rec.id })
+    carryStateEvent:FireClient(player, state, { id = carry.id })
 end
 function Service.Begin(player, tool)
-    local plot = home(player)
-    local char = player.Character
-    local torso = char and (char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
+    local plot = homePlot(player)
+    local character = player.Character
+    local torso = character and (character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso"))
     local source = tool:FindFirstChild("Egg")
     if not plot or not torso or not source then
         return false
     end
-    if active[player] then
+    if activeCarries[player] then
         finish(player, "Cancelled")
     end
-    local rec = {
+    local carry = {
         tool = tool,
         enabled = tool.Enabled,
         plot = plot,
-        char = char,
+        char = character,
         started = os.clock(),
         id = game:GetService("HttpService"):GenerateGUID(false),
     }
-    active[player] = rec
+    activeCarries[player] = carry
     tool.Enabled = false
     tool:SetAttribute("ReturningToBase", true)
     -- Equip the owned inventory Tool; shared carry rendering provides one visible egg.
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then
         finish(player, "Cancelled")
         return false
     end
-    hum:EquipTool(tool)
+    humanoid:EquipTool(tool)
     require(game.ServerScriptService.TwoHandItemCarryService).Attach(player, tool)
-    local base = plot.PlotSpawn.Position
+    local basePosition = plot.PlotSpawn.Position
     player:SetAttribute("RiverEggCarryType", tool:GetAttribute("EggType") or tool.Name)
-    player:SetAttribute("RiverEggCarryBase", base)
-    player:SetAttribute("RiverEggCarryId", rec.id)
-    event:FireClient(player, "Stolen", {
-        basePosition = base,
-        id = rec.id,
+    player:SetAttribute("RiverEggCarryBase", basePosition)
+    player:SetAttribute("RiverEggCarryId", carry.id)
+    carryStateEvent:FireClient(player, "Stolen", {
+        basePosition = basePosition,
+        id = carry.id,
         eggType = tool:GetAttribute("EggType") or tool.Name,
         name = tool.Name,
         rarity = tool:GetAttribute("Rarity"),
@@ -84,41 +104,43 @@ function Service.Begin(player, tool)
     })
     return true
 end
+-- finish() clears activeCarries[player] while this loop iterates; assigning nil to the current key is safe in Luau.
 RunService.Heartbeat:Connect(function()
-    for player, rec in active do
-        local char = player.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
+    for player, carry in activeCarries do
+        local character = player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         if
-            char ~= rec.char
+            character ~= carry.char
             or not root
-            or not hum
-            or hum.Health <= 0
-            or not rec.tool.Parent
-            or rec.plot:GetAttribute("OwnerUserId") ~= player.UserId
+            or not humanoid
+            or humanoid.Health <= 0
+            or not carry.tool.Parent
+            or carry.plot:GetAttribute("OwnerUserId") ~= player.UserId
         then
             finish(player, "Cancelled")
-        elseif os.clock() - rec.started > 0.5 then
-            local rel = rec.plot.TempleAnchor.CFrame:PointToObjectSpace(root.Position)
+        elseif os.clock() - carry.started > 0.5 then
+            -- home box in TempleAnchor space: X -58..32, Z -32..48, Y -15..60
+            local rel = carry.plot.TempleAnchor.CFrame:PointToObjectSpace(root.Position)
             if rel.X >= -58 and rel.X <= 32 and rel.Z >= -32 and rel.Z <= 48 and rel.Y >= -15 and rel.Y <= 60 then
                 finish(player, "Secured")
             end
         end
     end
 end)
-Players.PlayerRemoving:Connect(function(p)
-    local rec = active[p]
-    if rec and rec.visual then
-        rec.visual:Destroy()
+Players.PlayerRemoving:Connect(function(player)
+    local carry = activeCarries[player]
+    if carry and carry.visual then
+        carry.visual:Destroy()
     end
-    active[p] = nil
+    activeCarries[player] = nil
 end)
 function Service.Drop(player)
-    local rec = active[player]
-    if not rec then
+    local carry = activeCarries[player]
+    if not carry then
         return false
     end
-    local tool = rec.tool
+    local tool = carry.tool
     finish(player, "Dropped")
     return require(game.ServerScriptService.TwoHandItemCarryService).DropTool(player, tool)
 end

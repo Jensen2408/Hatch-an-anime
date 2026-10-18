@@ -1,8 +1,8 @@
---[[ ServerScriptService.EggSteal.EggStealServer  (Script)
+--[[ ServerScriptService.EggSteal.EggStealServer  (Script, Disabled in the project file - steal system is OFF)
 Starts the steal system. Keep EggStealService as a sibling ModuleScript.
 Optional hooks, e.g.:
-  local Service = require(script.Parent.EggStealService)
-  Service.OnSecured = function(thief, info, victim) end
+  local EggStealService = require(script.Parent.EggStealService)
+  EggStealService.OnSecured = function(thief, info, victim) end
 ]]
-local Service = require(script.Parent:WaitForChild("EggStealService"))
-Service.Init()
+local EggStealService = require(script.Parent:WaitForChild("EggStealService"))
+EggStealService.Init()

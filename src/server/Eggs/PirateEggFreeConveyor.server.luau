@@ -1,12 +1,28 @@
-local RunService = game:GetService("RunService")
+--[[ ServerScriptService.PirateEggFreeConveyor  (Script, SERVER)
+The river: spawns paid eggs that roll along workspace.PirateEggConveyor (path/pose from its RollingMotion module)
+into workspace.WaterfallEggs, on a steady cadence (conveyor attribute SpawnInterval, default 4 s, clamped 1.5..30).
+Which egg: RiverEggSpawnScheduler (weighted rarity) + natural Halloween mutation roll (Mutations.Roll), or the
+owner queue fed by the RequestOwnerRiverEgg BindableEvent (owner panel).
+
+Collecting (both paths call the same collectEgg):
+  - the egg's own ProximityPrompt (CollectAnchor), or
+  - ReplicatedStorage.CollectRiverEgg:FireServer(eggModel)  (place-owned RemoteEvent, client -> server)
+Network authority: the client only names the egg model. The server looks it up in its own collectByEgg table,
+recomputes the egg position from the shared Epoch (must be in the "travel" phase), checks distance <= 17 studs,
+alive humanoid, Backpack, then charges the server-side catalog price (RiverEggPayment) before granting the Tool.
+Feedback on a failed charge: ReplicatedStorage.RiverEggPurchaseFeedback:FireClient(player, reason, priceText),
+throttled to 1 per second per player. After the grant RiverEggCarryService.Begin starts the "carry it home" phase.
+Testing / owner hooks (workspace attributes): ForceRiverMutation, PendingMutationDrop (one-shot), NightRiverLuckMultiplier.
+]]
+local _RunService = game:GetService("RunService")
 local Catalog = require(game.ReplicatedStorage.CharacterCatalog)
 local Economy = require(game.ReplicatedStorage.CharacterEconomy)
 local Timing = require(game.ReplicatedStorage.EggHatchTiming)
 local Payment = require(script.Parent.RiverEggPayment)
 local RiverCarry = require(script.Parent.RiverEggCarryService)
-local feedback = game.ReplicatedStorage.RiverEggPurchaseFeedback
-local feedbackAt = setmetatable({}, { __mode = "k" })
-local m = workspace:WaitForChild("PirateEggConveyor")
+local purchaseFeedbackEvent = game.ReplicatedStorage.RiverEggPurchaseFeedback
+local lastFeedbackAt = setmetatable({}, { __mode = "k" }) -- [Player] = os.clock() of the last feedback message
+local conveyor = workspace:WaitForChild("PirateEggConveyor")
 local templates = {}
 for _, template in ipairs(game.ServerStorage:WaitForChild("AuxEggTemplates"):GetChildren()) do
     if template:GetAttribute("ReleaseEnabled") ~= false then
@@ -16,67 +32,69 @@ end
 table.sort(templates, function(a, b)
     return a:GetAttribute("Order") < b:GetAttribute("Order")
 end)
-local folder = workspace:WaitForChild("WaterfallEggs")
-local motion = require(m:WaitForChild("RollingMotion"))
-local active = {}
-local serial = 0
+local riverEggFolder = workspace:WaitForChild("WaterfallEggs")
+local rollingMotion = require(conveyor:WaitForChild("RollingMotion"))
+local collectByEgg = {} -- [egg Model] = collectEgg(player) while the egg can still be collected
+local spawnSerial = 0
 local random = Random.new()
 local scheduler = require(script.Parent.RiverEggSpawnScheduler).new(templates, random)
 local serverStart = os.clock()
 -- Owner panel only: Halloween mutation eggs (Silver/Gold/Diamond/Rainbow) from UpdatePack_Mutations_Halloween
-local MUT = { Silver = true, Gold = true, Diamond = true, Rainbow = true }
-local ownerQueue
+local MUTATION_TIERS = { Silver = true, Gold = true, Diamond = true, Rainbow = true }
+local ownerQueue -- { { template, tier }, ... }; each entry takes the next normal river slot
+-- Builds a river-ready mutated copy of `template` from the Halloween update pack, or nil if the pack lacks it.
 local function mutatedTemplate(template, tier)
     local pack = game.ServerStorage:FindFirstChild("UpdatePack_Mutations_Halloween")
     local eggs = pack and pack:FindFirstChild("Update_Eggs_Halloween", true)
-    local src = eggs
+    local sourceEgg = eggs
         and (
             eggs:FindFirstChild(template.Name .. "_Halloween_" .. tier .. "_Egg")
             or eggs:FindFirstChild(template.Name .. "_" .. tier .. "_Egg")
         )
-    if not src then
+    if not sourceEgg then
         return nil
     end
-    local m = src:Clone()
-    m.Name = template.Name
-    for k, v in template:GetAttributes() do
-        m:SetAttribute(k, v)
+    local mutatedEgg = sourceEgg:Clone()
+    mutatedEgg.Name = template.Name
+    for name, value in template:GetAttributes() do
+        mutatedEgg:SetAttribute(name, value)
     end
-    local _, a = template:GetBoundingBox()
-    local _, b = m:GetBoundingBox()
-    m:ScaleTo(m:GetScale() * a.Y / math.max(b.Y, 0.01))
-    for _, p in m:GetDescendants() do
-        if p:IsA("BasePart") then
-            p.Anchored = true
-            p.CanCollide = false
-            p.CanTouch = false
+    -- match the river template's height
+    local _, templateSize = template:GetBoundingBox()
+    local _, mutatedSize = mutatedEgg:GetBoundingBox()
+    mutatedEgg:ScaleTo(mutatedEgg:GetScale() * templateSize.Y / math.max(mutatedSize.Y, 0.01))
+    for _, part in mutatedEgg:GetDescendants() do
+        if part:IsA("BasePart") then
+            part.Anchored = true
+            part.CanCollide = false
+            part.CanTouch = false
         end
     end
     -- same pivot-to-centre offset as the river template, so it sits on the river path like a normal egg
-    local tcf = template:GetBoundingBox()
-    local offset = template:GetPivot():ToObjectSpace(tcf)
-    local mcf = m:GetBoundingBox()
-    m.WorldPivot = mcf * offset:Inverse()
+    local templateBox = template:GetBoundingBox()
+    local offset = template:GetPivot():ToObjectSpace(templateBox)
+    local mutatedBox = mutatedEgg:GetBoundingBox()
+    mutatedEgg.WorldPivot = mutatedBox * offset:Inverse()
     -- the mutation aura VFX rides along with the egg
     pcall(function()
-        require(game.ServerScriptService.Mutations).AddAura(m, tier)
+        require(game.ServerScriptService.Mutations).AddAura(mutatedEgg, tier)
     end)
-    return m
+    return mutatedEgg
 end
 local function spawnEgg(forcedTemplate, mutation)
-    serial += 1
+    spawnSerial += 1
     local template = forcedTemplate or scheduler:Next(os.clock() - serverStart)
     local egg = template:Clone()
-    egg.Name = "RiverEgg_" .. serial
+    egg.Name = "RiverEgg_" .. spawnSerial
     if mutation then
         egg:SetAttribute("Mutation", mutation)
     end
-    egg:SetAttribute("Sequence", serial)
-    egg:PivotTo(CFrame.new(m:GetAttribute("FallStart")))
+    egg:SetAttribute("Sequence", spawnSerial)
+    egg:PivotTo(CFrame.new(conveyor:GetAttribute("FallStart")))
     for _, name in { "LabelAnchor", "CollectAnchor" } do
-        local p = m[name]:Clone()
-        p.CFrame = egg:GetPivot()
-        p.Parent = egg
+        local anchorPart = conveyor[name]:Clone()
+        anchorPart.CFrame = egg:GetPivot()
+        anchorPart.Parent = egg
     end
     local label = egg.LabelAnchor
     for _, gui in label:GetChildren() do
@@ -97,31 +115,34 @@ local function spawnEgg(forcedTemplate, mutation)
         prompt.ObjectText = (mutation and mutation .. " " or "") .. template.Name .. " Egg"
         prompt.ActionText = "Collect"
     end
+    -- Epoch = shared start time; clients and server derive the egg's position from it via pose(t).
     egg:SetAttribute("Epoch", workspace:GetServerTimeNow())
-    egg.Parent = folder
+    egg.Parent = riverEggFolder
     game:GetService("CollectionService"):AddTag(egg, "RiverEgg")
-    local update, pose = motion(m, egg)
+    local _update, pose = rollingMotion(conveyor, egg)
     local _, _, _, duration = pose(0)
 
-    local prompt = egg.CollectAnchor:FindFirstChildOfClass("ProximityPrompt")
+    local collectPrompt = egg.CollectAnchor:FindFirstChildOfClass("ProximityPrompt")
     local collected = false
     local function collectEgg(player)
         if collected or not egg.Parent then
             return
         end
-        local cf, phase = pose(workspace:GetServerTimeNow() - egg:GetAttribute("Epoch"))
+        -- egg position recomputed from the shared clock, never taken from the client
+        local eggCFrame, phase = pose(workspace:GetServerTimeNow() - egg:GetAttribute("Epoch"))
         if phase ~= "travel" then
             return
         end
         local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        local bag = player:FindFirstChildOfClass("Backpack")
-        if not root or not bag or (root.Position - cf.Position).Magnitude > 17 then
+        local backpack = player:FindFirstChildOfClass("Backpack")
+        if not root or not backpack or (root.Position - eggCFrame.Position).Magnitude > 17 then
             return
         end
-        local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-        if not hum or hum.Health <= 0 or not entry then
+        local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 or not entry then
             return
         end
+        -- Build the owned Tool first (no yields), destroy it again if the charge fails.
         local tool = Instance.new("Tool")
         tool.Name = (mutation and mutation .. " " or "") .. template.Name .. " Egg"
         tool.ToolTip = ""
@@ -149,15 +170,15 @@ local function spawnEgg(forcedTemplate, mutation)
         handle.CanCollide = false
         handle.Massless = true
         handle.Parent = tool
-        for _, p in visual:GetDescendants() do
-            if p:IsA("BasePart") then
-                p.Anchored = false
-                p.CanCollide = false
-                p.CanTouch = false
-                p.Massless = true
+        for _, part in visual:GetDescendants() do
+            if part:IsA("BasePart") then
+                part.Anchored = false
+                part.CanCollide = false
+                part.CanTouch = false
+                part.Massless = true
                 local weld = Instance.new("WeldConstraint")
                 weld.Part0 = handle
-                weld.Part1 = p
+                weld.Part1 = part
                 weld.Parent = handle
             end
         end
@@ -166,19 +187,19 @@ local function spawnEgg(forcedTemplate, mutation)
         if not paid then
             tool:Destroy()
             local now = os.clock()
-            if now - (feedbackAt[player] or -math.huge) > 1 then
-                feedbackAt[player] = now
-                feedback:FireClient(player, reason, Catalog.FormatPrice(entry.Price))
+            if now - (lastFeedbackAt[player] or -math.huge) > 1 then
+                lastFeedbackAt[player] = now
+                purchaseFeedbackEvent:FireClient(player, reason, Catalog.FormatPrice(entry.Price))
             end
             return
         end
         collected = true
         egg:SetAttribute("Collected", true)
-        if prompt then
-            prompt.Enabled = false
+        if collectPrompt then
+            collectPrompt.Enabled = false
         end
-        tool.Parent = bag
-        active[egg] = nil
+        tool.Parent = backpack
+        collectByEgg[egg] = nil
         egg:Destroy()
         require(game.ServerScriptService.GameMenu.QuestService).Increment(player, "CollectRiverEgg", 1)
         local ok, err = pcall(RiverCarry.Begin, player, tool)
@@ -188,29 +209,32 @@ local function spawnEgg(forcedTemplate, mutation)
             warn("River carry: " .. tostring(err))
         end
     end
-    active[egg] = collectEgg
-    if prompt then
-        prompt.Triggered:Connect(collectEgg)
+    collectByEgg[egg] = collectEgg
+    if collectPrompt then
+        collectPrompt.Triggered:Connect(collectEgg)
     end
+    -- despawn just before the path ends
     task.delay(duration - 0.05, function()
-        active[egg] = nil
+        collectByEgg[egg] = nil
         if egg.Parent then
             egg:Destroy()
         end
     end)
 end
+-- Client-initiated collect: only eggs present in collectByEgg can be collected; collectEgg re-validates everything.
 game.ReplicatedStorage.CollectRiverEgg.OnServerEvent:Connect(function(player, egg)
     if typeof(egg) ~= "Instance" then
         return
     end
-    local collect = active[egg]
+    local collect = collectByEgg[egg]
     if collect then
         collect(player)
     end
 end)
-local ownerRequest = m:FindFirstChild("RequestOwnerRiverEgg") or Instance.new("BindableEvent")
+-- Owner panel hook (server-only BindableEvent): fire(ownerPlayer, eggId, mutationTier?)
+local ownerRequest = conveyor:FindFirstChild("RequestOwnerRiverEgg") or Instance.new("BindableEvent")
 ownerRequest.Name = "RequestOwnerRiverEgg"
-ownerRequest.Parent = m
+ownerRequest.Parent = conveyor
 ownerQueue = {}
 ownerRequest.Event:Connect(function(owner, id, mutation)
     if
@@ -224,17 +248,17 @@ ownerRequest.Event:Connect(function(owner, id, mutation)
     local entry = type(id) == "string" and Catalog.ById[id]
     local template = entry and game.ServerStorage.AuxEggTemplates:FindFirstChild(id)
     -- preview: a mutation egg with no river template yet borrows Pirate's for size/motion
-    if not template and entry and MUT[mutation] then
-        local base = game.ServerStorage.AuxEggTemplates.Pirate:Clone()
-        base.Name = id
-        base:SetAttribute("ReleaseEnabled", nil)
-        template = base
+    if not template and entry and MUTATION_TIERS[mutation] then
+        local borrowed = game.ServerStorage.AuxEggTemplates.Pirate:Clone()
+        borrowed.Name = id
+        borrowed:SetAttribute("ReleaseEnabled", nil)
+        template = borrowed
     end
-    if template and (template:GetAttribute("ReleaseEnabled") ~= false or MUT[mutation]) then
-        local tier = MUT[mutation] and mutation or nil
-        local mt = tier and mutatedTemplate(template, tier)
-        if mt then
-            table.insert(ownerQueue, { template = mt, tier = tier }) -- takes the next normal river slot
+    if template and (template:GetAttribute("ReleaseEnabled") ~= false or MUTATION_TIERS[mutation]) then
+        local tier = MUTATION_TIERS[mutation] and mutation or nil
+        local mutated = tier and mutatedTemplate(template, tier)
+        if mutated then
+            table.insert(ownerQueue, { template = mutated, tier = tier }) -- takes the next normal river slot
         else
             spawnEgg(template)
         end
@@ -245,9 +269,9 @@ local nextSpawn = os.clock() + 2
 while true do
     local now = os.clock()
     if now >= nextSpawn then
-        local q = table.remove(ownerQueue, 1)
-        if q then
-            spawnEgg(q.template, q.tier)
+        local queued = table.remove(ownerQueue, 1)
+        if queued then
+            spawnEgg(queued.template, queued.tier)
         else
             -- natural mutation eggs: Silver 1/100, Gold 1/500, Diamond 1/2000, Rainbow 1/5000 (night river luck multiplies the odds)
             local ok, tier = pcall(function()
@@ -257,22 +281,22 @@ while true do
             end)
             tier = ok and tier or nil
             tier = workspace:GetAttribute("ForceRiverMutation") or tier
-            local drop = workspace:GetAttribute("PendingMutationDrop")
-            if drop then
-                tier = drop
+            local pendingDrop = workspace:GetAttribute("PendingMutationDrop")
+            if pendingDrop then
+                tier = pendingDrop
                 workspace:SetAttribute("PendingMutationDrop", nil)
             end -- testing: set this attribute to Silver/Gold/Diamond/Rainbow
-            local base = tier and scheduler:Next(os.clock() - serverStart)
-            local mt = base and mutatedTemplate(base, tier)
-            if mt then
-                spawnEgg(mt, tier)
-            elseif base then
-                spawnEgg(base)
+            local baseTemplate = tier and scheduler:Next(os.clock() - serverStart)
+            local mutated = baseTemplate and mutatedTemplate(baseTemplate, tier)
+            if mutated then
+                spawnEgg(mutated, tier)
+            elseif baseTemplate then
+                spawnEgg(baseTemplate)
             else
                 spawnEgg()
             end
         end
-        local interval = math.clamp(tonumber(m:GetAttribute("SpawnInterval")) or 4, 1.5, 30)
+        local interval = math.clamp(tonumber(conveyor:GetAttribute("SpawnInterval")) or 4, 1.5, 30)
         nextSpawn = nextSpawn + interval
         if nextSpawn <= os.clock() then
             nextSpawn = os.clock() + interval

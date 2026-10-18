@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 150 |
+| Pending | 139 |
 | Reviewed — No Changes Needed | 4 |
-| Refactored | 35 |
+| Refactored | 46 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -72,17 +72,17 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `server/Carry/CarryGripLayout.luau` | ModuleScript | 58 | 68 | Pending | — | — |
-| `server/Carry/TwoHandItemCarryServer.server.luau` | Script | 5 | 5 | Pending | — | — |
-| `server/Carry/TwoHandItemCarryService.luau` | ModuleScript | 227 | 578 | Pending | — | — |
-| `server/Eggs/ConveyorEggs.server.luau` | Script | 76 | 161 | Pending | — | — |
-| `server/Eggs/EggSellService.server.luau` | Script | 35 | 88 | Pending | — | — |
-| `server/Eggs/EggSteal/EggStealServer.server.luau` | Script | 8 | 8 | Pending | — | — |
-| `server/Eggs/EggSteal/EggStealService.luau` | ModuleScript | 687 | 926 | Pending | — | — |
-| `server/Eggs/PirateEggFreeConveyor.server.luau` | Script | 148 | 282 | Pending | — | — |
-| `server/Eggs/RiverEggCarryService.luau` | ModuleScript | 70 | 125 | Pending | — | — |
-| `server/Eggs/RiverEggPayment.luau` | ModuleScript | 12 | 20 | Pending | — | — |
-| `server/Eggs/RiverEggSpawnScheduler.luau` | ModuleScript | 44 | 60 | Pending | — | — |
+| `server/Carry/CarryGripLayout.luau` | ModuleScript | 58 | 87 | Refactored | SAME | Header (API + 3 strategies), descriptive renames (gripY, upperLength, handX/handY, *Att), section comments per fallback. |
+| `server/Carry/TwoHandItemCarryServer.server.luau` | Script | 5 | 8 | Refactored | SAME | Header, Carry -> TwoHandItemCarryService, comment on why the empty DropHeldItem handler stays. |
+| `server/Carry/TwoHandItemCarryService.luau` | ModuleScript | 227 | 629 | Refactored | SAME | Header with API + pickup authority; renames (carryRecords, stopCarry, presentationOf, stripNonVisuals, addLabel, fxColor...); selene 4->1 (deprecated Instance.new parent kept). |
+| `server/Eggs/ConveyorEggs.server.luau` | Script | 76 | 172 | Refactored | SAME | Header (spawn cadence, collect checks, remote payload); renames (EGG_CATALOG, eggCollectedEvent, chooseEntry, priceBadge...); _Players; selene 1->0. |
+| `server/Eggs/EggSellService.server.luau` | Script | 35 | 99 | Refactored | SAME | Header documents SellEgg actions/returns + authority; renames (sellPriceOf, lastSellAt, candidates, soldCount...); note on header/code mismatch. |
+| `server/Eggs/EggSteal/EggStealServer.server.luau` | Script | 8 | 8 | Refactored | SAME | Service -> EggStealService, header notes the script is Disabled (steal system off). |
+| `server/Eggs/EggSteal/EggStealService.luau` | ModuleScript | 687 | 949 | Refactored | SAME | R->Rules, Event->stealEvent, StealFolder, catalogById, descriptive locals; header lists all Event payloads, attributes, OFF status, audit known issue; function comments. |
+| `server/Eggs/PirateEggFreeConveyor.server.luau` | Script | 148 | 306 | Refactored | SAME | Header (cadence, collect authority, remote/bindable contracts, test attributes); renames (conveyor, collectByEgg, MUTATION_TIERS, collectPrompt...); selene 4->0. |
+| `server/Eggs/RiverEggCarryService.luau` | ModuleScript | 70 | 147 | Refactored | SAME | Header (API, end states, attributes, RiverEggCarryState payloads, lazy require cycle); renames (activeCarries, carryStateEvent, homePlot...); box + iteration comments. |
+| `server/Eggs/RiverEggPayment.luau` | ModuleScript | 12 | 30 | Refactored | SAME | Header (contract, no-yield guarantee), stats -> leaderstats, NaN comment. |
+| `server/Eggs/RiverEggSpawnScheduler.luau` | ModuleScript | 44 | 73 | Refactored | SAME | Header (rules), RARITY_ORDER/RARITY_MIN_AGE/RARITY_COOLDOWN, self -> scheduler (selene 1->0), totalWeight/cumulative/candidate. |
 
 ## Batch 05 — Egg — client
 
@@ -670,102 +670,102 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `server/Carry/CarryGripLayout.luau`
 
-- **Type:** ModuleScript · **Batch:** 04 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 04 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Place the item just below shoulder height, where straight arms can support it.
 - **Dependencies:** —
 - **Public functions:** Layout.Frame
 - **Events:** —
-- **Readability problems:** 1 dense one-line statements; 3 one-letter locals
+- **Readability problems:** No header; cryptic locals (sum, y, l1, l2, x, wy, z, sa, ea, eb, wa, wb, half); three fallback strategies undocumented
 
 ### `server/Carry/TwoHandItemCarryServer.server.luau`
 
-- **Type:** Script · **Batch:** 04 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 04 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Player dropping (F key / Drop button) is turned off on purpose. Old handler + DropHeldItemClient are in ServerStorage._ARCHIVE.BeforeNoDrop_1792078437-- (Deaths/steals still drop items through their o
 - **Dependencies:** TwoHandItemCarryService
 - **Public functions:** —
 - **Events:** Connect×1, OnServerEvent×1
-- **Readability problems:** —
+- **Readability problems:** No header; generic `Carry` alias; empty DropHeldItem handler unexplained
 
 ### `server/Carry/TwoHandItemCarryService.luau`
 
-- **Type:** ModuleScript · **Batch:** 04 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 04 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** CarryGripLayout, RiverEggCarryService
 - **Public functions:** Service.Attach, Service.DropTool, Service.Init
 - **Events:** Connect×6, PlayerAdded×1, PlayerRemoving×1
-- **Readability problems:** 40 dense one-line statements; 18 lines >160 chars; 7 one-letter locals
+- **Readability problems:** No header; RS alias; cryptic names (rec, h, m, p, d, k, pts, bb, lbl, st, g/gs, r/rs, TS, top1, dir, col, mut); 3 selene warnings (shadowed size, unused r/rs)
 
 ### `server/Eggs/ConveyorEggs.server.luau`
 
-- **Type:** Script · **Batch:** 04 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 04 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** EggCatalog, EggUIStyle
 - **Public functions:** —
 - **Events:** Connect×1
-- **Readability problems:** 18 dense one-line statements; 3 lines >160 chars; 2 one-letter locals
+- **Readability problems:** No header; unused Players; cryptic names (config, event, folder, choose, c, hum, bag, gear, start/finish, y, custom, round)
 
 ### `server/Eggs/EggSellService.server.luau`
 
-- **Type:** Script · **Batch:** 04 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 04 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** EggSellService: sells an egg Tool from the player's own backpack/hand for cash. Server decides the price. Price = 40% of the egg's shop price; free eggs sell for $0. Limited, golden and owner-test egg
 - **Dependencies:** CharacterCatalog
 - **Public functions:** —
 - **Events:** Connect×1, OnServerInvoke×1, PlayerRemoving×1
-- **Readability problems:** 12 dense one-line statements; 1 lines >160 chars; 2 one-letter locals
+- **Readability problems:** RS alias; cryptic names (last, p, t, e, c, v, n, list); header claim 'can't be sold' contradicts code ($0 sell); remote contract undocumented
 
 ### `server/Eggs/EggSteal/EggStealServer.server.luau`
 
-- **Type:** Script · **Batch:** 04 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 04 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ServerScriptService.EggSteal.EggStealServer  (Script)
 - **Dependencies:** EggStealService
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** Generic `Service` alias; header did not say the script is Disabled
 
 ### `server/Eggs/EggSteal/EggStealService.luau`
 
-- **Type:** ModuleScript · **Batch:** 04 · **Priority:** High · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 04 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** ServerScriptService.EggSteal.EggStealService  (ModuleScript, SERVER ONLY)
 - **Dependencies:** EggCatalog, EggStealConfig
 - **Public functions:** Service.Cancel, Service.Init, Service.IsCarrying
 - **Events:** Connect×10, OnServerEvent×1, PlayerRemoving×1
-- **Readability problems:** 78 dense one-line statements; 6 one-letter locals
+- **Readability problems:** Already well structured; cryptic names (R, Folder, Event, entries, e, m, b, p, o, c, d, w, hl, bg, att, src, s, pos, flat); unused `char` (selene); remote payloads not listed
 
 ### `server/Eggs/PirateEggFreeConveyor.server.luau`
 
-- **Type:** Script · **Batch:** 04 · **Priority:** Medium · **Status:** Pending
+- **Type:** Script · **Batch:** 04 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** AdminRoles, CharacterCatalog, CharacterEconomy, EggHatchTiming, Mutations, QuestService, RiverEggCarryService, RiverEggPayment, RiverEggSpawnScheduler, RollingMotion
 - **Public functions:** —
 - **Events:** Connect×3, OnServerEvent×1
-- **Readability problems:** 33 dense one-line statements; 5 lines >160 chars; 3 one-letter locals
+- **Readability problems:** No header; `m` for the conveyor shadowed by `m` in mutatedTemplate; second `prompt` shadows first; unused RunService/update; cryptic (MUT, active, q, mt, base, drop, a/b, tcf/mcf, p)
 
 ### `server/Eggs/RiverEggCarryService.luau`
 
-- **Type:** ModuleScript · **Batch:** 04 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 04 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** TwoHandItemCarryService
 - **Public functions:** Service.Begin, Service.Drop
 - **Events:** Connect×2, RunService×1, PlayerRemoving×1
-- **Readability problems:** 10 dense one-line statements; 2 lines >160 chars
+- **Readability problems:** No header; RS alias; cryptic names (active, event, rec, hum, char, home, base); secure box magic numbers; dead `visual` field undocumented
 
 ### `server/Eggs/RiverEggPayment.luau`
 
-- **Type:** ModuleScript · **Batch:** 04 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 04 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** Payment.TryCharge
 - **Events:** —
-- **Readability problems:** 4 dense one-line statements
+- **Readability problems:** No header; `stats` local; NaN check unexplained
 
 ### `server/Eggs/RiverEggSpawnScheduler.luau`
 
-- **Type:** ModuleScript · **Batch:** 04 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 04 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** CharacterCatalog
 - **Public functions:** Scheduler.new
 - **Events:** —
-- **Readability problems:** 3 dense one-line statements
+- **Readability problems:** No header; lower-case constant tables; `self` local shadowed by method self (selene); total/sum/bucket names reused
 
 ### `client/Egg/EggPickupFeedback.client.luau`
 

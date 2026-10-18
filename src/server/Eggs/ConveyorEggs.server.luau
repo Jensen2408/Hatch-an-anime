@@ -1,29 +1,38 @@
-local Players = game:GetService("Players")
+--[[ ServerScriptService.ConveyorEggs  (Script, SERVER)
+Legacy free-egg conveyor: every 6 s spawns a random egg (weighted by EggCatalog[i].Weight, roll 0..100) at
+workspace.EggConveyor.Belt.EggStart and tweens it to EggEnd. Exits immediately if workspace has no EggConveyor.
+Collecting = server-side ProximityPrompt "Collect (Free)": the server checks alive, Backpack + StarterGear exist,
+and distance <= 12 studs, then puts a new egg Tool in the Backpack (no StarterGear copy).
+Uses: ServerStorage.EggTemplates / EggLabelTemplates, ReplicatedStorage.EggCatalog / EggUIStyle,
+ReplicatedStorage.EggCollected (place-owned RemoteEvent, server -> client: eggId, eggCFrame, eggSize for pickup FX).
+]]
+local _Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local templates = game.ServerStorage:WaitForChild("EggTemplates")
-local config = require(ReplicatedStorage:WaitForChild("EggCatalog"))
-local event = ReplicatedStorage:WaitForChild("EggCollected")
+local EGG_CATALOG = require(ReplicatedStorage:WaitForChild("EggCatalog"))
+local eggCollectedEvent = ReplicatedStorage:WaitForChild("EggCollected")
 local conveyor = workspace:FindFirstChild("EggConveyor")
 if not conveyor then
     return
 end
 local belt = conveyor:WaitForChild("Belt")
-local folder = Instance.new("Folder")
-folder.Name = "ConveyorEggs"
-folder.Parent = workspace
+local eggFolder = Instance.new("Folder")
+eggFolder.Name = "ConveyorEggs"
+eggFolder.Parent = workspace
 local random = Random.new()
-local function choose()
+local function chooseEntry()
     local roll = random:NextNumber(0, 100)
     local sum = 0
-    for _, entry in ipairs(config) do
+    for _, entry in ipairs(EGG_CATALOG) do
         sum += entry.Weight
         if roll < sum then
             return entry
         end
     end
-    return config[#config]
+    return EGG_CATALOG[#EGG_CATALOG]
 end
+-- The owned inventory Tool: Handle = template clone scaled to 2.6 studs tall.
 local function makeTool(entry)
     local tool = Instance.new("Tool")
     tool.Name = entry.Name .. " Egg"
@@ -43,8 +52,9 @@ local function makeTool(entry)
     handle.Parent = tool
     return tool
 end
+-- World egg on the belt (4.8 studs tall) with a price tag, collect prompt and belt tween.
 local function spawnEgg()
-    local entry = choose()
+    local entry = chooseEntry()
     local egg = templates[entry.Id]:Clone()
     egg.Name = entry.Id
     egg.Size *= 4.8 / egg.Size.Y
@@ -54,16 +64,16 @@ local function spawnEgg()
     egg:SetAttribute("EggType", entry.Id)
     egg:SetAttribute("Rarity", entry.Rarity)
     egg:SetAttribute("Price", entry.Price)
-    local start = belt.EggStart.WorldPosition
-    local finish = belt.EggEnd.WorldPosition
-    local y = belt.Position.Y + belt.Size.Y / 2 + egg.Size.Y / 2 + 0.1
-    start = Vector3.new(start.X, y, start.Z)
-    finish = Vector3.new(finish.X, y, finish.Z)
-    egg.Position = start
-    egg.Parent = folder
-    local custom = game.ServerStorage.EggLabelTemplates:FindFirstChild(entry.Id)
-    if custom then
-        local gui = custom:Clone()
+    local startPos = belt.EggStart.WorldPosition
+    local endPos = belt.EggEnd.WorldPosition
+    local eggCenterY = belt.Position.Y + belt.Size.Y / 2 + egg.Size.Y / 2 + 0.1
+    startPos = Vector3.new(startPos.X, eggCenterY, startPos.Z)
+    endPos = Vector3.new(endPos.X, eggCenterY, endPos.Z)
+    egg.Position = startPos
+    egg.Parent = eggFolder
+    local customLabel = game.ServerStorage.EggLabelTemplates:FindFirstChild(entry.Id)
+    if customLabel then
+        local gui = customLabel:Clone()
         gui.Name = "PriceTag"
         gui.Adornee = egg
         gui.StudsOffsetWorldSpace = Vector3.new(0, 4.3, 0)
@@ -90,27 +100,27 @@ local function spawnEgg()
             UDim2.fromScale(0.84, 0.20),
             Color3.fromRGB(255, 239, 154)
         )
-        local price = Instance.new("Frame")
-        price.Position = UDim2.fromScale(0.25, 0.69)
-        price.Size = UDim2.fromScale(0.5, 0.26)
-        price.BackgroundColor3 = Color3.fromRGB(54, 189, 72)
-        price.BorderSizePixel = 0
-        price.ZIndex = 2
-        price.Parent = frame
-        local round = Instance.new("UICorner")
-        round.CornerRadius = UDim.new(0.25, 0)
-        round.Parent = price
+        local priceBadge = Instance.new("Frame")
+        priceBadge.Position = UDim2.fromScale(0.25, 0.69)
+        priceBadge.Size = UDim2.fromScale(0.5, 0.26)
+        priceBadge.BackgroundColor3 = Color3.fromRGB(54, 189, 72)
+        priceBadge.BorderSizePixel = 0
+        priceBadge.ZIndex = 2
+        priceBadge.Parent = frame
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0.25, 0)
+        corner.Parent = priceBadge
         local stroke = Instance.new("UIStroke")
         stroke.Thickness = 2
         stroke.Color = Color3.fromRGB(20, 30, 20)
-        stroke.Parent = price
-        Style.Text(price, "$" .. entry.Price, UDim2.fromScale(0.04, 0), UDim2.fromScale(0.92, 1))
+        stroke.Parent = priceBadge
+        Style.Text(priceBadge, "$" .. entry.Price, UDim2.fromScale(0.04, 0), UDim2.fromScale(0.92, 1))
     end
     local speed = math.max(math.abs(conveyor:GetAttribute("Speed") or 12), 1)
     local tween = TweenService:Create(
         egg,
-        TweenInfo.new((finish - start).Magnitude / speed, Enum.EasingStyle.Linear),
-        { Position = finish }
+        TweenInfo.new((endPos - startPos).Magnitude / speed, Enum.EasingStyle.Linear),
+        { Position = endPos }
     )
     local prompt = Instance.new("ProximityPrompt")
     prompt.Name = "CollectPrompt"
@@ -120,22 +130,22 @@ local function spawnEgg()
     prompt.MaxActivationDistance = 10
     prompt.RequiresLineOfSight = false
     prompt.Parent = egg
-    local collected = false
+    local collected = false -- one collect per egg (prompt can fire for several players in one frame)
     prompt.Triggered:Connect(function(player)
         if collected or not egg.Parent then
             return
         end
-        local c = player.Character
-        local root = c and c:FindFirstChild("HumanoidRootPart")
-        local hum = c and c:FindFirstChildOfClass("Humanoid")
-        local bag = player:FindFirstChildOfClass("Backpack")
-        local gear = player:FindFirstChild("StarterGear")
+        local character = player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local backpack = player:FindFirstChildOfClass("Backpack")
+        local starterGear = player:FindFirstChild("StarterGear")
         if
             not root
-            or not hum
-            or hum.Health <= 0
-            or not bag
-            or not gear
+            or not humanoid
+            or humanoid.Health <= 0
+            or not backpack
+            or not starterGear
             or (root.Position - egg.Position).Magnitude > 12
         then
             return
@@ -143,8 +153,8 @@ local function spawnEgg()
         collected = true
         prompt.Enabled = false
         local tool = makeTool(entry)
-        tool.Parent = bag
-        event:FireClient(player, entry.Id, egg.CFrame, egg.Size)
+        tool.Parent = backpack
+        eggCollectedEvent:FireClient(player, entry.Id, egg.CFrame, egg.Size)
         tween:Cancel()
         egg:Destroy()
     end)
@@ -155,6 +165,7 @@ local function spawnEgg()
     end)
     tween:Play()
 end
+-- Spawn loop (runs forever; nothing after this line executes).
 while true do
     spawnEgg()
     task.wait(6)
