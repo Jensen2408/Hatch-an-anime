@@ -1,71 +1,111 @@
--- StarterGui.GameMenus.MenuLogic (LocalScript)
--- Opens/closes the four ForgeGUI panels and fills them with live data from
--- ServerScriptService.GameMenu (GetState / Action / Changed remotes).
--- All positions below are fractions of each panel image, so they scale with it.
+--[[ StarterGui.GameMenus.MenuLogic (LocalScript)
+Opens/closes the four ForgeGUI panels and fills them with live data from ServerScriptService.GameMenu.
+All positions below are fractions of each panel image, so they scale with it (except the shop, which is
+laid out in pixels at a design width and scaled with its UIScale — see layoutMenus).
+
+Panels (ImageLabel children of this ScreenGui, opened by the SideButtons whose "Panel" attribute names them):
+  Index    RENDER.Index    character collection: season tabs, rarity filters, 5x3 grid, detail card
+  Quests   RENDER.Quests   Daily / Weekly / Milestone quest lists with Claim buttons
+  VipShop  RENDER.VipShop  Robux shop (limited deal, boosts, passes, cash packs, daily rewards)
+  Plot     RENDER.Plot     "My Temple": stat cards, 12-slot grid, upgrade rows
+  Every RENDER fn clears the panel's "Live" layer and rebuilds it from scratch on each refresh.
+
+Remotes (contract documented in GameMenuServer.server.luau / GameAdapter.luau):
+  ReplicatedStorage.GameMenu.Remotes.GetState  (RF)  fetchState(section) -> data | nil, message
+  ReplicatedStorage.GameMenu.Remotes.Action    (RF)  runAction(name, args) -> ok   (toast shows the message)
+  ReplicatedStorage.GameMenu.Remotes.Changed   (RE)  server says "your data changed" -> refresh()
+  ReplicatedStorage.ShopSystem.ShopRemote      (RF)  VipShop only: "State", "Buy", "BuyMoneyLevel", "ClaimDaily"
+Bindables created here (children of this ScreenGui, used by other LocalScripts):
+  LocalRefresh  (fire to re-render the open panel, e.g. Plot/PromptCards)
+  OpenMenu      (fire with a panel name to open it, e.g. FigmaSkin)
+Cross-script globals: _G.__shopPrices  [("p"|"d") .. id] = live Robux price | false (lookup pending/failed);
+  shared with any script that reads the same cache. Warmed once at start (bottom of file) and by the shop.
+Attributes: panel "Fit" (UIScale for the current screen, written by layoutMenus), "Page" (Plot), card "Inner",
+  workspace "HalloweenMode" / "HalloweenEndsAt", plot "OwnerUserId", slot/chamber attributes (read-only),
+  ReplicatedStorage.GameMenuImages "Tile<ButtonName>" (side-button icon overrides).
+
+Init order (all at top level, in this order — WaitForChild calls yield):
+  Dim + SideButtons -> DisplayOrder hook -> responsive layout -> remotes / Config / UISound -> helpers and
+  RENDER fns -> hide all panels -> refresh/close/show -> Dim click, Changed, LocalRefresh, OpenMenu ->
+  side buttons (WaitForChild per panel) -> tile icons -> deferred shop price warm-up.
+
+Contents: 1 layout · 2 shared UI primitives · 3 clean skin · 4 toast + remotes · 5 v3 cards/tabs ·
+  6 Index · 7 Quests · 8 VipShop · 9 Plot (legacy pages + current) · 10 open/close + wiring · 11 price warm-up
+]]
+
+-- ===== 1. Services, root instances, responsive layout =====
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
-local RS = game:GetService("ReplicatedStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 local gui = script.Parent
-local dim = gui:WaitForChild("Dim")
-local side = gui:WaitForChild("SideButtons")
+local dimOverlay = gui:WaitForChild("Dim")
+local sideButtons = gui:WaitForChild("SideButtons")
 -- Modal panels must cover HUDs from other ScreenGuis, including Settings.
 local hudDisplayOrder = gui.DisplayOrder
 local function updateOverlayOrder()
-    gui.DisplayOrder = dim.Visible and math.max(60, hudDisplayOrder) or hudDisplayOrder
+    gui.DisplayOrder = dimOverlay.Visible and math.max(60, hudDisplayOrder) or hudDisplayOrder
 end
-dim:GetPropertyChangedSignal("Visible"):Connect(updateOverlayOrder)
+dimOverlay:GetPropertyChangedSignal("Visible"):Connect(updateOverlayOrder)
 updateOverlayOrder()
 -- Use the safe area's height as well as width: wide phones are still short.
 gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
 local SHOP_PHONE_WIDTH = 680
-local closing -- panel playing its close tween
+local closingPanel -- panel playing its close tween
 local sideScale = Instance.new("UIScale")
 sideScale.Name = "ResponsiveScale"
-sideScale.Parent = side
-local function layoutMenus()
-    local v = gui.AbsoluteSize
-    if v.X <= 0 or v.Y <= 0 then
-        return
-    end
+sideScale.Parent = sideButtons
+local function extendDimPastInsets(screenSize)
     -- The ScreenGui sits inside the safe insets (top bar / notch), so the dim backdrop must reach
     -- past them or the screen edges stay undimmed on phones.
-    local cam = workspace.CurrentCamera
-    if cam then
-        local tl, br = game:GetService("GuiService"):GetGuiInset()
-        local extra = cam.ViewportSize - v
-        local left, top = math.min(tl.X, extra.X), math.min(tl.Y, extra.Y)
-        local right, bottom = math.max(0, extra.X - left), math.max(0, extra.Y - top)
-        dim.AnchorPoint = Vector2.new(0, 0)
-        dim.Position = UDim2.fromOffset(-left, -top)
-        dim.Size = UDim2.new(1, left + right, 1, top + bottom)
+    local camera = workspace.CurrentCamera
+    if camera then
+        local topLeftInset, _bottomRightInset = game:GetService("GuiService"):GetGuiInset()
+        local outsideSafeArea = camera.ViewportSize - screenSize
+        local left, top = math.min(topLeftInset.X, outsideSafeArea.X), math.min(topLeftInset.Y, outsideSafeArea.Y)
+        local right, bottom = math.max(0, outsideSafeArea.X - left), math.max(0, outsideSafeArea.Y - top)
+        dimOverlay.AnchorPoint = Vector2.new(0, 0)
+        dimOverlay.Position = UDim2.fromOffset(-left, -top)
+        dimOverlay.Size = UDim2.new(1, left + right, 1, top + bottom)
     end
-    local compact = math.min(v.X, v.Y) < 600
-    local s = compact and math.min(1, v.X / 600, v.Y / 560) or 1
-    -- Phone buttons are 20% smaller; desktop keeps its original size.
-    sideScale.Scale = compact and math.clamp(v.Y * 0.15, 44, 52) / 92 or s
-    side.AnchorPoint = compact and Vector2.new(0, 0) or Vector2.new(0, 0.5)
-    side.Position = compact and UDim2.fromOffset(10, v.X < v.Y and 82 or 48) or UDim2.new(0, 16, 0.5, 0)
-    for _, name in { "Plot", "Index", "Quests", "VipShop" } do
-        local panel = gui:FindFirstChild(name)
-        if panel then
-            local ratio = panel.UIAspectRatioConstraint.AspectRatio
-            local width = math.min(1000, v.X * 0.86, (v.Y - 32) * ratio)
-            -- The shop is laid out in pixels, so on phones it is built at a fixed design width
-            -- and shrunk with its UIScale ("Fit") instead of squeezing the panel.
-            local design = (compact and name == "VipShop") and SHOP_PHONE_WIDTH or nil
-            if design then
-                width = math.min(width, v.X * 0.8, (v.Y - 48) * ratio)
-            end
-            local fit = design and width / design or 1
-            local w = design or width
-            panel.Size = UDim2.fromOffset(math.max(1, w), math.max(1, w / ratio))
-            panel:SetAttribute("Fit", fit)
-            if panel.Visible and panel ~= closing then
-                panel.UIScale.Scale = fit
-            end
+end
+-- Sizes one panel for the current screen and stores its UIScale in the "Fit" attribute.
+local function fitPanelToScreen(name, screenSize, compact)
+    local panel = gui:FindFirstChild(name)
+    if panel then
+        local ratio = panel.UIAspectRatioConstraint.AspectRatio
+        local width = math.min(1000, screenSize.X * 0.86, (screenSize.Y - 32) * ratio)
+        -- The shop is laid out in pixels, so on phones it is built at a fixed design width
+        -- and shrunk with its UIScale ("Fit") instead of squeezing the panel.
+        local designWidth = (compact and name == "VipShop") and SHOP_PHONE_WIDTH or nil
+        if designWidth then
+            width = math.min(width, screenSize.X * 0.8, (screenSize.Y - 48) * ratio)
         end
+        local fitScale = designWidth and width / designWidth or 1
+        local builtWidth = designWidth or width
+        panel.Size = UDim2.fromOffset(math.max(1, builtWidth), math.max(1, builtWidth / ratio))
+        panel:SetAttribute("Fit", fitScale)
+        if panel.Visible and panel ~= closingPanel then
+            panel.UIScale.Scale = fitScale
+        end
+    end
+end
+local function layoutMenus()
+    local screenSize = gui.AbsoluteSize
+    if screenSize.X <= 0 or screenSize.Y <= 0 then
+        return
+    end
+    extendDimPastInsets(screenSize)
+    local compact = math.min(screenSize.X, screenSize.Y) < 600
+    local desktopScale = compact and math.min(1, screenSize.X / 600, screenSize.Y / 560) or 1
+    -- Phone buttons are 20% smaller; desktop keeps its original size.
+    sideScale.Scale = compact and math.clamp(screenSize.Y * 0.15, 44, 52) / 92 or desktopScale
+    sideButtons.AnchorPoint = compact and Vector2.new(0, 0) or Vector2.new(0, 0.5)
+    sideButtons.Position = compact and UDim2.fromOffset(10, screenSize.X < screenSize.Y and 82 or 48)
+        or UDim2.new(0, 16, 0.5, 0)
+    for _, name in { "Plot", "Index", "Quests", "VipShop" } do
+        fitPanelToScreen(name, screenSize, compact)
     end
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutMenus)
@@ -73,40 +113,44 @@ if workspace.CurrentCamera then
     workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(layoutMenus)
 end
 layoutMenus()
-local remotes = RS:WaitForChild("GameMenu"):WaitForChild("Remotes")
+-- Remotes + shared modules (WaitForChild yields until the server/replication has created them).
+local remotes = ReplicatedStorage:WaitForChild("GameMenu"):WaitForChild("Remotes")
 local GetState, Action, Changed =
     remotes:WaitForChild("GetState"), remotes:WaitForChild("Action"), remotes:WaitForChild("Changed")
-local Config = require(RS.GameMenu.Config)
-local UISound = require(RS:WaitForChild("UISound"))
+local Config = require(ReplicatedStorage.GameMenu.Config)
+local UISound = require(ReplicatedStorage:WaitForChild("UISound"))
 
+-- ===== 2. Shared UI primitives: palette, create / box / text / button =====
+
+-- DISABLED (returns immediately; nothing calls it). Kept for reference.
 -- ADD STUDS: put the stud pattern inside any frame.   addStuds(frame, size, strength)
 --   size = stud size in pixels (smaller = smaller studs) · strength: 0 = strong, 1 = invisible
-local function addStuds(frame, size, strength)
+local function _addStuds(frame, size, strength)
     do
         return
     end
-    local im = Instance.new("ImageLabel")
-    im.Name = "StudPattern"
-    im.BackgroundTransparency = 1
-    im.Image = "rbxassetid://95251902376685"
-    im.ScaleType = Enum.ScaleType.Tile
-    im.TileSize = UDim2.fromOffset(size or 18, size or 18)
-    im.ImageTransparency = strength or 0.5
-    im.Size = UDim2.fromScale(1, 1)
-    im.ZIndex = frame.ZIndex
-    local c = frame:FindFirstChildOfClass("UICorner")
-    if c then
-        c:Clone().Parent = im
+    local pattern = Instance.new("ImageLabel")
+    pattern.Name = "StudPattern"
+    pattern.BackgroundTransparency = 1
+    pattern.Image = "rbxassetid://95251902376685"
+    pattern.ScaleType = Enum.ScaleType.Tile
+    pattern.TileSize = UDim2.fromOffset(size or 18, size or 18)
+    pattern.ImageTransparency = strength or 0.5
+    pattern.Size = UDim2.fromScale(1, 1)
+    pattern.ZIndex = frame.ZIndex
+    local corner = frame:FindFirstChildOfClass("UICorner")
+    if corner then
+        corner:Clone().Parent = pattern
     end
-    im.Parent = frame
-    return im
+    pattern.Parent = frame
+    return pattern
 end
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
 local INK = Color3.fromRGB(17, 23, 26) -- Check-UI outline
 local CREAM = Color3.fromRGB(42, 31, 74) -- recessed card (Figma night)
 local GREEN = Color3.fromRGB(67, 220, 78)
 local GREY = Color3.fromRGB(122, 129, 145)
-local RARITY = {
+local RARITY_COLORS = {
     Common = Color3.fromRGB(150, 155, 165),
     Uncommon = Color3.fromRGB(70, 180, 70),
     Rare = Color3.fromRGB(60, 130, 230),
@@ -114,21 +158,24 @@ local RARITY = {
     Legendary = Color3.fromRGB(235, 175, 30),
 }
 
-local FX = {
+local FX_IMAGES = {
     rays = "rbxthumb://type=Asset&id=110993746998606&w=420&h=420",
     glow = "rbxthumb://type=Asset&id=85372533044428&w=420&h=420",
     sparkle = "rbxthumb://type=Asset&id=87376394612367&w=420&h=420",
     star = "rbxthumb://type=Asset&id=81892896754419&w=420&h=420",
 }
-local TIER = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5 }
-local function new(class, props, parent)
-    local o = Instance.new(class)
-    for k, v in props do
-        o[k] = v
+local RARITY_TIER = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5 }
+-- create(className, props, parent): new instance with `props` applied, parented last.
+local function create(className, props, parent)
+    local instance = Instance.new(className)
+    for property, value in props do
+        instance[property] = value
     end
-    o.Parent = parent
-    return o
+    instance.Parent = parent
+    return instance
 end
+-- box(parent, cx, cy, w, h, props): centred (AnchorPoint 0.5) scale-sized instance; props.Class picks the
+-- class (default Frame), transparent background and ZIndex 7 unless props override them.
 local function box(parent, cx, cy, w, h, props)
     props = props or {}
     local class = props.Class or "Frame"
@@ -139,11 +186,14 @@ local function box(parent, cx, cy, w, h, props)
     props.BackgroundTransparency = props.BackgroundTransparency or 1
     props.BorderSizePixel = 0
     props.ZIndex = props.ZIndex or 7
-    return new(class, props, parent)
+    return create(class, props, parent)
 end
+-- text(parent, str, color, props): scaled Fredoka label with an outline. Dark colours are forced to white so
+-- labels stay readable on the dark cards. props: Size, Position, AnchorPoint, X (alignment), ZIndex,
+-- Max (max text size, default 22), Stroke (outline thickness, min 1.6).
 local function text(parent, str, color, props)
     props = props or {}
-    local l = new("TextLabel", {
+    local label = create("TextLabel", {
         BackgroundTransparency = 1,
         Size = props.Size or UDim2.fromScale(1, 1),
         Position = props.Position or UDim2.new(),
@@ -157,17 +207,18 @@ local function text(parent, str, color, props)
         ZIndex = props.ZIndex or 8,
     }, parent)
     do
-        local c = l.TextColor3
-        if 0.299 * c.R + 0.587 * c.G + 0.114 * c.B < 0.42 then
-            l.TextColor3 = Color3.new(1, 1, 1)
+        local textColor = label.TextColor3
+        if 0.299 * textColor.R + 0.587 * textColor.G + 0.114 * textColor.B < 0.42 then
+            label.TextColor3 = Color3.new(1, 1, 1)
         end
     end -- readable on dark cards
-    new("UITextSizeConstraint", { MaxTextSize = props.Max or 22 }, l)
-    new("UIStroke", { Color = INK, Thickness = math.max(props.Stroke or 0, 1.6) }, l)
-    return l
+    create("UITextSizeConstraint", { MaxTextSize = props.Max or 22 }, label)
+    create("UIStroke", { Color = INK, Thickness = math.max(props.Stroke or 0, 1.6) }, label)
+    return label
 end
-local function button(parent, cx, cy, w, h, label, color)
-    local b = box(parent, cx, cy, w, h, {
+-- button(parent, cx, cy, w, h, labelText, color): studded 3D TextButton (default green) with Click/Hover sounds.
+local function button(parent, cx, cy, w, h, labelText, color)
+    local textButton = box(parent, cx, cy, w, h, {
         Class = "TextButton",
         BackgroundTransparency = 0,
         BackgroundColor3 = color or GREEN,
@@ -175,28 +226,28 @@ local function button(parent, cx, cy, w, h, label, color)
         AutoButtonColor = true,
         ZIndex = 8,
     })
-    new("UIStroke", {
+    create("UIStroke", {
         Color = Color3.new(1, 1, 1),
         Thickness = 3,
         LineJoinMode = Enum.LineJoinMode.Round,
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-    }, b)
-    new("UICorner", { CornerRadius = UDim.new(0, 10) }, b) -- v2
-    local st = new("ImageLabel", {
+    }, textButton)
+    create("UICorner", { CornerRadius = UDim.new(0, 10) }, textButton) -- v2
+    local _studTexture = create("ImageLabel", {
         BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1),
         Image = "rbxassetid://132561191216691",
         ScaleType = Enum.ScaleType.Tile,
         TileSize = UDim2.fromOffset(22, 22),
         ZIndex = 8,
-    }, b)
-    new(
+    }, textButton)
+    create(
         "UIGradient",
         { Rotation = 90, Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(190, 190, 190)) },
-        b
+        textButton
     )
     do
-        local bv = new("Frame", {
+        local bevel = create("Frame", {
             BackgroundColor3 = Color3.new(0, 0, 0),
             BackgroundTransparency = 0.5,
             BorderSizePixel = 0,
@@ -204,40 +255,43 @@ local function button(parent, cx, cy, w, h, label, color)
             Position = UDim2.fromScale(0, 1),
             Size = UDim2.new(1, 0, 0, 6),
             ZIndex = 8,
-        }, b)
-        new("UICorner", { CornerRadius = UDim.new(0, 10) }, bv)
-        local gl = new("Frame", {
+        }, textButton)
+        create("UICorner", { CornerRadius = UDim.new(0, 10) }, bevel)
+        local shine = create("Frame", {
             BackgroundColor3 = Color3.new(1, 1, 1),
             BackgroundTransparency = 0.7,
             BorderSizePixel = 0,
             Position = UDim2.new(0, 8, 0, 4),
             Size = UDim2.new(1, -16, 0, 4),
             ZIndex = 8,
-        }, b)
-        new("UICorner", { CornerRadius = UDim.new(1, 0) }, gl)
+        }, textButton)
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }, shine)
     end -- 3D bevel + shine
-    text(b, label, Color3.new(1, 1, 1), {
+    text(textButton, labelText, Color3.new(1, 1, 1), {
         Stroke = 2,
         ZIndex = 9,
         Size = UDim2.fromScale(0.85, 0.7),
         Position = UDim2.fromScale(0.5, 0.5),
         AnchorPoint = Vector2.new(0.5, 0.5),
     })
-    b.Activated:Connect(function()
+    textButton.Activated:Connect(function()
         UISound.Play("Click")
     end)
-    b.MouseEnter:Connect(function()
+    textButton.MouseEnter:Connect(function()
         UISound.Play("Hover")
     end)
-    return b
+    return textButton
 end
+-- Destroys every child of `layer`.
 local function clear(layer)
-    for _, c in layer:GetChildren() do
-        c:Destroy()
+    for _, child in layer:GetChildren() do
+        child:Destroy()
     end
 end
+-- ===== 3. Clean skin: themed header, divider and 3D close button, applied on first open =====
+
 -- CLEAN SKIN (Check-UI style + square studs): solid canvas, themed header, 2-tier divider, 3D close button.
-local STUDS = "rbxassetid://132561191216691"
+local STUDS_IMAGE = "rbxassetid://132561191216691"
 local SKINS = {
     Index = {
         title = "INDEX",
@@ -269,30 +323,32 @@ local SKINS = {
         div = Color3.fromRGB(125, 0, 18),
     },
 }
-local function studLayer(f, size, transp)
-    local im = new("ImageLabel", {
+-- Tiled stud texture covering `frame` (copies its UICorner).
+local function studLayer(frame, tileSize, transparency)
+    local studs = create("ImageLabel", {
         Name = "Studs",
         BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1),
-        Image = STUDS,
+        Image = STUDS_IMAGE,
         ScaleType = Enum.ScaleType.Tile,
-        TileSize = UDim2.fromOffset(size, size),
-        ImageTransparency = transp or 0,
-        ZIndex = f.ZIndex,
-    }, f)
-    local c = f:FindFirstChildOfClass("UICorner")
-    if c then
-        c:Clone().Parent = im
+        TileSize = UDim2.fromOffset(tileSize, tileSize),
+        ImageTransparency = transparency or 0,
+        ZIndex = frame.ZIndex,
+    }, frame)
+    local corner = frame:FindFirstChildOfClass("UICorner")
+    if corner then
+        corner:Clone().Parent = studs
     end
-    return im
+    return studs
 end
+-- Idempotent: does nothing for panels without a SKINS entry or that already have a "CleanSkin" child.
 local function skinPanel(panel)
-    local th = SKINS[panel.Name]
-    if not th or panel:FindFirstChild("CleanSkin") then
+    local theme = SKINS[panel.Name]
+    if not theme or panel:FindFirstChild("CleanSkin") then
         return
     end
     panel.ImageTransparency = 1
-    new("Frame", {
+    create("Frame", {
         Name = "CleanBase",
         BackgroundColor3 = Color3.new(0, 0, 0),
         BorderSizePixel = 0,
@@ -300,37 +356,37 @@ local function skinPanel(panel)
         Size = UDim2.fromScale(1, 1),
         ZIndex = 0,
     }, panel) -- hard shadow
-    local skin = new(
+    local skin = create(
         "Frame",
         { Name = "CleanSkin", BackgroundColor3 = Color3.fromRGB(59, 88, 102), Size = UDim2.fromScale(1, 1), ZIndex = 1 },
         panel
     )
-    new("UIStroke", {
+    create("UIStroke", {
         Color = Color3.new(1, 1, 1),
         Thickness = 5,
         LineJoinMode = Enum.LineJoinMode.Miter,
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
     }, skin)
     skin.BackgroundColor3 = Color3.new(1, 1, 1)
-    new(
+    create(
         "UIGradient",
         { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(47, 35, 87), Color3.fromRGB(20, 13, 43)) },
         skin
     )
     studLayer(skin, 30, 0.6) -- quiet body texture so content reads first
     -- header
-    local head = new("Frame", {
+    local header = create("Frame", {
         Name = "Header",
         BackgroundColor3 = Color3.new(1, 1, 1),
         BorderSizePixel = 0,
         Size = UDim2.new(1, 0, 0.15, 0),
         ZIndex = 2,
     }, skin)
-    new("UIGradient", { Rotation = 90, Color = ColorSequence.new(th.grad[1], th.grad[2]) }, head)
-    studLayer(head, 30, 0)
-    local t = new("TextLabel", {
+    create("UIGradient", { Rotation = 90, Color = ColorSequence.new(theme.grad[1], theme.grad[2]) }, header)
+    studLayer(header, 30, 0)
+    local titleLabel = create("TextLabel", {
         BackgroundTransparency = 1,
-        Text = th.title,
+        Text = theme.title,
         FontFace = FONT,
         TextScaled = true,
         TextColor3 = Color3.new(1, 1, 1),
@@ -338,10 +394,10 @@ local function skinPanel(panel)
         Position = UDim2.fromScale(0.5, 0.52),
         Size = UDim2.fromScale(0.6, 0.62),
         ZIndex = 4,
-    }, head)
-    new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 4 }, t)
+    }, header)
+    create("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 4 }, titleLabel)
     -- 2-tier shadow divider
-    new("Frame", {
+    create("Frame", {
         BackgroundColor3 = Color3.new(0, 0, 0),
         BorderSizePixel = 0,
         Position = UDim2.new(0, 0, 0.15, 0),
@@ -349,34 +405,34 @@ local function skinPanel(panel)
         ZIndex = 3,
     }, skin)
     -- 3D beveled square close button (restyles the existing Close so its click still works)
-    local cb = panel:FindFirstChild("Close")
-    if cb then
-        for _, c in cb:GetChildren() do
-            if not c:IsA("UIScale") then
-                c:Destroy()
+    local closeButton = panel:FindFirstChild("Close")
+    if closeButton then
+        for _, child in closeButton:GetChildren() do
+            if not child:IsA("UIScale") then
+                child:Destroy()
             end
         end
-        cb.AnchorPoint = Vector2.new(0.5, 0.5)
-        cb.Position = UDim2.new(1, -30, 0.075, 0)
-        cb.Size = UDim2.fromOffset(42, 42)
-        cb.Text = ""
-        cb.BackgroundColor3 = Color3.new(0, 0, 0)
-        cb.AutoButtonColor = false
-        cb.ZIndex = 25
-        new(
+        closeButton.AnchorPoint = Vector2.new(0.5, 0.5)
+        closeButton.Position = UDim2.new(1, -30, 0.075, 0)
+        closeButton.Size = UDim2.fromOffset(42, 42)
+        closeButton.Text = ""
+        closeButton.BackgroundColor3 = Color3.new(0, 0, 0)
+        closeButton.AutoButtonColor = false
+        closeButton.ZIndex = 25
+        create(
             "UIStroke",
             { Color = Color3.new(0, 0, 0), Thickness = 2.8, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-            cb
+            closeButton
         )
-        local face = new("Frame", {
+        local face = create("Frame", {
             Name = "Face",
             BackgroundColor3 = Color3.new(1, 1, 1),
             BorderSizePixel = 0,
             Size = UDim2.new(1, 0, 1, -5),
             ZIndex = 26,
-        }, cb)
+        }, closeButton)
         face.BackgroundColor3 = Color3.fromRGB(232, 48, 48)
-        local inner = new("Frame", {
+        local _inner = create("Frame", {
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
@@ -384,7 +440,7 @@ local function skinPanel(panel)
             ZIndex = 27,
         }, face)
 
-        local x = new("TextLabel", {
+        local closeGlyph = create("TextLabel", {
             BackgroundTransparency = 1,
             Text = "X",
             FontFace = FONT,
@@ -393,25 +449,32 @@ local function skinPanel(panel)
             Size = UDim2.fromScale(1, 1),
             ZIndex = 28,
         }, face)
-        new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 3 }, x)
-        local sc = cb:FindFirstChildOfClass("UIScale") or new("UIScale", {}, cb)
-        cb.MouseEnter:Connect(function()
-            TweenService:Create(sc, TweenInfo.new(0.08), { Scale = 1.08 }):Play()
+        create("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 3 }, closeGlyph)
+        local pressScale = closeButton:FindFirstChildOfClass("UIScale") or create("UIScale", {}, closeButton)
+        closeButton.MouseEnter:Connect(function()
+            TweenService:Create(pressScale, TweenInfo.new(0.08), { Scale = 1.08 }):Play()
         end)
-        cb.MouseLeave:Connect(function()
-            TweenService:Create(sc, TweenInfo.new(0.08), { Scale = 1 }):Play()
+        closeButton.MouseLeave:Connect(function()
+            TweenService:Create(pressScale, TweenInfo.new(0.08), { Scale = 1 }):Play()
         end)
-        cb.MouseButton1Down:Connect(function()
-            TweenService:Create(sc, TweenInfo.new(0.05), { Scale = 0.92 }):Play()
+        closeButton.MouseButton1Down:Connect(function()
+            TweenService:Create(pressScale, TweenInfo.new(0.05), { Scale = 0.92 }):Play()
         end)
     end
 end
-local function layerOf(panel)
+-- The "Live" layer holds everything a RENDER fn builds; it is cleared on every refresh.
+local function liveLayerOf(panel)
     return panel:FindFirstChild("Live")
-        or new("Frame", { Name = "Live", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 7 }, panel)
+        or create(
+            "Frame",
+            { Name = "Live", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 7 },
+            panel
+        )
 end
 
-local toast = new("TextLabel", {
+-- ===== 4. Toast + GetState / Action wrappers =====
+
+local toast = create("TextLabel", {
     AnchorPoint = Vector2.new(0.5, 1),
     Position = UDim2.new(0.5, 0, 1, -110),
     Size = UDim2.new(1, -32, 0, 40),
@@ -422,60 +485,64 @@ local toast = new("TextLabel", {
     Visible = false,
     ZIndex = 20,
 }, gui)
-new("UIStroke", { Color = INK, Thickness = 1.6, ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual }, toast)
-new("UICorner", { CornerRadius = UDim.new(0, 12) }, toast)
-new("UIStroke", { Color = INK, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, toast)
-new("UIPadding", {
+create("UIStroke", { Color = INK, Thickness = 1.6, ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual }, toast)
+create("UICorner", { CornerRadius = UDim.new(0, 12) }, toast)
+create("UIStroke", { Color = INK, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, toast)
+create("UIPadding", {
     PaddingLeft = UDim.new(0, 12),
     PaddingRight = UDim.new(0, 12),
     PaddingTop = UDim.new(0, 6),
     PaddingBottom = UDim.new(0, 6),
 }, toast)
-new("UISizeConstraint", { MaxSize = Vector2.new(420, 40) }, toast)
+create("UISizeConstraint", { MaxSize = Vector2.new(420, 40) }, toast)
 local toastId = 0
-local function say(msg)
-    if not msg or msg == "" then
+local function showToast(message)
+    if not message or message == "" then
         return
     end
     toastId += 1
-    local my = toastId
-    toast.Text = msg
+    local thisToastId = toastId
+    toast.Text = message
     toast.Visible = true
     task.delay(2.2, function()
-        if toastId == my then
+        if toastId == thisToastId then
             toast.Visible = false
         end
     end)
 end
-local refresh
+local refresh -- assigned in section 10; runAction calls it after a successful action
+-- One Action call at a time (client-side guard; the server also serialises and rate-limits).
+-- Returns the server's ok flag; the server's message (if any) is shown as a toast.
 local actionBusy = false
-local function act(name, args)
+local function runAction(actionName, args)
     if actionBusy then
         return false
     end
     actionBusy = true
-    local ok, res, msg = pcall(function()
-        return Action:InvokeServer(name, args)
+    local ok, success, message = pcall(function()
+        return Action:InvokeServer(actionName, args)
     end)
     actionBusy = false
     if not ok then
-        say("Server error")
+        showToast("Server error")
         return false
     end
-    say(msg)
-    if res then
-        if name and name:find("Claim") then
+    showToast(message)
+    if success then
+        if actionName and actionName:find("Claim") then
             UISound.Play("Claim")
-        elseif name and (name:find("Upgrade") or name:find("Unlock") or name:find("Buy")) then
+        elseif actionName and (actionName:find("Upgrade") or actionName:find("Unlock") or actionName:find("Buy")) then
             UISound.Play("Purchase")
         end
         if refresh then
             refresh()
         end
     end
-    return res
+    return success
 end
-local function fetch(section)
+-- GetState wrapper: returns data, or nil + a message to show. Retries (up to 3 tries) only on the
+-- server's rate-limit reply "Please wait a moment.".
+local function fetchState(section)
     for attempt = 1, 3 do
         local ok, data = pcall(function()
             return GetState:InvokeServer(section)
@@ -494,33 +561,43 @@ local function fetch(section)
     return nil, "Couldn't refresh. Please reopen the menu."
 end
 
+-- RENDER[panelName](panel) rebuilds that panel's Live layer; called through refresh() inside a pcall.
 local RENDER = {}
 
-local EDGE_C, CARD_C, CELL_C = Color3.fromRGB(150, 120, 230), Color3.fromRGB(42, 31, 74), Color3.fromRGB(53, 40, 98)
-local function accentOf(inst)
-    while inst and inst.Parent ~= gui do
-        inst = inst.Parent
+local _EDGE_COLOR, CARD_COLOR, CELL_COLOR =
+    Color3.fromRGB(150, 120, 230), Color3.fromRGB(42, 31, 74), Color3.fromRGB(53, 40, 98)
+-- Accent colour of the panel (direct child of the ScreenGui) that contains `instance`.
+local function accentOf(instance)
+    while instance and instance.Parent ~= gui do
+        instance = instance.Parent
     end
-    local th = inst and SKINS[inst.Name]
-    return th and th.grad[1] or Color3.fromRGB(255, 196, 60)
+    local theme = instance and SKINS[instance.Name]
+    return theme and theme.grad[1] or Color3.fromRGB(255, 196, 60)
 end
-local function card(parent, cx, cy, w, h, color, r, z)
-    local f =
-        box(parent, cx, cy, w, h, { BackgroundTransparency = 0, BackgroundColor3 = color or CARD_C, ZIndex = z or 6 })
-    new("UIStroke", {
+-- Rounded studded card; cards inside an "Inner" box also get an accent strip in the menu colour.
+local function card(parent, cx, cy, w, h, color, _radius, zIndex)
+    local cardFrame = box(
+        parent,
+        cx,
+        cy,
+        w,
+        h,
+        { BackgroundTransparency = 0, BackgroundColor3 = color or CARD_COLOR, ZIndex = zIndex or 6 }
+    )
+    create("UIStroke", {
         Color = Color3.new(1, 1, 1),
         Thickness = 3,
         Transparency = 0,
         LineJoinMode = Enum.LineJoinMode.Round,
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-    }, f)
-    new("UICorner", { CornerRadius = UDim.new(0, 10) }, f) -- v2
-    new(
+    }, cardFrame)
+    create("UICorner", { CornerRadius = UDim.new(0, 10) }, cardFrame) -- v2
+    create(
         "UIGradient",
         { Rotation = 90, Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(165, 160, 185)) },
-        f
+        cardFrame
     ) -- figma: lighter top, darker base
-    new("ImageLabel", {
+    create("ImageLabel", {
         Name = "Studs",
         BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1),
@@ -528,28 +605,30 @@ local function card(parent, cx, cy, w, h, color, r, z)
         ScaleType = Enum.ScaleType.Tile,
         TileSize = UDim2.fromOffset(22, 22),
         ImageTransparency = 0.72,
-        ZIndex = f.ZIndex,
-    }, f)
+        ZIndex = cardFrame.ZIndex,
+    }, cardFrame)
     if parent:GetAttribute("Inner") then -- main cards: accent strip in the menu colour
-        new("Frame", {
+        create("Frame", {
             Name = "Accent",
             BackgroundColor3 = accentOf(parent),
             BorderSizePixel = 0,
             Size = UDim2.new(0, 6, 1, 0),
-            ZIndex = f.ZIndex,
-        }, f)
+            ZIndex = cardFrame.ZIndex,
+        }, cardFrame)
     end
-    return f
+    return cardFrame
 end
-local function innerOf(L)
-    local b = box(L, 0.5, 0.58, 0.9, 0.72)
-    b:SetAttribute("Inner", true)
-    return b
+-- Unused.
+local function _innerOf(layer)
+    local innerBox = box(layer, 0.5, 0.58, 0.9, 0.72)
+    innerBox:SetAttribute("Inner", true)
+    return innerBox
 end
 
--- ===== UI v3 (Figma "Index v3 · Seasons" / "Quest v3") =====
-local W3, K3 = Color3.new(1, 1, 1), Color3.new(0, 0, 0)
-local GI = {
+-- ===== 5. v3 cards, tabs and icons =====
+-- UI v3 (Figma "Index v3 · Seasons" / "Quest v3")
+local WHITE, BLACK = Color3.new(1, 1, 1), Color3.new(0, 0, 0)
+local GAME_ICONS = {
     Book = "rbxassetid://104286530759848",
     Scroll = "rbxassetid://79414603176573",
     Key = "rbxassetid://86826769942442",
@@ -571,91 +650,101 @@ local GI = {
     Quest = "rbxassetid://81682814875935",
     Cash = "rbxassetid://113092821462846",
 }
-local function gicon(parent, img, cx, cy, s, z)
-    if img == "EGG" then -- the real Limited (Unknown) egg model, framed in a small viewport
-        local vp = new("ViewportFrame", {
+-- gameIcon(parent, image, cx, cy, iconSize, zIndex): square icon (RelativeYY); the special image "EGG"
+-- shows the real UnknownEgg shop model in a small ViewportFrame instead.
+local function gameIcon(parent, image, cx, cy, iconSize, zIndex)
+    if image == "EGG" then -- the real Limited (Unknown) egg model, framed in a small viewport
+        local viewport = create("ViewportFrame", {
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(cx, cy),
-            Size = UDim2.fromScale(s, s),
+            Size = UDim2.fromScale(iconSize, iconSize),
             SizeConstraint = Enum.SizeConstraint.RelativeYY,
-            ZIndex = z or 12,
+            ZIndex = zIndex or 12,
             Ambient = Color3.fromRGB(210, 210, 230),
             LightColor = Color3.fromRGB(255, 245, 225),
             LightDirection = Vector3.new(-1, -1, -1),
         }, parent)
-        local SM = RS:FindFirstChild("ShopSystem") and RS.ShopSystem:FindFirstChild("ShopModels")
-        local src = SM and SM:FindFirstChild("UnknownEgg")
-        if src then
-            local egg = src:Clone()
-            egg.Parent = vp
-            local cf, size = egg:GetBoundingBox()
-            egg:PivotTo(CFrame.new(-cf.Position) * egg:GetPivot())
-            local cam = new("Camera", { FieldOfView = 30 }, vp)
-            vp.CurrentCamera = cam
-            cam.CFrame = CFrame.lookAt(Vector3.new(0, size.Y * 0.05, -size.Magnitude * 1.55), Vector3.zero)
+        local shopModels = ReplicatedStorage:FindFirstChild("ShopSystem")
+            and ReplicatedStorage.ShopSystem:FindFirstChild("ShopModels")
+        local eggTemplate = shopModels and shopModels:FindFirstChild("UnknownEgg")
+        if eggTemplate then
+            local egg = eggTemplate:Clone()
+            egg.Parent = viewport
+            local boundsCFrame, boundsSize = egg:GetBoundingBox()
+            egg:PivotTo(CFrame.new(-boundsCFrame.Position) * egg:GetPivot())
+            local camera = create("Camera", { FieldOfView = 30 }, viewport)
+            viewport.CurrentCamera = camera
+            camera.CFrame =
+                CFrame.lookAt(Vector3.new(0, boundsSize.Y * 0.05, -boundsSize.Magnitude * 1.55), Vector3.zero)
         end
-        return vp
+        return viewport
     end
-    local im = new("ImageLabel", {
+    local iconImage = create("ImageLabel", {
         BackgroundTransparency = 1,
-        Image = img,
+        Image = image,
         ScaleType = Enum.ScaleType.Fit,
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(cx, cy),
-        Size = UDim2.fromScale(s, s),
+        Size = UDim2.fromScale(iconSize, iconSize),
         SizeConstraint = Enum.SizeConstraint.RelativeYY,
-        ZIndex = z or 12,
+        ZIndex = zIndex or 12,
     }, parent)
-    return im
+    return iconImage
 end
-local function v3card(parent, cx, cy, w, h, color, z)
-    local f = box(parent, cx, cy, w, h, { BackgroundTransparency = 0, BackgroundColor3 = color, ZIndex = z or 8 })
-    new("UICorner", { CornerRadius = UDim.new(0, 10) }, f)
-    new("UIStroke", {
-        Color = W3,
+local function v3card(parent, cx, cy, w, h, color, zIndex)
+    local cardFrame =
+        box(parent, cx, cy, w, h, { BackgroundTransparency = 0, BackgroundColor3 = color, ZIndex = zIndex or 8 })
+    create("UICorner", { CornerRadius = UDim.new(0, 10) }, cardFrame)
+    create("UIStroke", {
+        Color = WHITE,
         Thickness = 3,
         LineJoinMode = Enum.LineJoinMode.Round,
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-    }, f)
-    new("UIGradient", { Rotation = 90, Color = ColorSequence.new(W3, Color3.fromRGB(170, 165, 190)) }, f)
-    new("ImageLabel", {
+    }, cardFrame)
+    create("UIGradient", { Rotation = 90, Color = ColorSequence.new(WHITE, Color3.fromRGB(170, 165, 190)) }, cardFrame)
+    create("ImageLabel", {
         Name = "Studs",
         BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1),
-        Image = STUDS,
+        Image = STUDS_IMAGE,
         ScaleType = Enum.ScaleType.Tile,
         TileSize = UDim2.fromOffset(22, 22),
         ImageTransparency = 0.7,
-        ZIndex = f.ZIndex,
-    }, f)
-    return f
+        ZIndex = cardFrame.ZIndex,
+    }, cardFrame)
+    return cardFrame
 end
-local function v3tab(parent, cx, cy, w, h, label, color, on, onClick, sub, img)
-    local b = v3card(parent, cx, cy, w, h, on and color or Color3.fromRGB(53, 40, 98), 9)
-    b = b -- frame; clickable overlay
-    local hit =
-        new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 14 }, b)
-    if img then
-        local ic = gicon(b, img, 0.13, 0.5, 0.9, 13)
-        if on then
+-- v3tab(parent, cx, cy, w, h, label, color, isActive, onClick, subtitle, image): tab card; the active tab
+-- pulses. Without onClick the tab is dimmed and not clickable (e.g. "coming soon").
+local function v3tab(parent, cx, cy, w, h, label, color, isActive, onClick, subtitle, image)
+    local tabFrame = v3card(parent, cx, cy, w, h, isActive and color or Color3.fromRGB(53, 40, 98), 9)
+    tabFrame = tabFrame -- frame; clickable overlay
+    local hitbox = create(
+        "TextButton",
+        { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 14 },
+        tabFrame
+    )
+    if image then
+        local tabIcon = gameIcon(tabFrame, image, 0.13, 0.5, 0.9, 13)
+        if isActive then
             TweenService:Create(
-                ic,
+                tabIcon,
                 TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
                 { Rotation = 8 }
             ):Play()
         end
     end
-    text(b, label, W3, {
+    text(tabFrame, label, WHITE, {
         Stroke = 2,
         Max = 20,
-        Size = UDim2.fromScale(img and 0.66 or 0.9, sub and 0.5 or 0.62),
-        Position = UDim2.fromScale(img and 0.6 or 0.5, sub and 0.36 or 0.5),
+        Size = UDim2.fromScale(image and 0.66 or 0.9, subtitle and 0.5 or 0.62),
+        Position = UDim2.fromScale(image and 0.6 or 0.5, subtitle and 0.36 or 0.5),
         AnchorPoint = Vector2.new(0.5, 0.5),
         ZIndex = 12,
     })
-    if sub then
-        text(b, sub, Color3.fromRGB(230, 225, 255), {
+    if subtitle then
+        text(tabFrame, subtitle, Color3.fromRGB(230, 225, 255), {
             Max = 12,
             Size = UDim2.fromScale(0.9, 0.3),
             Position = UDim2.fromScale(0.5, 0.78),
@@ -663,97 +752,87 @@ local function v3tab(parent, cx, cy, w, h, label, color, on, onClick, sub, img)
             ZIndex = 12,
         })
     end
-    local st = b:FindFirstChildOfClass("UIStroke")
-    if on then
+    local stroke = tabFrame:FindFirstChildOfClass("UIStroke")
+    if isActive then
         TweenService:Create(
-            st,
+            stroke,
             TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
             { Thickness = 4.5 }
         ):Play()
     end
     if onClick then
-        local sc = new("UIScale", {}, b)
-        hit.MouseEnter:Connect(function()
+        local hoverScale = create("UIScale", {}, tabFrame)
+        hitbox.MouseEnter:Connect(function()
             UISound.Play("Hover")
-            TweenService:Create(sc, TweenInfo.new(0.1), { Scale = 1.05 }):Play()
+            TweenService:Create(hoverScale, TweenInfo.new(0.1), { Scale = 1.05 }):Play()
         end)
-        hit.MouseLeave:Connect(function()
-            TweenService:Create(sc, TweenInfo.new(0.1), { Scale = 1 }):Play()
+        hitbox.MouseLeave:Connect(function()
+            TweenService:Create(hoverScale, TweenInfo.new(0.1), { Scale = 1 }):Play()
         end)
-        hit.Activated:Connect(function()
+        hitbox.Activated:Connect(function()
             UISound.Play("Click")
             onClick()
         end)
     else
-        b.BackgroundTransparency = 0.35
+        tabFrame.BackgroundTransparency = 0.35
     end
-    return b
+    return tabFrame
 end
-local function setHeader(panel, title, c1, c2)
+-- Recolours / retitles the clean-skin header of `panel` (no-op before skinPanel ran).
+local function setHeader(panel, title, topColor, bottomColor)
     local skin = panel:FindFirstChild("CleanSkin")
-    local head = skin and skin:FindFirstChild("Header")
-    if not head then
+    local header = skin and skin:FindFirstChild("Header")
+    if not header then
         return
     end
-    local g = head:FindFirstChildOfClass("UIGradient")
-    if g then
-        g.Color = ColorSequence.new(c1, c2)
+    local gradient = header:FindFirstChildOfClass("UIGradient")
+    if gradient then
+        gradient.Color = ColorSequence.new(topColor, bottomColor)
     end
-    local t = head:FindFirstChildOfClass("TextLabel")
-    if t then
-        t.Text = title
+    local titleLabel = header:FindFirstChildOfClass("TextLabel")
+    if titleLabel then
+        titleLabel.Text = title
     end
 end
-local function hms(sec)
-    sec = math.max(0, math.floor(sec))
-    local d = sec // 86400
-    return (d > 0 and (d .. "d ") or "")
-        .. string.format("%02d:%02d:%02d", (sec // 3600) % 24, (sec // 60) % 60, sec % 60)
+-- "[Nd ]HH:MM:SS"; negative values clamp to 0.
+local function formatCountdown(seconds)
+    seconds = math.max(0, math.floor(seconds))
+    local days = seconds // 86400
+    return (days > 0 and (days .. "d ") or "")
+        .. string.format("%02d:%02d:%02d", (seconds // 3600) % 24, (seconds // 60) % 60, seconds % 60)
 end
 
+-- ===== 6. Index panel =====
+-- View state survives refreshes: season tab, rarity filter and the selected character id.
 local indexSeason = workspace:GetAttribute("HalloweenMode") and "Halloween" or "Original"
-local indexFilter, indexSel = "All", nil
-RENDER.Index = function(panel)
-    local data, err = fetch("index")
-    local L = layerOf(panel)
-    clear(L)
-    if not data then
-        text(box(L, 0.5, 0.5, 0.6, 0.08), err)
-        return
-    end
-    local HW = indexSeason == "Halloween"
-    local ORANGE = Color3.fromRGB(255, 140, 30)
-    if HW then
-        setHeader(panel, "HALLOWEEN INDEX", Color3.fromRGB(255, 160, 40), Color3.fromRGB(200, 60, 0))
-    else
-        setHeader(panel, "INDEX", SKINS.Index.grad[1], SKINS.Index.grad[2])
-    end
-    local inner = box(L, 0.5, 0.575, 0.94, 0.79)
-    local chars = {}
-    for i, c in data.catalog.characters do
-        if i <= 15 then
-            table.insert(chars, c)
-        end
-    end
-    local found = 0
-    for _, c in chars do
-        if data.discovered[c.id] == true then
-            found += 1
-        end
-    end
+local indexFilter, indexSelectedId = "All", nil
+local HALLOWEEN_ORANGE = Color3.fromRGB(255, 140, 30)
+-- Season tabs (Original / Halloween / Winter) + the Halloween countdown pill.
+local function buildIndexSeasonTabs(panel, content, characters, isHalloween)
     -- season tabs
-    local live = workspace:GetAttribute("HalloweenMode") == true
-    v3tab(inner, 0.09, 0.045, 0.17, 0.085, "ORIGINAL", Color3.fromRGB(60, 120, 240), not HW, function()
+    local isEventLive = workspace:GetAttribute("HalloweenMode") == true
+    v3tab(content, 0.09, 0.045, 0.17, 0.085, "ORIGINAL", Color3.fromRGB(60, 120, 240), not isHalloween, function()
         indexSeason = "Original"
         RENDER.Index(panel)
-    end, #chars .. " characters", GI.Book)
-    local ht = v3tab(inner, 0.275, 0.045, 0.19, 0.085, "🎃 HALLOWEEN", ORANGE, HW, function()
-        indexSeason = "Halloween"
-        RENDER.Index(panel)
-    end, live and "LIVE EVENT" or "event ended")
-    if live then
-        local tag = v3card(ht, 0.92, -0.12, 0.3, 0.42, Color3.fromRGB(230, 40, 60), 15)
-        text(tag, "LIVE", W3, {
+    end, #characters .. " characters", GAME_ICONS.Book)
+    local halloweenTab = v3tab(
+        content,
+        0.275,
+        0.045,
+        0.19,
+        0.085,
+        "🎃 HALLOWEEN",
+        HALLOWEEN_ORANGE,
+        isHalloween,
+        function()
+            indexSeason = "Halloween"
+            RENDER.Index(panel)
+        end,
+        isEventLive and "LIVE EVENT" or "event ended"
+    )
+    if isEventLive then
+        local liveBadge = v3card(halloweenTab, 0.92, -0.12, 0.3, 0.42, Color3.fromRGB(230, 40, 60), 15)
+        text(liveBadge, "LIVE", WHITE, {
             Stroke = 1.5,
             Max = 13,
             Size = UDim2.fromScale(0.9, 0.8),
@@ -761,22 +840,21 @@ RENDER.Index = function(panel)
             AnchorPoint = Vector2.new(0.5, 0.5),
             ZIndex = 16,
         })
-        local ts = new("UIScale", {}, tag)
-        TweenService
-            :Create(
-                ts,
-                TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                { Scale = 1.12 }
-            )
-            :Play()
+        local liveBadgeScale = create("UIScale", {}, liveBadge)
+        TweenService:Create(
+            liveBadgeScale,
+            TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+            { Scale = 1.12 }
+        ):Play()
     end
-    v3tab(inner, 0.46, 0.045, 0.16, 0.085, "🔒 WINTER", Color3.fromRGB(40, 36, 70), false, nil, "coming soon")
+    v3tab(content, 0.46, 0.045, 0.16, 0.085, "🔒 WINTER", Color3.fromRGB(40, 36, 70), false, nil, "coming soon")
     local endsAt = workspace:GetAttribute("HalloweenEndsAt")
-    if HW then
-        local tp = v3card(inner, 0.87, 0.045, 0.26, 0.075, Color3.fromRGB(110, 50, 190), 9)
-        local tl = text(
-            tp,
-            typeof(endsAt) == "number" and ("⏳ ENDS IN " .. hms(endsAt - os.time())) or "⏳ LIMITED EVENT",
+    if isHalloween then
+        local timerPill = v3card(content, 0.87, 0.045, 0.26, 0.075, Color3.fromRGB(110, 50, 190), 9)
+        local timerLabel = text(
+            timerPill,
+            typeof(endsAt) == "number" and ("⏳ ENDS IN " .. formatCountdown(endsAt - os.time()))
+                or "⏳ LIMITED EVENT",
             Color3.fromRGB(255, 220, 120),
             {
                 Stroke = 2,
@@ -789,22 +867,26 @@ RENDER.Index = function(panel)
         )
         if typeof(endsAt) == "number" then
             task.spawn(function()
-                while tl.Parent and panel.Visible do
-                    tl.Text = "⏳ ENDS IN " .. hms(endsAt - os.time())
+                while timerLabel.Parent and panel.Visible do
+                    timerLabel.Text = "⏳ ENDS IN " .. formatCountdown(endsAt - os.time())
                     task.wait(1)
                 end
             end)
         end
     end
+end
+-- "DISCOVERED n / m" strip with progress bar and the set-complete chip.
+local function buildIndexProgressStrip(content, characters, discoveredCount, isHalloween)
     -- progress strip
-    local ps = v3card(inner, 0.5, 0.155, 1, 0.1, HW and Color3.fromRGB(70, 30, 80) or Color3.fromRGB(33, 24, 69), 8)
-    if HW then
-        ps:FindFirstChildOfClass("UIStroke").Color = ORANGE
+    local progressStrip =
+        v3card(content, 0.5, 0.155, 1, 0.1, isHalloween and Color3.fromRGB(70, 30, 80) or Color3.fromRGB(33, 24, 69), 8)
+    if isHalloween then
+        progressStrip:FindFirstChildOfClass("UIStroke").Color = HALLOWEEN_ORANGE
     end
     text(
-        ps,
-        HW and "HALLOWEEN SET" or "DISCOVERED",
-        HW and Color3.fromRGB(255, 190, 110) or Color3.fromRGB(195, 180, 230),
+        progressStrip,
+        isHalloween and "HALLOWEEN SET" or "DISCOVERED",
+        isHalloween and Color3.fromRGB(255, 190, 110) or Color3.fromRGB(195, 180, 230),
         {
             Max = 14,
             Size = UDim2.fromScale(0.16, 0.36),
@@ -813,7 +895,7 @@ RENDER.Index = function(panel)
             ZIndex = 10,
         }
     )
-    text(ps, found .. " / " .. #chars, W3, {
+    text(progressStrip, discoveredCount .. " / " .. #characters, WHITE, {
         Stroke = 2,
         Max = 26,
         Size = UDim2.fromScale(0.12, 0.5),
@@ -821,32 +903,41 @@ RENDER.Index = function(panel)
         X = Enum.TextXAlignment.Left,
         ZIndex = 10,
     })
-    local track = new("Frame", {
+    local track = create("Frame", {
         BackgroundColor3 = Color3.fromRGB(13, 10, 20),
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.15, 0.32),
         Size = UDim2.fromScale(0.58, 0.36),
         ZIndex = 10,
-    }, ps)
-    new("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-    new("UIStroke", { Color = W3, Thickness = 2 }, track)
-    local fill = new("Frame", {
-        BackgroundColor3 = W3,
+    }, progressStrip)
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
+    create("UIStroke", { Color = WHITE, Thickness = 2 }, track)
+    local fill = create("Frame", {
+        BackgroundColor3 = WHITE,
         BorderSizePixel = 0,
-        Size = UDim2.fromScale(math.max(found / math.max(#chars, 1), 0.03), 1),
+        Size = UDim2.fromScale(math.max(discoveredCount / math.max(#characters, 1), 0.03), 1),
         ZIndex = 11,
     }, track)
-    new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
-    new("UIGradient", {
-        Color = HW and ColorSequence.new(Color3.fromRGB(255, 210, 60), Color3.fromRGB(255, 100, 0))
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+    create("UIGradient", {
+        Color = isHalloween and ColorSequence.new(Color3.fromRGB(255, 210, 60), Color3.fromRGB(255, 100, 0))
             or ColorSequence.new(Color3.fromRGB(130, 255, 110), Color3.fromRGB(40, 190, 60)),
     }, fill)
-    local rw = v3card(ps, 0.865, 0.5, 0.24, 0.6, HW and ORANGE or Color3.fromRGB(255, 214, 72), 10)
-    gicon(rw, GI.Trophy, 0.1, 0.5, 1.1, 13)
+    local rewardChip = v3card(
+        progressStrip,
+        0.865,
+        0.5,
+        0.24,
+        0.6,
+        isHalloween and HALLOWEEN_ORANGE or Color3.fromRGB(255, 214, 72),
+        10
+    )
+    gameIcon(rewardChip, GAME_ICONS.Trophy, 0.1, 0.5, 1.1, 13)
     text(
-        rw,
-        found >= #chars and "   SET COMPLETE!" or ("     " .. (#chars - found) .. " left to find"),
-        found >= #chars and W3 or INK,
+        rewardChip,
+        discoveredCount >= #characters and "   SET COMPLETE!"
+            or ("     " .. (#characters - discoveredCount) .. " left to find"),
+        discoveredCount >= #characters and WHITE or INK,
         {
             Max = 16,
             Size = UDim2.fromScale(0.92, 0.7),
@@ -855,230 +946,242 @@ RENDER.Index = function(panel)
             ZIndex = 12,
         }
     )
+end
+-- Rarity filter chips; clicking one sets indexFilter and re-renders.
+local function buildIndexRarityFilters(panel, content)
     -- rarity filters
     local FILTERS = { "All", "Common", "Uncommon", "Rare", "Epic", "Legendary" }
-    local fx = 0
-    for _, f in FILTERS do
-        local w = 0.05 + #f * 0.0075
-        local on = indexFilter == f
-        local col = f == "All" and W3 or RARITY[f]
-        local t = v3card(inner, fx + w / 2, 0.24, w, 0.05, on and col or Color3.fromRGB(53, 40, 98), 9)
-        text(t, string.upper(f), (on and f == "All") and INK or W3, {
+    local filterX = 0
+    for _, filterName in FILTERS do
+        local filterWidth = 0.05 + #filterName * 0.0075
+        local isActive = indexFilter == filterName
+        local filterColor = filterName == "All" and WHITE or RARITY_COLORS[filterName]
+        local filterChip = v3card(
+            content,
+            filterX + filterWidth / 2,
+            0.24,
+            filterWidth,
+            0.05,
+            isActive and filterColor or Color3.fromRGB(53, 40, 98),
+            9
+        )
+        text(filterChip, string.upper(filterName), (isActive and filterName == "All") and INK or WHITE, {
             Max = 13,
             Size = UDim2.fromScale(0.9, 0.75),
             Position = UDim2.fromScale(0.5, 0.5),
             AnchorPoint = Vector2.new(0.5, 0.5),
             ZIndex = 12,
         })
-        local hit =
-            new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 14 }, t)
-        hit.Activated:Connect(function()
+        local hitbox = create(
+            "TextButton",
+            { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 14 },
+            filterChip
+        )
+        hitbox.Activated:Connect(function()
             UISound.Play("Click")
-            indexFilter = f
+            indexFilter = filterName
             RENDER.Index(panel)
         end)
-        fx += w + 0.008
+        filterX += filterWidth + 0.008
     end
-    -- grid
-    local shown = {}
-    for _, c in chars do
-        if indexFilter == "All" or c.rarity == indexFilter then
-            table.insert(shown, c)
-        end
-    end
-    if not indexSel then
-        for _, c in chars do
-            if data.discovered[c.id] == true then
-                indexSel = c.id
-            end
-        end
-    end
-    local grid = box(inner, 0.34, 0.635, 0.68, 0.72)
-    for i, c in shown do
-        local got = data.discovered[c.id] == true
-        local col, row = (i - 1) % 5, math.floor((i - 1) / 5)
-        local ce = card(
-            grid,
-            0.1 + col * 0.2,
-            0.165 + row * 0.335,
-            0.185,
-            0.31,
-            got and (RARITY[c.rarity] or CELL_C) or Color3.fromRGB(28, 22, 46),
-            0.18,
-            7
-        )
-        if got then
-            local rc = RARITY[c.rarity] or GREY
-            local light = rc:Lerp(W3, 0.55)
-            local tier = TIER[c.rarity] or 6
-            ce.ClipsDescendants = true
-            local rays = new("ImageLabel", {
-                Name = "Rays",
-                BackgroundTransparency = 1,
-                Image = FX.rays,
-                ImageColor3 = light,
-                ImageTransparency = tier >= 3 and 0.45 or 0.7,
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromScale(0.5, 0.45),
-                Size = UDim2.fromScale(1.5, 1.5),
-                SizeConstraint = Enum.SizeConstraint.RelativeXX,
-                ZIndex = 7,
-            }, ce)
-            TweenService:Create(
+end
+-- One grid cell: discovered = rarity card with FX + click-to-select; otherwise a silhouette "???".
+local function buildIndexCell(panel, grid, i, character, data, isHalloween)
+    local isDiscovered = data.discovered[character.id] == true
+    local column, row = (i - 1) % 5, math.floor((i - 1) / 5)
+    local cell = card(
+        grid,
+        0.1 + column * 0.2,
+        0.165 + row * 0.335,
+        0.185,
+        0.31,
+        isDiscovered and (RARITY_COLORS[character.rarity] or CELL_COLOR) or Color3.fromRGB(28, 22, 46),
+        0.18,
+        7
+    )
+    if isDiscovered then
+        local rarityColor = RARITY_COLORS[character.rarity] or GREY
+        local lightColor = rarityColor:Lerp(WHITE, 0.55)
+        local tier = RARITY_TIER[character.rarity] or 6
+        cell.ClipsDescendants = true
+        local rays = create("ImageLabel", {
+            Name = "Rays",
+            BackgroundTransparency = 1,
+            Image = FX_IMAGES.rays,
+            ImageColor3 = lightColor,
+            ImageTransparency = tier >= 3 and 0.45 or 0.7,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.45),
+            Size = UDim2.fromScale(1.5, 1.5),
+            SizeConstraint = Enum.SizeConstraint.RelativeXX,
+            ZIndex = 7,
+        }, cell)
+        TweenService
+            :Create(
                 rays,
                 TweenInfo.new(24, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1),
                 { Rotation = 360 }
-            ):Play()
-            new("ImageLabel", {
-                Name = "Glow",
-                BackgroundTransparency = 1,
-                Image = FX.glow,
-                ImageColor3 = light,
-                ImageTransparency = 0.25,
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromScale(0.5, 0.46),
-                Size = UDim2.fromScale(0.9, 0.9),
-                SizeConstraint = Enum.SizeConstraint.RelativeYY,
-                ZIndex = 7,
-            }, ce)
-            for k, p in { { 0.12, 0.3 }, { 0.88, 0.42 }, { 0.18, 0.66 }, { 0.84, 0.7 }, { 0.72, 0.18 } } do
-                if k > tier then
-                    break
-                end
-                local sp = new("ImageLabel", {
-                    BackgroundTransparency = 1,
-                    Image = FX.sparkle,
-                    ImageColor3 = k % 2 == 0 and W3 or light,
-                    AnchorPoint = Vector2.new(0.5, 0.5),
-                    Position = UDim2.fromScale(p[1], p[2]),
-                    Size = UDim2.fromOffset(k % 2 == 0 and 9 or 13, k % 2 == 0 and 9 or 13),
-                    ZIndex = 10,
-                }, ce)
-                TweenService
-                    :Create(
-                        sp,
-                        TweenInfo.new(0.9 + k * 0.17, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                        { ImageTransparency = 0.8 }
-                    )
-                    :Play()
-            end
-            if c.image and c.image ~= "" then
-                new("ImageLabel", {
-                    BackgroundTransparency = 1,
-                    Image = c.image,
-                    ScaleType = Enum.ScaleType.Fit,
-                    AnchorPoint = Vector2.new(0.5, 0.5),
-                    Position = UDim2.fromScale(0.5, 0.42),
-                    Size = UDim2.fromScale(1.3, 0.7),
-                    ZIndex = 9,
-                }, ce)
-            end
-            local nb = new("Frame", {
-                BackgroundColor3 = Color3.fromRGB(13, 10, 20),
-                BackgroundTransparency = 0.45,
-                BorderSizePixel = 0,
-                AnchorPoint = Vector2.new(0.5, 1),
-                Position = UDim2.new(0.5, 0, 1, -5),
-                Size = UDim2.fromScale(0.9, 0.19),
-                ZIndex = 10,
-            }, ce)
-            new("UICorner", { CornerRadius = UDim.new(0, 6) }, nb)
-            text(nb, c.name, W3, {
-                Stroke = 1.5,
-                Max = 15,
-                Size = UDim2.fromScale(0.94, 0.8),
-                Position = UDim2.fromScale(0.5, 0.5),
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                ZIndex = 11,
-            })
-            if HW then
-                text(ce, "🎃", W3, {
-                    Max = 18,
-                    Size = UDim2.fromScale(0.22, 0.16),
-                    Position = UDim2.fromScale(0.03, 0.03),
-                    ZIndex = 12,
-                })
-            end
-            if indexSel == c.id then
-                local st = ce:FindFirstChildOfClass("UIStroke")
-                st.Color = HW and ORANGE or Color3.fromRGB(255, 214, 72)
-                TweenService:Create(
-                    st,
-                    TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                    { Thickness = 5 }
-                ):Play()
-            end
-            local hit = new(
-                "TextButton",
-                { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 15 },
-                ce
             )
-            local cs = new("UIScale", {}, ce)
-            hit.MouseEnter:Connect(function()
-                UISound.Play("Hover")
-                TweenService:Create(cs, TweenInfo.new(0.1), { Scale = 1.05 }):Play()
-            end)
-            hit.MouseLeave:Connect(function()
-                TweenService:Create(cs, TweenInfo.new(0.1), { Scale = 1 }):Play()
-            end)
-            hit.Activated:Connect(function()
-                UISound.Play("Click")
-                indexSel = c.id
-                RENDER.Index(panel)
-            end)
-        else
-            if c.image and c.image ~= "" then
-                new("ImageLabel", {
-                    BackgroundTransparency = 1,
-                    Image = c.image,
-                    ImageColor3 = K3,
-                    ImageTransparency = 0.15,
-                    ScaleType = Enum.ScaleType.Fit,
-                    AnchorPoint = Vector2.new(0.5, 0.5),
-                    Position = UDim2.fromScale(0.5, 0.42),
-                    Size = UDim2.fromScale(1.15, 0.7),
-                    ZIndex = 8,
-                }, ce)
-            else
-                text(ce, "?", GREY, {
-                    Size = UDim2.fromScale(0.5, 0.45),
-                    Position = UDim2.fromScale(0.5, 0.36),
-                    AnchorPoint = Vector2.new(0.5, 0.5),
-                    ZIndex = 8,
-                })
+            :Play()
+        create("ImageLabel", {
+            Name = "Glow",
+            BackgroundTransparency = 1,
+            Image = FX_IMAGES.glow,
+            ImageColor3 = lightColor,
+            ImageTransparency = 0.25,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.46),
+            Size = UDim2.fromScale(0.9, 0.9),
+            SizeConstraint = Enum.SizeConstraint.RelativeYY,
+            ZIndex = 7,
+        }, cell)
+        for sparkleIndex, offset in { { 0.12, 0.3 }, { 0.88, 0.42 }, { 0.18, 0.66 }, { 0.84, 0.7 }, { 0.72, 0.18 } } do
+            if sparkleIndex > tier then
+                break
             end
-            text(ce, "???", RARITY[c.rarity] or GREY, {
-                Stroke = 1.5,
-                Max = 15,
-                Size = UDim2.fromScale(0.7, 0.18),
-                Position = UDim2.fromScale(0.5, 0.86),
+            local sparkle = create("ImageLabel", {
+                BackgroundTransparency = 1,
+                Image = FX_IMAGES.sparkle,
+                ImageColor3 = sparkleIndex % 2 == 0 and WHITE or lightColor,
                 AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.fromScale(offset[1], offset[2]),
+                Size = UDim2.fromOffset(sparkleIndex % 2 == 0 and 9 or 13, sparkleIndex % 2 == 0 and 9 or 13),
+                ZIndex = 10,
+            }, cell)
+            TweenService
+                :Create(
+                    sparkle,
+                    TweenInfo.new(
+                        0.9 + sparkleIndex * 0.17,
+                        Enum.EasingStyle.Sine,
+                        Enum.EasingDirection.InOut,
+                        -1,
+                        true
+                    ),
+                    { ImageTransparency = 0.8 }
+                )
+                :Play()
+        end
+        if character.image and character.image ~= "" then
+            create("ImageLabel", {
+                BackgroundTransparency = 1,
+                Image = character.image,
+                ScaleType = Enum.ScaleType.Fit,
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.fromScale(0.5, 0.42),
+                Size = UDim2.fromScale(1.3, 0.7),
                 ZIndex = 9,
+            }, cell)
+        end
+        local nameBar = create("Frame", {
+            BackgroundColor3 = Color3.fromRGB(13, 10, 20),
+            BackgroundTransparency = 0.45,
+            BorderSizePixel = 0,
+            AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.new(0.5, 0, 1, -5),
+            Size = UDim2.fromScale(0.9, 0.19),
+            ZIndex = 10,
+        }, cell)
+        create("UICorner", { CornerRadius = UDim.new(0, 6) }, nameBar)
+        text(nameBar, character.name, WHITE, {
+            Stroke = 1.5,
+            Max = 15,
+            Size = UDim2.fromScale(0.94, 0.8),
+            Position = UDim2.fromScale(0.5, 0.5),
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            ZIndex = 11,
+        })
+        if isHalloween then
+            text(cell, "🎃", WHITE, {
+                Max = 18,
+                Size = UDim2.fromScale(0.22, 0.16),
+                Position = UDim2.fromScale(0.03, 0.03),
+                ZIndex = 12,
             })
         end
+        if indexSelectedId == character.id then
+            local stroke = cell:FindFirstChildOfClass("UIStroke")
+            stroke.Color = isHalloween and HALLOWEEN_ORANGE or Color3.fromRGB(255, 214, 72)
+            TweenService:Create(
+                stroke,
+                TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+                { Thickness = 5 }
+            ):Play()
+        end
+        local hitbox = create(
+            "TextButton",
+            { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 15 },
+            cell
+        )
+        local cellScale = create("UIScale", {}, cell)
+        hitbox.MouseEnter:Connect(function()
+            UISound.Play("Hover")
+            TweenService:Create(cellScale, TweenInfo.new(0.1), { Scale = 1.05 }):Play()
+        end)
+        hitbox.MouseLeave:Connect(function()
+            TweenService:Create(cellScale, TweenInfo.new(0.1), { Scale = 1 }):Play()
+        end)
+        hitbox.Activated:Connect(function()
+            UISound.Play("Click")
+            indexSelectedId = character.id
+            RENDER.Index(panel)
+        end)
+    else
+        if character.image and character.image ~= "" then
+            create("ImageLabel", {
+                BackgroundTransparency = 1,
+                Image = character.image,
+                ImageColor3 = BLACK,
+                ImageTransparency = 0.15,
+                ScaleType = Enum.ScaleType.Fit,
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.fromScale(0.5, 0.42),
+                Size = UDim2.fromScale(1.15, 0.7),
+                ZIndex = 8,
+            }, cell)
+        else
+            text(cell, "?", GREY, {
+                Size = UDim2.fromScale(0.5, 0.45),
+                Position = UDim2.fromScale(0.5, 0.36),
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                ZIndex = 8,
+            })
+        end
+        text(cell, "???", RARITY_COLORS[character.rarity] or GREY, {
+            Stroke = 1.5,
+            Max = 15,
+            Size = UDim2.fromScale(0.7, 0.18),
+            Position = UDim2.fromScale(0.5, 0.86),
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            ZIndex = 9,
+        })
     end
+end
+-- Right-hand detail card for indexSelectedId (or a hint when nothing is discovered yet).
+local function buildIndexDetail(content, data, characters, isHalloween)
     -- detail panel
-    local sel
-    for _, c in chars do
-        if c.id == indexSel then
-            sel = c
+    local selected
+    for _, character in characters do
+        if character.id == indexSelectedId then
+            selected = character
         end
     end
-    local rc = sel and (RARITY[sel.rarity] or GREY) or Color3.fromRGB(53, 40, 98)
-    local det = v3card(inner, 0.85, 0.635, 0.3, 0.72, HW and Color3.fromRGB(255, 150, 40) or rc, 8)
-    if sel then
-        det.ClipsDescendants = true
-        local rays = new("ImageLabel", {
+    local detailColor = selected and (RARITY_COLORS[selected.rarity] or GREY) or Color3.fromRGB(53, 40, 98)
+    local detailCard =
+        v3card(content, 0.85, 0.635, 0.3, 0.72, isHalloween and Color3.fromRGB(255, 150, 40) or detailColor, 8)
+    if selected then
+        detailCard.ClipsDescendants = true
+        local rays = create("ImageLabel", {
             BackgroundTransparency = 1,
-            Image = FX.rays,
-            ImageColor3 = W3,
+            Image = FX_IMAGES.rays,
+            ImageColor3 = WHITE,
             ImageTransparency = 0.6,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.32),
             Size = UDim2.fromScale(1.6, 1.6),
             SizeConstraint = Enum.SizeConstraint.RelativeXX,
             ZIndex = 9,
-        }, det)
+        }, detailCard)
         TweenService
             :Create(
                 rays,
@@ -1086,8 +1189,8 @@ RENDER.Index = function(panel)
                 { Rotation = 360 }
             )
             :Play()
-        local tag = v3card(det, 0.24, 0.06, 0.38, 0.06, Color3.fromRGB(226, 66, 60), 12)
-        text(tag, string.upper(sel.rarity or "?"), W3, {
+        local rarityBadge = v3card(detailCard, 0.24, 0.06, 0.38, 0.06, Color3.fromRGB(226, 66, 60), 12)
+        text(rarityBadge, string.upper(selected.rarity or "?"), WHITE, {
             Stroke = 1.5,
             Max = 14,
             Size = UDim2.fromScale(0.9, 0.8),
@@ -1095,9 +1198,9 @@ RENDER.Index = function(panel)
             AnchorPoint = Vector2.new(0.5, 0.5),
             ZIndex = 13,
         })
-        if HW then
-            local ev = v3card(det, 0.76, 0.06, 0.4, 0.06, Color3.fromRGB(110, 40, 190), 12)
-            text(ev, "👻 EVENT", W3, {
+        if isHalloween then
+            local eventBadge = v3card(detailCard, 0.76, 0.06, 0.4, 0.06, Color3.fromRGB(110, 40, 190), 12)
+            text(eventBadge, "👻 EVENT", WHITE, {
                 Stroke = 1.5,
                 Max = 14,
                 Size = UDim2.fromScale(0.9, 0.8),
@@ -1106,23 +1209,23 @@ RENDER.Index = function(panel)
                 ZIndex = 13,
             })
         end
-        if sel.image and sel.image ~= "" then
-            local im = new("ImageLabel", {
+        if selected.image and selected.image ~= "" then
+            local portrait = create("ImageLabel", {
                 BackgroundTransparency = 1,
-                Image = sel.image,
+                Image = selected.image,
                 ScaleType = Enum.ScaleType.Fit,
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 Position = UDim2.fromScale(0.5, 0.33),
                 Size = UDim2.fromScale(0.95, 0.4),
                 ZIndex = 11,
-            }, det)
+            }, detailCard)
             TweenService:Create(
-                im,
+                portrait,
                 TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
                 { Position = UDim2.fromScale(0.5, 0.31) }
             ):Play()
         end
-        text(det, sel.name, W3, {
+        text(detailCard, selected.name, WHITE, {
             Stroke = 2.5,
             Max = 30,
             Size = UDim2.fromScale(0.92, 0.09),
@@ -1130,16 +1233,16 @@ RENDER.Index = function(panel)
             AnchorPoint = Vector2.new(0.5, 0.5),
             ZIndex = 12,
         })
-        local info = v3card(det, 0.5, 0.76, 0.9, 0.17, Color3.fromRGB(33, 24, 69), 11)
-        text(info, sel.obtain or "", Color3.fromRGB(215, 210, 240), {
+        local infoCard = v3card(detailCard, 0.5, 0.76, 0.9, 0.17, Color3.fromRGB(33, 24, 69), 11)
+        text(infoCard, selected.obtain or "", Color3.fromRGB(215, 210, 240), {
             Max = 14,
             Size = UDim2.fromScale(0.92, 0.45),
             Position = UDim2.fromScale(0.5, 0.3),
             AnchorPoint = Vector2.new(0.5, 0.5),
             ZIndex = 13,
         })
-        local own = data.owned and data.owned[sel.id] or 0
-        text(info, "OWNED: " .. own, Color3.fromRGB(120, 255, 120), {
+        local ownedCount = data.owned and data.owned[selected.id] or 0
+        text(infoCard, "OWNED: " .. ownedCount, Color3.fromRGB(120, 255, 120), {
             Stroke = 1.5,
             Max = 18,
             Size = UDim2.fromScale(0.9, 0.35),
@@ -1147,7 +1250,7 @@ RENDER.Index = function(panel)
             AnchorPoint = Vector2.new(0.5, 0.5),
             ZIndex = 13,
         })
-        text(det, sel.description or "", W3, {
+        text(detailCard, selected.description or "", WHITE, {
             Max = 13,
             Size = UDim2.fromScale(0.9, 0.08),
             Position = UDim2.fromScale(0.5, 0.92),
@@ -1155,7 +1258,7 @@ RENDER.Index = function(panel)
             ZIndex = 12,
         })
     else
-        text(det, "Hatch eggs to discover characters!", W3, {
+        text(detailCard, "Hatch eggs to discover characters!", WHITE, {
             Stroke = 2,
             Max = 20,
             Size = UDim2.fromScale(0.85, 0.2),
@@ -1165,38 +1268,95 @@ RENDER.Index = function(panel)
         })
     end
 end
-
-local questTab = "Daily"
-RENDER.Quests = function(panel)
-    local data, err = fetch("quests")
-    local L = layerOf(panel)
-    clear(L)
+RENDER.Index = function(panel)
+    local data, errorMessage = fetchState("index")
+    local layer = liveLayerOf(panel)
+    clear(layer)
     if not data then
-        text(box(L, 0.5, 0.5, 0.6, 0.08), err)
+        text(box(layer, 0.5, 0.5, 0.6, 0.08), errorMessage)
         return
     end
-    local inner = box(L, 0.5, 0.575, 0.94, 0.79)
-    local TABS = {
-        { "Daily", "DAILY", Color3.fromRGB(255, 190, 40), GI.Clock },
-        { "Weekly", "WEEKLY", Color3.fromRGB(255, 120, 40), GI.Chest },
-        { "Monthly", "MILESTONES", Color3.fromRGB(150, 100, 230), GI.Trophy },
-    }
-    for i, t in TABS do
-        local ready = 0
-        for _, q in data.list or {} do
-            if q.period == t[1] and q.progress >= q.target and not q.claimed then
-                ready += 1
+    local isHalloween = indexSeason == "Halloween"
+    if isHalloween then
+        setHeader(panel, "HALLOWEEN INDEX", Color3.fromRGB(255, 160, 40), Color3.fromRGB(200, 60, 0))
+    else
+        setHeader(panel, "INDEX", SKINS.Index.grad[1], SKINS.Index.grad[2])
+    end
+    local content = box(layer, 0.5, 0.575, 0.94, 0.79)
+    local characters = {}
+    for i, character in data.catalog.characters do
+        if i <= 15 then
+            table.insert(characters, character)
+        end
+    end
+    local discoveredCount = 0
+    for _, character in characters do
+        if data.discovered[character.id] == true then
+            discoveredCount += 1
+        end
+    end
+    buildIndexSeasonTabs(panel, content, characters, isHalloween)
+    buildIndexProgressStrip(content, characters, discoveredCount, isHalloween)
+    buildIndexRarityFilters(panel, content)
+    -- grid
+    local visibleCharacters = {}
+    for _, character in characters do
+        if indexFilter == "All" or character.rarity == indexFilter then
+            table.insert(visibleCharacters, character)
+        end
+    end
+    if not indexSelectedId then
+        for _, character in characters do
+            if data.discovered[character.id] == true then
+                indexSelectedId = character.id
             end
         end
-        local tb = v3tab(inner, 0.1 + (i - 1) * 0.21, 0.05, 0.195, 0.085, t[2], t[3], questTab == t[1], function()
-            if questTab ~= t[1] then
-                questTab = t[1]
-                RENDER.Quests(panel)
+    end
+    local grid = box(content, 0.34, 0.635, 0.68, 0.72)
+    for i, character in visibleCharacters do
+        buildIndexCell(panel, grid, i, character, data, isHalloween)
+    end
+    buildIndexDetail(content, data, characters, isHalloween)
+end
+
+-- ===== 7. Quests panel =====
+-- Selected period tab: "Daily" | "Weekly" | "Monthly" (shown as MILESTONES).
+local questTab = "Daily"
+-- Period tabs with a red badge counting claimable quests; clicking switches questTab.
+local function buildQuestTabs(panel, content, data)
+    local QUEST_TABS = {
+        { "Daily", "DAILY", Color3.fromRGB(255, 190, 40), GAME_ICONS.Clock },
+        { "Weekly", "WEEKLY", Color3.fromRGB(255, 120, 40), GAME_ICONS.Chest },
+        { "Monthly", "MILESTONES", Color3.fromRGB(150, 100, 230), GAME_ICONS.Trophy },
+    }
+    for i, tabDef in QUEST_TABS do
+        local readyCount = 0
+        for _, quest in data.list or {} do
+            if quest.period == tabDef[1] and quest.progress >= quest.target and not quest.claimed then
+                readyCount += 1
             end
-        end, nil, t[4])
-        if ready > 0 then
-            local bd = v3card(tb, 0.97, 0.08, 0.17, 0.5, Color3.fromRGB(230, 40, 60), 15)
-            text(bd, tostring(ready), W3, {
+        end
+        local tabFrame = v3tab(
+            content,
+            0.1 + (i - 1) * 0.21,
+            0.05,
+            0.195,
+            0.085,
+            tabDef[2],
+            tabDef[3],
+            questTab == tabDef[1],
+            function()
+                if questTab ~= tabDef[1] then
+                    questTab = tabDef[1]
+                    RENDER.Quests(panel)
+                end
+            end,
+            nil,
+            tabDef[4]
+        )
+        if readyCount > 0 then
+            local readyBadge = v3card(tabFrame, 0.97, 0.08, 0.17, 0.5, Color3.fromRGB(230, 40, 60), 15)
+            text(readyBadge, tostring(readyCount), WHITE, {
                 Stroke = 1.5,
                 Max = 14,
                 Size = UDim2.fromScale(0.9, 0.85),
@@ -1206,10 +1366,13 @@ RENDER.Quests = function(panel)
             })
         end
     end
+end
+-- "New quests in ..." countdown for the selected period (server-time corrected).
+local function buildQuestTimer(panel, content, data)
     local endsAt = data.ends and data.ends[questTab]
-    local tp = v3card(inner, 0.86, 0.05, 0.28, 0.07, Color3.fromRGB(20, 14, 40), 9)
-    gicon(tp, GI.Clock, 0.08, 0.5, 0.9, 13)
-    local tl = text(tp, "", Color3.fromRGB(255, 214, 72), {
+    local timerPill = v3card(content, 0.86, 0.05, 0.28, 0.07, Color3.fromRGB(20, 14, 40), 9)
+    gameIcon(timerPill, GAME_ICONS.Clock, 0.08, 0.5, 0.9, 13)
+    local timerLabel = text(timerPill, "", Color3.fromRGB(255, 214, 72), {
         Stroke = 1.5,
         Max = 16,
         Size = UDim2.fromScale(0.92, 0.7),
@@ -1218,303 +1381,344 @@ RENDER.Quests = function(panel)
         ZIndex = 12,
     })
     if endsAt then
-        local off = (data.serverTime or os.time()) - os.time()
+        local clockOffset = (data.serverTime or os.time()) - os.time()
         task.spawn(function()
-            while tl.Parent and panel.Visible do
-                tl.Text = "      New quests in " .. hms(endsAt - (os.time() + off))
+            while timerLabel.Parent and panel.Visible do
+                timerLabel.Text = "      New quests in " .. formatCountdown(endsAt - (os.time() + clockOffset))
                 task.wait(1)
             end
         end)
     end
-    local list = {}
-    for _, q in data.list or {} do
-        if q.period == questTab then
-            table.insert(list, q)
+end
+-- One quest row: icon, title/description, progress bar, reward chip and CLAIM / GO / DONE button.
+local function buildQuestRow(content, i, quest, rowHeight)
+    local isComplete = quest.progress >= quest.target
+    local isClaimable = isComplete and not quest.claimed
+    local rowY = 0.13 + (i - 0.5) * rowHeight
+    local row = v3card(
+        content,
+        0.5,
+        rowY,
+        1,
+        rowHeight * 0.88,
+        isClaimable and Color3.fromRGB(40, 150, 60)
+            or quest.claimed and Color3.fromRGB(45, 42, 62)
+            or Color3.fromRGB(42, 31, 74),
+        8
+    )
+    if isClaimable then
+        local stroke = row:FindFirstChildOfClass("UIStroke")
+        stroke.Color = Color3.fromRGB(150, 255, 120)
+        TweenService:Create(
+            stroke,
+            TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+            { Thickness = 5 }
+        ):Play()
+    end
+    local titleLower = string.lower(quest.title or "")
+    local _emoji = titleLower:find("hatch") and "🥚"
+        or titleLower:find("discover") and "📖"
+        or titleLower:find("steal") and "🦹"
+        or titleLower:find("place") and "🐾"
+        or titleLower:find("upgrade") and "⭐"
+        or titleLower:find("cash") and "💰"
+        or "⭐"
+    local iconCard = v3card(row, 0.045, 0.5, 0.06, 0.8, quest.claimed and GREEN or Color3.fromRGB(70, 140, 255), 10)
+    create("UIAspectRatioConstraint", { AspectRatio = 1 }, iconCard)
+    local questImage = (titleLower:find("hatch") or titleLower:find("egg")) and GAME_ICONS.Hatch
+        or titleLower:find("discover") and GAME_ICONS.Book
+        or (titleLower:find("place") or titleLower:find("upgrade") or titleLower:find("temple") or titleLower:find(
+            "slot"
+        )) and GAME_ICONS.Plot
+        or (titleLower:find("cash") or titleLower:find("income") or titleLower:find("earn")) and GAME_ICONS.Coins
+        or titleLower:find("steal") and GAME_ICONS.Chest
+        or GAME_ICONS.Scroll
+    if quest.claimed then
+        text(iconCard, "✓", WHITE, {
+            Stroke = 2,
+            Max = 34,
+            Size = UDim2.fromScale(0.85, 0.85),
+            Position = UDim2.fromScale(0.5, 0.5),
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            ZIndex = 12,
+        })
+    else
+        local questIcon = gameIcon(iconCard, questImage, 0.5, 0.5, 0.92, 12)
+        if isClaimable and questIcon:IsA("ImageLabel") then
+            TweenService:Create(
+                questIcon,
+                TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+                { Rotation = 10 }
+            ):Play()
         end
     end
-    table.sort(list, function(a, b)
-        local ac, bc = a.claimed and 1 or 0, b.claimed and 1 or 0
-        if ac ~= bc then
-            return ac < bc
+    text(row, quest.title or "", WHITE, {
+        Stroke = 2,
+        Max = 22,
+        Size = UDim2.fromScale(0.4, 0.4),
+        Position = UDim2.fromScale(0.1, 0.1),
+        X = Enum.TextXAlignment.Left,
+        ZIndex = 11,
+    })
+    text(row, quest.description or "", Color3.fromRGB(205, 200, 230), {
+        Max = 14,
+        Size = UDim2.fromScale(0.4, 0.3),
+        Position = UDim2.fromScale(0.1, 0.55),
+        X = Enum.TextXAlignment.Left,
+        ZIndex = 11,
+    })
+    local track = create("Frame", {
+        BackgroundColor3 = Color3.fromRGB(13, 10, 20),
+        BorderSizePixel = 0,
+        Position = UDim2.fromScale(0.52, 0.14),
+        Size = UDim2.fromScale(0.26, 0.32),
+        ZIndex = 10,
+    }, row)
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
+    create("UIStroke", { Color = WHITE, Thickness = 2 }, track)
+    local fill = create("Frame", {
+        BackgroundColor3 = WHITE,
+        BorderSizePixel = 0,
+        Size = UDim2.fromScale(math.clamp(quest.progress / quest.target, 0.04, 1), 1),
+        ZIndex = 11,
+    }, track)
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+    create("UIGradient", {
+        Color = isComplete and ColorSequence.new(Color3.fromRGB(130, 255, 110), Color3.fromRGB(40, 190, 60))
+            or ColorSequence.new(Color3.fromRGB(255, 210, 60), Color3.fromRGB(255, 140, 0)),
+    }, fill)
+    text(
+        track,
+        math.min(quest.progress, quest.target) .. " / " .. quest.target,
+        WHITE,
+        { Stroke = 1.5, Max = 14, ZIndex = 12 }
+    )
+    local rewardText = quest.reward
+            and (quest.reward.cash and ("     $" .. Config.Short(quest.reward.cash)) or quest.reward.label)
+        or nil
+    if rewardText then
+        local chip = v3card(row, 0.585, 0.73, 0.13, 0.32, Color3.fromRGB(20, 14, 40), 10)
+        text(chip, rewardText, Color3.fromRGB(120, 255, 120), {
+            Stroke = 1.5,
+            Max = 14,
+            Size = UDim2.fromScale(0.9, 0.8),
+            Position = UDim2.fromScale(0.5, 0.5),
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            ZIndex = 12,
+        })
+        if quest.reward.cash then
+            gameIcon(chip, GAME_ICONS.Coins, 0.2, 0.5, 1.1, 13)
         end
-        local ad, bd = (a.progress >= a.target) and 0 or 1, (b.progress >= b.target) and 0 or 1
-        if ad ~= bd then
-            return ad < bd
+    end
+    local buttonLabel = quest.claimed and "DONE" or isClaimable and "CLAIM" or "GO"
+    local actionButton = button(
+        row,
+        0.9,
+        0.5,
+        0.16,
+        0.66,
+        buttonLabel,
+        quest.claimed and GREY or isClaimable and GREEN or Color3.fromRGB(60, 120, 240)
+    )
+    actionButton.ZIndex = 12
+    if isClaimable then
+        local pulseScale = create("UIScale", {}, actionButton)
+        TweenService:Create(
+            pulseScale,
+            TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+            { Scale = 1.06 }
+        ):Play()
+        actionButton.Activated:Connect(function()
+            runAction("Claim", { id = quest.id })
+        end)
+    elseif not quest.claimed then
+        actionButton.Activated:Connect(function()
+            showToast(quest.description or quest.title)
+        end)
+    else
+        actionButton.AutoButtonColor = false
+    end
+end
+RENDER.Quests = function(panel)
+    local data, errorMessage = fetchState("quests")
+    local layer = liveLayerOf(panel)
+    clear(layer)
+    if not data then
+        text(box(layer, 0.5, 0.5, 0.6, 0.08), errorMessage)
+        return
+    end
+    local content = box(layer, 0.5, 0.575, 0.94, 0.79)
+    buildQuestTabs(panel, content, data)
+    buildQuestTimer(panel, content, data)
+    local visibleQuests = {}
+    for _, quest in data.list or {} do
+        if quest.period == questTab then
+            table.insert(visibleQuests, quest)
+        end
+    end
+    table.sort(visibleQuests, function(a, b)
+        local aClaimed, bClaimed = a.claimed and 1 or 0, b.claimed and 1 or 0
+        if aClaimed ~= bClaimed then
+            return aClaimed < bClaimed
+        end
+        local aDone, bDone = (a.progress >= a.target) and 0 or 1, (b.progress >= b.target) and 0 or 1
+        if aDone ~= bDone then
+            return aDone < bDone
         end
         return (a.order or 0) < (b.order or 0)
     end)
-    if #list == 0 then
-        text(box(inner, 0.5, 0.5, 0.8, 0.1), "No quests here right now", GREY)
+    if #visibleQuests == 0 then
+        text(box(content, 0.5, 0.5, 0.8, 0.1), "No quests here right now", GREY)
         return
     end
-    local n = math.max(#list, 5)
-    local rowH = 0.84 / n
-    for i, q in list do
-        local done = q.progress >= q.target
-        local claimable = done and not q.claimed
-        local y = 0.13 + (i - 0.5) * rowH
-        local row = v3card(
-            inner,
-            0.5,
-            y,
-            1,
-            rowH * 0.88,
-            claimable and Color3.fromRGB(40, 150, 60)
-                or q.claimed and Color3.fromRGB(45, 42, 62)
-                or Color3.fromRGB(42, 31, 74),
-            8
-        )
-        if claimable then
-            local st = row:FindFirstChildOfClass("UIStroke")
-            st.Color = Color3.fromRGB(150, 255, 120)
-            TweenService:Create(
-                st,
-                TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                { Thickness = 5 }
-            ):Play()
-        end
-        local tl2 = string.lower(q.title or "")
-        local em = tl2:find("hatch") and "🥚"
-            or tl2:find("discover") and "📖"
-            or tl2:find("steal") and "🦹"
-            or tl2:find("place") and "🐾"
-            or tl2:find("upgrade") and "⭐"
-            or tl2:find("cash") and "💰"
-            or "⭐"
-        local icon = v3card(row, 0.045, 0.5, 0.06, 0.8, q.claimed and GREEN or Color3.fromRGB(70, 140, 255), 10)
-        new("UIAspectRatioConstraint", { AspectRatio = 1 }, icon)
-        local qimg = (tl2:find("hatch") or tl2:find("egg")) and GI.Hatch
-            or tl2:find("discover") and GI.Book
-            or (tl2:find("place") or tl2:find("upgrade") or tl2:find("temple") or tl2:find("slot")) and GI.Plot
-            or (tl2:find("cash") or tl2:find("income") or tl2:find("earn")) and GI.Coins
-            or tl2:find("steal") and GI.Chest
-            or GI.Scroll
-        if q.claimed then
-            text(icon, "✓", W3, {
-                Stroke = 2,
-                Max = 34,
-                Size = UDim2.fromScale(0.85, 0.85),
-                Position = UDim2.fromScale(0.5, 0.5),
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                ZIndex = 12,
-            })
-        else
-            local qi = gicon(icon, qimg, 0.5, 0.5, 0.92, 12)
-            if claimable and qi:IsA("ImageLabel") then
-                TweenService:Create(
-                    qi,
-                    TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                    { Rotation = 10 }
-                ):Play()
-            end
-        end
-        text(row, q.title or "", W3, {
-            Stroke = 2,
-            Max = 22,
-            Size = UDim2.fromScale(0.4, 0.4),
-            Position = UDim2.fromScale(0.1, 0.1),
-            X = Enum.TextXAlignment.Left,
-            ZIndex = 11,
-        })
-        text(row, q.description or "", Color3.fromRGB(205, 200, 230), {
-            Max = 14,
-            Size = UDim2.fromScale(0.4, 0.3),
-            Position = UDim2.fromScale(0.1, 0.55),
-            X = Enum.TextXAlignment.Left,
-            ZIndex = 11,
-        })
-        local track = new("Frame", {
-            BackgroundColor3 = Color3.fromRGB(13, 10, 20),
-            BorderSizePixel = 0,
-            Position = UDim2.fromScale(0.52, 0.14),
-            Size = UDim2.fromScale(0.26, 0.32),
-            ZIndex = 10,
-        }, row)
-        new("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-        new("UIStroke", { Color = W3, Thickness = 2 }, track)
-        local f = new("Frame", {
-            BackgroundColor3 = W3,
-            BorderSizePixel = 0,
-            Size = UDim2.fromScale(math.clamp(q.progress / q.target, 0.04, 1), 1),
-            ZIndex = 11,
-        }, track)
-        new("UICorner", { CornerRadius = UDim.new(1, 0) }, f)
-        new("UIGradient", {
-            Color = done and ColorSequence.new(Color3.fromRGB(130, 255, 110), Color3.fromRGB(40, 190, 60))
-                or ColorSequence.new(Color3.fromRGB(255, 210, 60), Color3.fromRGB(255, 140, 0)),
-        }, f)
-        text(track, math.min(q.progress, q.target) .. " / " .. q.target, W3, { Stroke = 1.5, Max = 14, ZIndex = 12 })
-        local rw = q.reward and (q.reward.cash and ("     $" .. Config.Short(q.reward.cash)) or q.reward.label) or nil
-        if rw then
-            local chip = v3card(row, 0.585, 0.73, 0.13, 0.32, Color3.fromRGB(20, 14, 40), 10)
-            text(chip, rw, Color3.fromRGB(120, 255, 120), {
-                Stroke = 1.5,
-                Max = 14,
-                Size = UDim2.fromScale(0.9, 0.8),
-                Position = UDim2.fromScale(0.5, 0.5),
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                ZIndex = 12,
-            })
-            if q.reward.cash then
-                gicon(chip, GI.Coins, 0.2, 0.5, 1.1, 13)
-            end
-        end
-        local label = q.claimed and "DONE" or claimable and "CLAIM" or "GO"
-        local b = button(
-            row,
-            0.9,
-            0.5,
-            0.16,
-            0.66,
-            label,
-            q.claimed and GREY or claimable and GREEN or Color3.fromRGB(60, 120, 240)
-        )
-        b.ZIndex = 12
-        if claimable then
-            local bs = new("UIScale", {}, b)
-            TweenService:Create(
-                bs,
-                TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                { Scale = 1.06 }
-            ):Play()
-            b.Activated:Connect(function()
-                act("Claim", { id = q.id })
-            end)
-        elseif not q.claimed then
-            b.Activated:Connect(function()
-                say(q.description or q.title)
-            end)
-        else
-            b.AutoButtonColor = false
-        end
+    local rowCount = math.max(#visibleQuests, 5)
+    local rowHeight = 0.84 / rowCount
+    for i, quest in visibleQuests do
+        buildQuestRow(content, i, quest, rowHeight)
     end
 end
 
+-- ===== 8. VipShop panel =====
+-- Pixel-based layout (scaled via the panel's UIScale "Fit"); every helper below is local to one render.
+-- Data comes from ShopSystem.ShopRemote ("State"), not from the GameMenu remotes.
 RENDER.VipShop = function(panel)
     -- Shop v3 (Figma "Shop v3 FX"): sidebar that jumps to sections, one scrolling page, glowing cards.
-    local L = layerOf(panel)
-    clear(L)
-    local SR = game:GetService("ReplicatedStorage"):FindFirstChild("ShopSystem")
-    local remote = SR and SR:FindFirstChild("ShopRemote")
-    local SC = SR and require(SR.ShopConfig)
-    if not remote then
-        text(box(L, 0.5, 0.5, 0.6, 0.08), "Shop is loading…")
+    local layer = liveLayerOf(panel)
+    clear(layer)
+    local shopSystem = game:GetService("ReplicatedStorage"):FindFirstChild("ShopSystem")
+    local shopRemote = shopSystem and shopSystem:FindFirstChild("ShopRemote")
+    local ShopConfig = shopSystem and require(shopSystem.ShopConfig)
+    if not shopRemote then
+        text(box(layer, 0.5, 0.5, 0.6, 0.08), "Shop is loading…")
         return
     end
-    local ok, st = remote:InvokeServer("State")
+    local ok, shopState = shopRemote:InvokeServer("State")
     if not ok then
-        text(box(L, 0.5, 0.5, 0.6, 0.08), tostring(st))
+        text(box(layer, 0.5, 0.5, 0.6, 0.08), tostring(shopState))
         return
     end
-    local TS = game:GetService("TweenService")
-    local RunS = game:GetService("RunService")
-    local K, W1 = Color3.new(0, 0, 0), Color3.new(1, 1, 1)
-    local function c3(r, g, b)
+    local ShopTweenService = game:GetService("TweenService") -- same service as TweenService (local alias)
+    local RunService = game:GetService("RunService")
+    local SHOP_BLACK, SHOP_WHITE = Color3.new(0, 0, 0), Color3.new(1, 1, 1)
+    local function rgb(r, g, b)
         return Color3.fromRGB(r, g, b)
     end
-    local PINK, GOLD, GREEN, BLUE, PURP, RED =
-        c3(226, 66, 150), c3(248, 188, 44), c3(70, 190, 70), c3(60, 120, 235), c3(150, 90, 230), c3(226, 52, 60)
-    local ICON = table.clone(SC.Icons or {})
-    local SPARK = FX.sparkle
-    local function corner(o, r)
-        new("UICorner", { CornerRadius = UDim.new(0, r or 12) }, o)
+    local PINK, GOLD, SHOP_GREEN, BLUE, PURP, RED =
+        rgb(226, 66, 150), rgb(248, 188, 44), rgb(70, 190, 70), rgb(60, 120, 235), rgb(150, 90, 230), rgb(226, 52, 60)
+    local SHOP_ICONS = table.clone(ShopConfig.Icons or {})
+    local SPARKLE_IMAGE = FX_IMAGES.sparkle
+    local function roundCorners(instance, radius)
+        create("UICorner", { CornerRadius = UDim.new(0, radius or 12) }, instance)
     end
-    local function lbl(parent, s, size, color, props)
-        local l = new("TextLabel", {
+    local function shopLabel(parent, labelText, textSize, color, props)
+        local label = create("TextLabel", {
             BackgroundTransparency = 1,
-            Text = s,
+            Text = labelText,
             FontFace = FONT,
-            TextSize = size,
-            TextColor3 = color or W1,
+            TextSize = textSize,
+            TextColor3 = color or SHOP_WHITE,
             ZIndex = 14,
-            Size = UDim2.new(1, 0, 0, size + 6),
+            Size = UDim2.new(1, 0, 0, textSize + 6),
             TextXAlignment = Enum.TextXAlignment.Left,
             TextWrapped = true,
         }, parent)
         if props then
-            for k, v in props do
-                if k ~= "NoStroke" then
-                    l[k] = v
+            for property, value in props do
+                if property ~= "NoStroke" then
+                    label[property] = value
                 end
             end
         end
         if not (props and props.NoStroke) then
-            new("UIStroke", { Color = K, Thickness = size >= 24 and 3 or 2, LineJoinMode = Enum.LineJoinMode.Round }, l)
+            create(
+                "UIStroke",
+                { Color = SHOP_BLACK, Thickness = textSize >= 24 and 3 or 2, LineJoinMode = Enum.LineJoinMode.Round },
+                label
+            )
         end
-        return l
+        return label
     end
-    local function studs(f, t, tile)
-        return new("ImageLabel", {
+    local function addStudTexture(frame, transparency, tileSize)
+        return create("ImageLabel", {
             Name = "Studs",
             BackgroundTransparency = 1,
             Size = UDim2.fromScale(1, 1),
-            Image = STUDS,
+            Image = STUDS_IMAGE,
             ScaleType = Enum.ScaleType.Tile,
-            TileSize = UDim2.fromOffset(tile or 24, tile or 24),
-            ImageTransparency = t or 0.55,
-            ZIndex = f.ZIndex,
-        }, f)
+            TileSize = UDim2.fromOffset(tileSize or 24, tileSize or 24),
+            ImageTransparency = transparency or 0.55,
+            ZIndex = frame.ZIndex,
+        }, frame)
     end
+    -- Shared Robux price cache (see header). livePrice returns the cached live price or `fallback`.
     _G.__shopPrices = _G.__shopPrices or {}
-    local function live(id, pass, fallback)
+    local function livePrice(id, isGamePass, fallback)
         if not id or id == 0 then
             return fallback
         end
-        local k = (pass and "p" or "d") .. id
-        if _G.__shopPrices[k] == nil then -- never block the shop on a price lookup: show the config price now, the live one next open
-            _G.__shopPrices[k] = false
+        local cacheKey = (isGamePass and "p" or "d") .. id
+        if _G.__shopPrices[cacheKey] == nil then -- never block the shop on a price lookup: show the config price now, the live one next open
+            _G.__shopPrices[cacheKey] = false
             task.spawn(function()
-                local ok2, info = pcall(
+                local fetched, productInfo = pcall(
                     game:GetService("MarketplaceService").GetProductInfo,
                     game:GetService("MarketplaceService"),
                     id,
-                    pass and Enum.InfoType.GamePass or Enum.InfoType.Product
+                    isGamePass and Enum.InfoType.GamePass or Enum.InfoType.Product
                 )
-                _G.__shopPrices[k] = ok2 and info and info.PriceInRobux or false
+                _G.__shopPrices[cacheKey] = fetched and productInfo and productInfo.PriceInRobux or false
             end)
         end
-        return _G.__shopPrices[k] or fallback
+        return _G.__shopPrices[cacheKey] or fallback
     end
-    local function price(key, pass)
-        local id = pass and SC.GamePasses[key] or SC.Products[key]
-        return "R$ " .. tostring(live(id, pass, SC.Prices[key]) or "?")
+    local function priceText(key, isGamePass)
+        local productId = isGamePass and ShopConfig.GamePasses[key] or ShopConfig.Products[key]
+        return "R$ " .. tostring(livePrice(productId, isGamePass, ShopConfig.Prices[key]) or "?")
     end
-    local function hms(s)
-        s = math.max(0, math.floor(s))
-        return string.format("%d:%02d:%02d", s // 3600, (s // 60) % 60, s % 60)
+    local function formatHms(seconds)
+        seconds = math.max(0, math.floor(seconds))
+        return string.format("%d:%02d:%02d", seconds // 3600, (seconds // 60) % 60, seconds % 60)
     end
 
-    -- glowing studded card; returns face
-    local function card(parent, color, size, pos, z)
-        local holder = new(
+    -- glowing studded card; returns face, holder, faceStroke, glow
+    local function glowCard(parent, color, size, pos, z)
+        local holder = create(
             "Frame",
             { BackgroundTransparency = 1, Size = size, Position = pos or UDim2.new(), ZIndex = z or 9 },
             parent
         )
-        local shadow = new("Frame", {
-            BackgroundColor3 = K,
+        local shadow = create("Frame", {
+            BackgroundColor3 = SHOP_BLACK,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(0, 6),
             Size = UDim2.fromScale(1, 1),
             ZIndex = holder.ZIndex,
         }, holder)
-        corner(shadow, 14)
-        local face = new("Frame", {
+        roundCorners(shadow, 14)
+        local face = create("Frame", {
             Name = "Face",
-            BackgroundColor3 = W1,
+            BackgroundColor3 = SHOP_WHITE,
             BorderSizePixel = 0,
             Size = UDim2.fromScale(1, 1),
             ZIndex = holder.ZIndex + 1,
             ClipsDescendants = true,
         }, holder)
-        corner(face, 14)
-        new("UIGradient", { Rotation = 90, Color = ColorSequence.new(color:Lerp(W1, 0.12), color:Lerp(K, 0.22)) }, face)
-        studs(face, 0.5)
-        local sk = new("UIStroke", { Color = W1, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, face)
-        local glow = new("ImageLabel", {
+        roundCorners(face, 14)
+        create(
+            "UIGradient",
+            { Rotation = 90, Color = ColorSequence.new(color:Lerp(SHOP_WHITE, 0.12), color:Lerp(SHOP_BLACK, 0.22)) },
+            face
+        )
+        addStudTexture(face, 0.5)
+        local faceStroke = create(
+            "UIStroke",
+            { Color = SHOP_WHITE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+            face
+        )
+        local glow = create("ImageLabel", {
             Name = "Glow",
             BackgroundTransparency = 1,
-            Image = FX.glow,
+            Image = FX_IMAGES.glow,
             ImageColor3 = color,
             ImageTransparency = 0.55,
             AnchorPoint = Vector2.new(0.5, 0.5),
@@ -1522,77 +1726,88 @@ RENDER.VipShop = function(panel)
             Size = UDim2.new(1, 60, 1, 60),
             ZIndex = holder.ZIndex - 1,
         }, holder)
-        return face, holder, sk, glow
+        return face, holder, faceStroke, glow
     end
-    local function floaters(face, n, tint)
-        for i = 1, n do
-            local sp = new("ImageLabel", {
+    local function addFloatingSparkles(face, count, tint)
+        for _i = 1, count do
+            local sparkle = create("ImageLabel", {
                 BackgroundTransparency = 1,
-                Image = SPARK,
+                Image = SPARKLE_IMAGE,
                 AnchorPoint = Vector2.new(0.5, 0.5),
-                ImageColor3 = tint or W1,
+                ImageColor3 = tint or SHOP_WHITE,
                 ImageTransparency = 1,
                 ZIndex = face.ZIndex + 4,
             }, face)
             task.spawn(function()
                 task.wait(math.random() * 2)
-                while sp.Parent do
-                    local sz = math.random(8, 15)
-                    sp.Size = UDim2.fromOffset(sz, sz)
-                    local x = 0.06 + math.random() * 0.88
-                    sp.Position = UDim2.fromScale(x, 0.15 + math.random() * 0.75)
-                    sp.ImageTransparency = 1
-                    sp.Rotation = 0
-                    TS:Create(sp, TweenInfo.new(0.5, Enum.EasingStyle.Sine), { ImageTransparency = 0.1, Rotation = 45 })
-                        :Play()
+                while sparkle.Parent do
+                    local sparkleSize = math.random(8, 15)
+                    sparkle.Size = UDim2.fromOffset(sparkleSize, sparkleSize)
+                    local sparkleX = 0.06 + math.random() * 0.88
+                    sparkle.Position = UDim2.fromScale(sparkleX, 0.15 + math.random() * 0.75)
+                    sparkle.ImageTransparency = 1
+                    sparkle.Rotation = 0
+                    ShopTweenService:Create(
+                        sparkle,
+                        TweenInfo.new(0.5, Enum.EasingStyle.Sine),
+                        { ImageTransparency = 0.1, Rotation = 45 }
+                    ):Play()
                     task.wait(0.6)
-                    TS:Create(sp, TweenInfo.new(0.7, Enum.EasingStyle.Sine), { ImageTransparency = 1, Rotation = 90 })
-                        :Play()
+                    ShopTweenService:Create(
+                        sparkle,
+                        TweenInfo.new(0.7, Enum.EasingStyle.Sine),
+                        { ImageTransparency = 1, Rotation = 90 }
+                    ):Play()
                     task.wait(0.8 + math.random() * 1.6)
                 end
             end)
         end
     end
-    local function burst()
-        local host = new(
+    local function playBuyBurst()
+        local host = create(
             "Frame",
             { Name = "BuyBurst", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 60 },
-            L
+            layer
         )
-        local ring = new("ImageLabel", {
+        local ring = create("ImageLabel", {
             BackgroundTransparency = 1,
-            Image = FX.glow,
+            Image = FX_IMAGES.glow,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
             Size = UDim2.fromOffset(40, 40),
             ImageColor3 = GOLD,
             ZIndex = 60,
         }, host)
-        TS:Create(
+        ShopTweenService:Create(
             ring,
             TweenInfo.new(0.5, Enum.EasingStyle.Quad),
             { Size = UDim2.fromOffset(520, 520), ImageTransparency = 1 }
         ):Play()
         for i = 1, 24 do
-            local coin = i % 3 ~= 0 and ICON.Coins
-            local p = new("ImageLabel", {
+            local coinImage = i % 3 ~= 0 and SHOP_ICONS.Coins
+            local piece = create("ImageLabel", {
                 BackgroundTransparency = 1,
-                Image = coin or SPARK,
+                Image = coinImage or SPARKLE_IMAGE,
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 Position = UDim2.fromScale(0.5, 0.5),
-                Size = UDim2.fromOffset(coin and 34 or 22, coin and 34 or 22),
+                Size = UDim2.fromOffset(coinImage and 34 or 22, coinImage and 34 or 22),
                 ScaleType = Enum.ScaleType.Fit,
                 ZIndex = 61,
             }, host)
-            local a = (i / 24) * math.pi * 2
-            local d = 0.18 + math.random() * 0.2
-            TS:Create(p, TweenInfo.new(0.6, Enum.EasingStyle.Quart), {
-                Position = UDim2.fromScale(0.5 + math.cos(a) * d, 0.5 + math.sin(a) * d * 1.4),
-                Rotation = math.random(-200, 200),
-            }):Play()
+            local angle = (i / 24) * math.pi * 2
+            local distance = 0.18 + math.random() * 0.2
+            ShopTweenService
+                :Create(piece, TweenInfo.new(0.6, Enum.EasingStyle.Quart), {
+                    Position = UDim2.fromScale(
+                        0.5 + math.cos(angle) * distance,
+                        0.5 + math.sin(angle) * distance * 1.4
+                    ),
+                    Rotation = math.random(-200, 200),
+                })
+                :Play()
             task.delay(0.55, function()
-                if p.Parent then
-                    TS:Create(p, TweenInfo.new(0.45), { ImageTransparency = 1 }):Play()
+                if piece.Parent then
+                    ShopTweenService:Create(piece, TweenInfo.new(0.45), { ImageTransparency = 1 }):Play()
                 end
             end)
         end
@@ -1600,74 +1815,78 @@ RENDER.VipShop = function(panel)
             host:Destroy()
         end)
     end
-    local function act2(action, ...)
-        local r, msg = remote:InvokeServer(action, ...)
-        if msg then
-            say(msg)
+    local function shopAction(action, ...)
+        local success, message = shopRemote:InvokeServer(action, ...)
+        if message then
+            showToast(message)
         end
-        if r then
+        if success then
             UISound.Play(
                 (action and (string.find(action, "Buy") or string.find(action, "Purchase"))) and "Purchase" or "Claim"
             )
-            pcall(burst)
+            pcall(playBuyBurst)
         end
         RENDER.VipShop(panel)
     end
     -- green studded buy button with shine sweep
-    local function buy(parent, label, size, pos, onClick, opts)
+    local function buyButton(parent, label, size, pos, onClick, opts)
         opts = opts or {}
-        local col = opts.color or GREEN
-        local holder = new("Frame", {
+        local baseColor = opts.color or SHOP_GREEN
+        local holder = create("Frame", {
             BackgroundTransparency = 1,
             Size = size,
             Position = pos,
             AnchorPoint = opts.anchor or Vector2.new(0, 0),
             ZIndex = parent.ZIndex + 2,
         }, parent)
-        local base = new("Frame", {
-            BackgroundColor3 = K,
+        local dropShadow = create("Frame", {
+            BackgroundColor3 = SHOP_BLACK,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(0, 5),
             Size = UDim2.fromScale(1, 1),
             ZIndex = holder.ZIndex,
         }, holder)
-        corner(base, 10)
-        local face = new("TextButton", {
-            BackgroundColor3 = W1,
+        roundCorners(dropShadow, 10)
+        local face = create("TextButton", {
+            BackgroundColor3 = SHOP_WHITE,
             Text = "",
             AutoButtonColor = false,
             Size = UDim2.fromScale(1, 1),
             ZIndex = holder.ZIndex + 1,
             ClipsDescendants = true,
         }, holder)
-        corner(face, 10)
-        local enabled = opts.disabled ~= true
-        local fc = enabled and col or c3(120, 128, 150)
-        new("UIGradient", { Rotation = 90, Color = ColorSequence.new(fc:Lerp(W1, 0.25), fc:Lerp(K, 0.15)) }, face)
-        studs(face, 0.55, 20)
-        new("UIStroke", { Color = W1, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, face)
-        new("Frame", {
-            BackgroundColor3 = W1,
+        roundCorners(face, 10)
+        local isEnabled = opts.disabled ~= true
+        local faceColor = isEnabled and baseColor or rgb(120, 128, 150)
+        create("UIGradient", {
+            Rotation = 90,
+            Color = ColorSequence.new(faceColor:Lerp(SHOP_WHITE, 0.25), faceColor:Lerp(SHOP_BLACK, 0.15)),
+        }, face)
+        addStudTexture(face, 0.55, 20)
+        create("UIStroke", { Color = SHOP_WHITE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, face)
+        create("Frame", {
+            BackgroundColor3 = SHOP_WHITE,
             BackgroundTransparency = 0.65,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(8, 4),
             Size = UDim2.new(1, -16, 0, 4),
             ZIndex = face.ZIndex + 1,
         }, face)
-        lbl(
+        shopLabel(
             face,
             label,
             opts.textSize or 20,
-            W1,
+            SHOP_WHITE,
             { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = face.ZIndex + 3 }
         )
-        if enabled then
-            local sh = new(
-                "Frame",
-                { BackgroundColor3 = W1, BorderSizePixel = 0, Size = UDim2.fromScale(1, 1), ZIndex = face.ZIndex + 2 },
-                face
-            )
-            local g = new("UIGradient", {
+        if isEnabled then
+            local shine = create("Frame", {
+                BackgroundColor3 = SHOP_WHITE,
+                BorderSizePixel = 0,
+                Size = UDim2.fromScale(1, 1),
+                ZIndex = face.ZIndex + 2,
+            }, face)
+            local shineGradient = create("UIGradient", {
                 Rotation = 20,
                 Offset = Vector2.new(-1.2, 0),
                 Transparency = NumberSequence.new({
@@ -1677,18 +1896,24 @@ RENDER.VipShop = function(panel)
                     NumberSequenceKeypoint.new(0.58, 1),
                     NumberSequenceKeypoint.new(1, 1),
                 }),
-            }, sh)
+            }, shine)
             task.spawn(function()
-                while sh.Parent do
-                    g.Offset = Vector2.new(-1.2, 0)
-                    TS:Create(g, TweenInfo.new(0.9, Enum.EasingStyle.Sine), { Offset = Vector2.new(1.2, 0) }):Play()
+                while shine.Parent do
+                    shineGradient.Offset = Vector2.new(-1.2, 0)
+                    ShopTweenService
+                        :Create(
+                            shineGradient,
+                            TweenInfo.new(0.9, Enum.EasingStyle.Sine),
+                            { Offset = Vector2.new(1.2, 0) }
+                        )
+                        :Play()
                     task.wait(2.6 + math.random())
                 end
             end)
-            local hs = new("UIScale", {}, holder)
+            local hoverScale = create("UIScale", {}, holder)
             if opts.pulse then
-                TS:Create(
-                    hs,
+                ShopTweenService:Create(
+                    hoverScale,
                     TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
                     { Scale = 1.04 }
                 ):Play()
@@ -1696,12 +1921,13 @@ RENDER.VipShop = function(panel)
             face.MouseEnter:Connect(function()
                 UISound.Play("Hover")
                 if not opts.pulse then
-                    TS:Create(hs, TweenInfo.new(0.12, Enum.EasingStyle.Back), { Scale = 1.05 }):Play()
+                    ShopTweenService:Create(hoverScale, TweenInfo.new(0.12, Enum.EasingStyle.Back), { Scale = 1.05 })
+                        :Play()
                 end
             end)
             face.MouseLeave:Connect(function()
                 if not opts.pulse then
-                    TS:Create(hs, TweenInfo.new(0.1), { Scale = 1 }):Play()
+                    ShopTweenService:Create(hoverScale, TweenInfo.new(0.1), { Scale = 1 }):Play()
                 end
             end)
             face.MouseButton1Down:Connect(function()
@@ -1719,8 +1945,8 @@ RENDER.VipShop = function(panel)
         end
         return face, holder
     end
-    local function tag(parent, s, color, pos, anchor, textColor)
-        local t = new("Frame", {
+    local function badgeTag(parent, labelText, color, pos, anchor, textColor)
+        local tagFrame = create("Frame", {
             AnchorPoint = anchor or Vector2.new(1, 0),
             Position = pos,
             Size = UDim2.fromOffset(0, 26),
@@ -1728,121 +1954,116 @@ RENDER.VipShop = function(panel)
             BackgroundColor3 = color,
             ZIndex = parent.ZIndex + 6,
         }, parent)
-        corner(t, 8)
-        new("UIStroke", { Color = K, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, t)
-        new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, t)
-        lbl(t, s, 14, textColor or W1, {
+        roundCorners(tagFrame, 8)
+        create(
+            "UIStroke",
+            { Color = SHOP_BLACK, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+            tagFrame
+        )
+        create("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, tagFrame)
+        shopLabel(tagFrame, labelText, 14, textColor or SHOP_WHITE, {
             Size = UDim2.new(0, 0, 1, 0),
             AutomaticSize = Enum.AutomaticSize.X,
-            ZIndex = t.ZIndex + 1,
+            ZIndex = tagFrame.ZIndex + 1,
             TextXAlignment = Enum.TextXAlignment.Center,
             NoStroke = textColor ~= nil,
         })
-        return t
+        return tagFrame
     end
-    local function icon(parent, img, pos, size, z, bob)
-        if not img or img == "" then
+    local function shopIcon(parent, image, pos, size, zIndex, shouldBob)
+        if not image or image == "" then
             return
         end
-        local im = new("ImageLabel", {
+        local iconImage = create("ImageLabel", {
             BackgroundTransparency = 1,
-            Image = img,
+            Image = image,
             ScaleType = Enum.ScaleType.Fit,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = pos,
             Size = size,
-            ZIndex = z or parent.ZIndex + 3,
+            ZIndex = zIndex or parent.ZIndex + 3,
         }, parent)
-        if bob then
-            TS:Create(
-                im,
+        if shouldBob then
+            ShopTweenService:Create(
+                iconImage,
                 TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
                 { Position = pos - UDim2.fromOffset(0, 5) }
             ):Play()
         end
-        return im
+        return iconImage
     end
 
     -- ===== layout: sidebar + scrolling page =====
-    local skin = new(
+    local shopRoot = create(
         "Frame",
         { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 6, ClipsDescendants = true },
-        L
+        layer
     )
-    local side = new("Frame", {
+    local sidebar = create("Frame", {
         Name = "ShopTabs",
-        BackgroundColor3 = c3(20, 13, 43),
+        BackgroundColor3 = rgb(20, 13, 43),
         BackgroundTransparency = 0.1,
         Position = UDim2.new(0.018, 0, 0.15, 16),
         Size = UDim2.new(0.18, 0, 0.85, -32),
         ZIndex = 9,
-    }, skin)
-    corner(side, 12)
-    new("UIStroke", { Color = W1, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, side)
-    new("UIListLayout", {
+    }, shopRoot)
+    roundCorners(sidebar, 12)
+    create("UIStroke", { Color = SHOP_WHITE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, sidebar)
+    create("UIListLayout", {
         Padding = UDim.new(0, 10),
         SortOrder = Enum.SortOrder.LayoutOrder,
         HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    }, side)
-    new(
+    }, sidebar)
+    create(
         "UIPadding",
         { PaddingTop = UDim.new(0, 12), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) },
-        side
+        sidebar
     )
-    local sf = new("ScrollingFrame", {
+    local pageScroll = create("ScrollingFrame", {
         Position = UDim2.new(0.215, 0, 0.15, 10),
         Size = UDim2.new(0.77, 0, 0.85, -20),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ScrollBarThickness = 6,
-        ScrollBarImageColor3 = c3(150, 120, 230),
+        ScrollBarImageColor3 = rgb(150, 120, 230),
         CanvasSize = UDim2.new(),
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollingDirection = Enum.ScrollingDirection.Y,
         ZIndex = 9,
-    }, skin)
-    new("UIListLayout", { Padding = UDim.new(0, 16), SortOrder = Enum.SortOrder.LayoutOrder }, sf)
-    new("UIPadding", {
+    }, shopRoot)
+    create("UIListLayout", { Padding = UDim.new(0, 16), SortOrder = Enum.SortOrder.LayoutOrder }, pageScroll)
+    create("UIPadding", {
         PaddingTop = UDim.new(0, 12),
         PaddingBottom = UDim.new(0, 24),
         PaddingLeft = UDim.new(0, 8),
         PaddingRight = UDim.new(0, 16),
-    }, sf)
+    }, pageScroll)
     local sections = {}
-    local order = 0
-    local function heading(s, key)
-        order += 1
-        local h = lbl(sf, s, 24, W1, { LayoutOrder = order, Size = UDim2.new(1, 0, 0, 30), ZIndex = 12 })
-        sections[key] = h
-        return h
+    local layoutOrder = 0
+    local function addHeading(title, key)
+        layoutOrder += 1
+        local headingLabel = shopLabel(
+            pageScroll,
+            title,
+            24,
+            SHOP_WHITE,
+            { LayoutOrder = layoutOrder, Size = UDim2.new(1, 0, 0, 30), ZIndex = 12 }
+        )
+        sections[key] = headingLabel
+        return headingLabel
     end
-    local function row(h)
-        order += 1
-        return new(
+    local function addRow(height)
+        layoutOrder += 1
+        return create(
             "Frame",
-            { BackgroundTransparency = 1, LayoutOrder = order, Size = UDim2.new(1, 0, 0, h), ZIndex = 10 },
-            sf
+            { BackgroundTransparency = 1, LayoutOrder = layoutOrder, Size = UDim2.new(1, 0, 0, height), ZIndex = 10 },
+            pageScroll
         )
     end
 
-    -- ===== FEATURED: limited deal =====
-    local LD = SC.LimitedDeal
-    sections.FEATURED = row(0)
-    if LD then
-        local r = row(250)
-        local face, _, sk = card(r, PINK, UDim2.fromScale(1, 1))
-        sk.Thickness = 5
-        local sg = new("UIGradient", {
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, GOLD),
-                ColorSequenceKeypoint.new(0.33, W1),
-                ColorSequenceKeypoint.new(0.66, c3(255, 90, 200)),
-                ColorSequenceKeypoint.new(1, c3(90, 220, 255)),
-            }),
-        }, sk)
-        TS:Create(sg, TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), { Rotation = 360 }):Play()
-        tag(face, "🔥 LIMITED DEAL", RED, UDim2.fromOffset(14, 12), Vector2.new(0, 0))
-        local eggBox = new("Frame", {
+    -- Limited-deal egg: glowing halo, rotating sparkle ring and the spinning egg model (ShopModels[key]).
+    local function addDealEggShowcase(face, limitedDeal)
+        local eggBox = create("Frame", {
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(0.2, 0, 0.56, 0),
@@ -1850,567 +2071,680 @@ RENDER.VipShop = function(panel)
             ZIndex = face.ZIndex + 1,
         }, face)
         -- soft halo behind the egg: two breathing glows + a slow ring of sparkles (replaces the hard rays)
-        local halo = new("ImageLabel", {
+        local halo = create("ImageLabel", {
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
             Size = UDim2.fromScale(1.55, 1.55),
             BackgroundTransparency = 1,
-            Image = FX.glow,
-            ImageColor3 = c3(255, 160, 230),
+            Image = FX_IMAGES.glow,
+            ImageColor3 = rgb(255, 160, 230),
             ImageTransparency = 0.15,
             ZIndex = eggBox.ZIndex,
         }, eggBox)
-        TS:Create(
+        ShopTweenService:Create(
             halo,
             TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
             { Size = UDim2.fromScale(1.75, 1.75), ImageTransparency = 0.35 }
         ):Play()
-        local core = new("ImageLabel", {
+        local core = create("ImageLabel", {
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.52),
             Size = UDim2.fromScale(1.05, 1.05),
             BackgroundTransparency = 1,
-            Image = FX.glow,
-            ImageColor3 = c3(255, 250, 215),
+            Image = FX_IMAGES.glow,
+            ImageColor3 = rgb(255, 250, 215),
             ImageTransparency = 0,
             ZIndex = eggBox.ZIndex,
         }, eggBox)
-        TS:Create(
+        ShopTweenService:Create(
             core,
             TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
             { ImageTransparency = 0.25 }
         ):Play()
         core.Size = UDim2.fromScale(1.3, 1.3)
-        for _, sz in { 1.15, 0.95 } do
-            new("ImageLabel", {
+        for _, glowSize in { 1.15, 0.95 } do
+            create("ImageLabel", {
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 Position = UDim2.fromScale(0.5, 0.52),
-                Size = UDim2.fromScale(sz, sz),
+                Size = UDim2.fromScale(glowSize, glowSize),
                 BackgroundTransparency = 1,
-                Image = FX.glow,
-                ImageColor3 = c3(255, 255, 240),
+                Image = FX_IMAGES.glow,
+                ImageColor3 = rgb(255, 255, 240),
                 ZIndex = eggBox.ZIndex,
             }, eggBox)
         end -- stacked so the dark egg has a bright light behind it
-        local ring = new("Frame", {
+        local sparkleRing = create("Frame", {
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
             Size = UDim2.fromScale(1.3, 1.3),
             ZIndex = eggBox.ZIndex,
         }, eggBox)
-        for k = 1, 8 do
-            local a = k / 8 * math.pi * 2
-            local sp = new("ImageLabel", {
+        for sparkleIndex = 1, 8 do
+            local angle = sparkleIndex / 8 * math.pi * 2
+            local sparkle = create("ImageLabel", {
                 BackgroundTransparency = 1,
-                Image = FX.sparkle,
+                Image = FX_IMAGES.sparkle,
                 AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromScale(0.5 + math.cos(a) * 0.5, 0.5 + math.sin(a) * 0.5),
-                Size = UDim2.fromOffset(k % 2 == 0 and 12 or 18, k % 2 == 0 and 12 or 18),
-                ImageColor3 = k % 2 == 0 and W1 or c3(255, 225, 140),
+                Position = UDim2.fromScale(0.5 + math.cos(angle) * 0.5, 0.5 + math.sin(angle) * 0.5),
+                Size = UDim2.fromOffset(sparkleIndex % 2 == 0 and 12 or 18, sparkleIndex % 2 == 0 and 12 or 18),
+                ImageColor3 = sparkleIndex % 2 == 0 and SHOP_WHITE or rgb(255, 225, 140),
                 ZIndex = eggBox.ZIndex + 2,
-            }, ring)
-            TS:Create(
-                sp,
-                TweenInfo.new(0.7 + k * 0.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                { ImageTransparency = 0.8 }
-            ):Play()
+            }, sparkleRing)
+            ShopTweenService
+                :Create(
+                    sparkle,
+                    TweenInfo.new(0.7 + sparkleIndex * 0.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+                    { ImageTransparency = 0.8 }
+                )
+                :Play()
         end
-        TS:Create(ring, TweenInfo.new(14, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), { Rotation = 360 })
-            :Play()
-        local vp = new("ViewportFrame", {
+        ShopTweenService:Create(
+            sparkleRing,
+            TweenInfo.new(14, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1),
+            { Rotation = 360 }
+        ):Play()
+        local eggViewport = create("ViewportFrame", {
             BackgroundTransparency = 1,
             Size = UDim2.fromScale(1, 1),
             ZIndex = eggBox.ZIndex + 1,
-            Ambient = c3(255, 255, 255),
-            LightColor = c3(255, 255, 255),
+            Ambient = rgb(255, 255, 255),
+            LightColor = rgb(255, 255, 255),
             LightDirection = Vector3.new(-0.4, -0.6, -1),
         }, eggBox) -- bright so the dark egg reads
-        local src = SR:FindFirstChild("ShopModels") and SR.ShopModels:FindFirstChild(LD.key)
-        if src then
-            local egg = src:Clone()
-            egg.Parent = vp
-            local cf, size = egg:GetBoundingBox()
-            egg:PivotTo(CFrame.new(-cf.Position) * egg:GetPivot())
-            local cam = new("Camera", { FieldOfView = 40 }, vp)
-            vp.CurrentCamera = cam
-            cam.CFrame = CFrame.lookAt(Vector3.new(0, size.Y * 0.08, -size.Magnitude * 1.2), Vector3.zero)
-            local b0 = egg:GetPivot()
-            local t0 = os.clock()
-            local conn
-            conn = RunS.RenderStepped:Connect(function()
-                if not vp.Parent then
-                    conn:Disconnect()
+        local eggTemplate = shopSystem:FindFirstChild("ShopModels")
+            and shopSystem.ShopModels:FindFirstChild(limitedDeal.key)
+        if eggTemplate then
+            local egg = eggTemplate:Clone()
+            egg.Parent = eggViewport
+            local boundsCFrame, boundsSize = egg:GetBoundingBox()
+            egg:PivotTo(CFrame.new(-boundsCFrame.Position) * egg:GetPivot())
+            local camera = create("Camera", { FieldOfView = 40 }, eggViewport)
+            eggViewport.CurrentCamera = camera
+            camera.CFrame =
+                CFrame.lookAt(Vector3.new(0, boundsSize.Y * 0.08, -boundsSize.Magnitude * 1.2), Vector3.zero)
+            local basePivot = egg:GetPivot()
+            local spinStart = os.clock()
+            local spinConnection
+            spinConnection = RunService.RenderStepped:Connect(function()
+                if not eggViewport.Parent then
+                    spinConnection:Disconnect()
                     return
                 end
-                local t = os.clock() - t0
-                egg:PivotTo(CFrame.new(0, math.sin(t * 2) * 0.25, 0) * CFrame.Angles(0, t * 0.9, 0) * b0)
+                local elapsed = os.clock() - spinStart
+                egg:PivotTo(
+                    CFrame.new(0, math.sin(elapsed * 2) * 0.25, 0) * CFrame.Angles(0, elapsed * 0.9, 0) * basePivot
+                )
             end)
         end
-        local info = new("Frame", {
+    end
+    -- DAYS / HRS / MIN / SEC boxes, ticking while the shop stays open.
+    local function addDealCountdown(dealInfo, limitedDeal)
+        -- countdown boxes
+        local countdownRow = create("Frame", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(0, 78),
+            Size = UDim2.new(1, 0, 0, 64),
+            ZIndex = dealInfo.ZIndex,
+        }, dealInfo)
+        create("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            Padding = UDim.new(0, 10),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        }, countdownRow)
+        local countdownLabels = {}
+        for i, unit in { "DAYS", "HRS", "MIN", "SEC" } do
+            local unitBox = create("Frame", {
+                LayoutOrder = i,
+                BackgroundColor3 = rgb(20, 14, 40),
+                Size = UDim2.fromOffset(66, 64),
+                ZIndex = countdownRow.ZIndex + 1,
+            }, countdownRow)
+            roundCorners(unitBox, 10)
+            create(
+                "UIStroke",
+                { Color = SHOP_WHITE, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+                unitBox
+            )
+            countdownLabels[i] = shopLabel(unitBox, "00", 28, GOLD, {
+                Size = UDim2.new(1, 0, 0, 38),
+                Position = UDim2.fromOffset(0, 2),
+                TextXAlignment = Enum.TextXAlignment.Center,
+                ZIndex = unitBox.ZIndex + 1,
+            })
+            shopLabel(unitBox, unit, 11, rgb(200, 190, 230), {
+                Size = UDim2.new(1, 0, 0, 16),
+                Position = UDim2.fromOffset(0, 42),
+                TextXAlignment = Enum.TextXAlignment.Center,
+                ZIndex = unitBox.ZIndex + 1,
+                NoStroke = true,
+            })
+        end
+        task.spawn(function()
+            while countdownLabels[1].Parent and panel.Visible do
+                local secondsLeft = math.max(0, limitedDeal.endsAt - os.time())
+                countdownLabels[1].Text = string.format("%02d", secondsLeft // 86400)
+                countdownLabels[2].Text = string.format("%02d", (secondsLeft // 3600) % 24)
+                countdownLabels[3].Text = string.format("%02d", (secondsLeft // 60) % 60)
+                countdownLabels[4].Text = string.format("%02d", secondsLeft % 60)
+                task.wait(1)
+            end
+        end)
+    end
+
+    -- ===== FEATURED: limited deal =====
+    local limitedDeal = ShopConfig.LimitedDeal
+    sections.FEATURED = addRow(0)
+    if limitedDeal then
+        local dealRow = addRow(250)
+        local face, _, faceStroke = glowCard(dealRow, PINK, UDim2.fromScale(1, 1))
+        faceStroke.Thickness = 5
+        local rainbowGradient = create("UIGradient", {
+            Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, GOLD),
+                ColorSequenceKeypoint.new(0.33, SHOP_WHITE),
+                ColorSequenceKeypoint.new(0.66, rgb(255, 90, 200)),
+                ColorSequenceKeypoint.new(1, rgb(90, 220, 255)),
+            }),
+        }, faceStroke)
+        ShopTweenService:Create(
+            rainbowGradient,
+            TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1),
+            { Rotation = 360 }
+        ):Play()
+        badgeTag(face, "🔥 LIMITED DEAL", RED, UDim2.fromOffset(14, 12), Vector2.new(0, 0))
+        addDealEggShowcase(face, limitedDeal)
+        local dealInfo = create("Frame", {
             BackgroundTransparency = 1,
             Position = UDim2.new(0.4, 0, 0, 22),
             Size = UDim2.new(0.57, 0, 1, -30),
             ZIndex = face.ZIndex + 1,
         }, face)
-        lbl(info, LD.name, 38, W1, { Size = UDim2.new(1, 0, 0, 44) })
-        lbl(info, LD.text, 16, c3(255, 225, 240), { Size = UDim2.new(1, 0, 0, 22), Position = UDim2.fromOffset(0, 46) })
-        -- countdown boxes
-        local cd = new("Frame", {
-            BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(0, 78),
-            Size = UDim2.new(1, 0, 0, 64),
-            ZIndex = info.ZIndex,
-        }, info)
-        new("UIListLayout", {
-            FillDirection = Enum.FillDirection.Horizontal,
-            Padding = UDim.new(0, 10),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-        }, cd)
-        local nums = {}
-        for i, unit in { "DAYS", "HRS", "MIN", "SEC" } do
-            local b = new("Frame", {
-                LayoutOrder = i,
-                BackgroundColor3 = c3(20, 14, 40),
-                Size = UDim2.fromOffset(66, 64),
-                ZIndex = cd.ZIndex + 1,
-            }, cd)
-            corner(b, 10)
-            new("UIStroke", { Color = W1, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b)
-            nums[i] = lbl(b, "00", 28, GOLD, {
-                Size = UDim2.new(1, 0, 0, 38),
-                Position = UDim2.fromOffset(0, 2),
-                TextXAlignment = Enum.TextXAlignment.Center,
-                ZIndex = b.ZIndex + 1,
-            })
-            lbl(b, unit, 11, c3(200, 190, 230), {
-                Size = UDim2.new(1, 0, 0, 16),
-                Position = UDim2.fromOffset(0, 42),
-                TextXAlignment = Enum.TextXAlignment.Center,
-                ZIndex = b.ZIndex + 1,
-                NoStroke = true,
-            })
-        end
-        task.spawn(function()
-            while nums[1].Parent and panel.Visible do
-                local s = math.max(0, LD.endsAt - os.time())
-                nums[1].Text = string.format("%02d", s // 86400)
-                nums[2].Text = string.format("%02d", (s // 3600) % 24)
-                nums[3].Text = string.format("%02d", (s // 60) % 60)
-                nums[4].Text = string.format("%02d", s % 60)
-                task.wait(1)
-            end
-        end)
-        local id = SC.Products[LD.key]
-        buy(
-            info,
-            SC.Prices[LD.key] and ("BUY  R$ " .. live(id, false, SC.Prices[LD.key])) or "SOON",
+        shopLabel(dealInfo, limitedDeal.name, 38, SHOP_WHITE, { Size = UDim2.new(1, 0, 0, 44) })
+        shopLabel(
+            dealInfo,
+            limitedDeal.text,
+            16,
+            rgb(255, 225, 240),
+            { Size = UDim2.new(1, 0, 0, 22), Position = UDim2.fromOffset(0, 46) }
+        )
+        addDealCountdown(dealInfo, limitedDeal)
+        local productId = ShopConfig.Products[limitedDeal.key]
+        buyButton(
+            dealInfo,
+            ShopConfig.Prices[limitedDeal.key]
+                    and ("BUY  R$ " .. livePrice(productId, false, ShopConfig.Prices[limitedDeal.key]))
+                or "SOON",
             UDim2.fromOffset(260, 58),
             UDim2.new(1, -4, 1, -8),
             function()
-                act2("Buy", LD.key)
+                shopAction("Buy", limitedDeal.key)
             end,
             { anchor = Vector2.new(1, 1), textSize = 24, pulse = true }
         )
-        floaters(face, 9, c3(255, 235, 160))
+        addFloatingSparkles(face, 9, rgb(255, 235, 160))
     end
 
     -- ===== BOOSTS =====
-    heading("BOOSTS", "BOOSTS")
-    local br = row(160)
-    local function boostCard(i, n, title, desc, key, color, img, untilT, pass, owned)
-        local face = card(br, color, UDim2.new(1 / n, -10, 1, 0), UDim2.new((i - 1) / n, 5, 0, 0))
-        icon(face, img, UDim2.new(0, 56, 0.5, -8), UDim2.fromOffset(84, 84), nil, true)
-        lbl(
+    addHeading("BOOSTS", "BOOSTS")
+    local boostRow = addRow(160)
+    local function boostCard(slotIndex, slotCount, title, desc, key, color, image, activeUntil, isGamePass, isOwned)
+        local face = glowCard(
+            boostRow,
+            color,
+            UDim2.new(1 / slotCount, -10, 1, 0),
+            UDim2.new((slotIndex - 1) / slotCount, 5, 0, 0)
+        )
+        shopIcon(face, image, UDim2.new(0, 56, 0.5, -8), UDim2.fromOffset(84, 84), nil, true)
+        shopLabel(
             face,
             title,
             22,
-            W1,
+            SHOP_WHITE,
             { Position = UDim2.fromOffset(108, 12), Size = UDim2.new(1, -116, 0, 28), TextScaled = true }
         )
-        local dl = lbl(
+        local descLabel = shopLabel(
             face,
             desc,
             13,
-            c3(240, 240, 255),
+            rgb(240, 240, 255),
             { Position = UDim2.fromOffset(108, 42), Size = UDim2.new(1, -116, 0, 34), NoStroke = true }
         )
-        if untilT and untilT > st.serverTime then
-            local tr = new("Frame", {
-                BackgroundColor3 = c3(13, 10, 20),
+        if activeUntil and activeUntil > shopState.serverTime then
+            local timerTrack = create("Frame", {
+                BackgroundColor3 = rgb(13, 10, 20),
                 Position = UDim2.fromOffset(108, 84),
                 Size = UDim2.new(1, -124, 0, 16),
                 ZIndex = face.ZIndex + 2,
             }, face)
-            corner(tr, 8)
-            new("UIStroke", { Color = W1, Thickness = 2 }, tr)
-            local f = new(
-                "Frame",
-                { BackgroundColor3 = W1, BorderSizePixel = 0, Size = UDim2.fromScale(0.5, 1), ZIndex = tr.ZIndex + 1 },
-                tr
+            roundCorners(timerTrack, 8)
+            create("UIStroke", { Color = SHOP_WHITE, Thickness = 2 }, timerTrack)
+            local timerFill = create("Frame", {
+                BackgroundColor3 = SHOP_WHITE,
+                BorderSizePixel = 0,
+                Size = UDim2.fromScale(0.5, 1),
+                ZIndex = timerTrack.ZIndex + 1,
+            }, timerTrack)
+            roundCorners(timerFill, 8)
+            create("UIGradient", { Color = ColorSequence.new(rgb(150, 255, 120), rgb(60, 200, 60)) }, timerFill)
+            local activeLabel = shopLabel(
+                face,
+                "",
+                13,
+                SHOP_WHITE,
+                { Position = UDim2.fromOffset(108, 104), Size = UDim2.new(1, -116, 0, 18) }
             )
-            corner(f, 8)
-            new("UIGradient", { Color = ColorSequence.new(c3(150, 255, 120), c3(60, 200, 60)) }, f)
-            local al =
-                lbl(face, "", 13, W1, { Position = UDim2.fromOffset(108, 104), Size = UDim2.new(1, -116, 0, 18) })
-            local t0 = os.clock()
+            local startClock = os.clock()
             task.spawn(function()
-                while al.Parent and panel.Visible do
-                    local left = untilT - (st.serverTime + os.clock() - t0)
-                    f.Size = UDim2.fromScale(math.clamp(left / ((SC.BoostMinutes or 30) * 60), 0.03, 1), 1)
-                    al.Text = left > 0 and ("ACTIVE " .. hms(left)) or "ENDED"
+                while activeLabel.Parent and panel.Visible do
+                    local secondsLeft = activeUntil - (shopState.serverTime + os.clock() - startClock)
+                    timerFill.Size =
+                        UDim2.fromScale(math.clamp(secondsLeft / ((ShopConfig.BoostMinutes or 30) * 60), 0.03, 1), 1)
+                    activeLabel.Text = secondsLeft > 0 and ("ACTIVE " .. formatHms(secondsLeft)) or "ENDED"
                     task.wait(1)
                 end
             end)
         end
-        buy(
+        buyButton(
             face,
-            owned and "OWNED" or price(key, pass),
+            isOwned and "OWNED" or priceText(key, isGamePass),
             UDim2.fromOffset(140, 44),
             UDim2.new(1, -14, 1, -14),
-            (not owned) and function()
-                act2("Buy", key)
+            (not isOwned) and function()
+                shopAction("Buy", key)
             end or nil,
-            { anchor = Vector2.new(1, 1), disabled = owned, textSize = 18 }
+            { anchor = Vector2.new(1, 1), disabled = isOwned, textSize = 18 }
         )
-        floaters(face, 3)
-        return dl
+        addFloatingSparkles(face, 3)
+        return descLabel
     end
     boostCard(
         1,
         3,
         "2× MONEY",
-        SC.BoostMinutes .. " min of double cash",
+        ShopConfig.BoostMinutes .. " min of double cash",
         "Money2x",
-        GREEN,
-        ICON.Money2x,
-        st.money2xUntil
+        SHOP_GREEN,
+        SHOP_ICONS.Money2x,
+        shopState.money2xUntil
     )
-    boostCard(2, 3, "2× HATCH", "Eggs hatch twice as fast", "Hatch2x", GOLD, ICON.Hatch2x, st.hatch2xUntil)
+    boostCard(
+        2,
+        3,
+        "2× HATCH",
+        "Eggs hatch twice as fast",
+        "Hatch2x",
+        GOLD,
+        SHOP_ICONS.Hatch2x,
+        shopState.hatch2xUntil
+    )
     boostCard(
         3,
         3,
         "STARTER PACK",
-        "$" .. Config.Short(SC.StarterPack.cash) .. " + " .. SC.StarterPack.boostMinutes .. " min 2× money & hatch",
+        "$"
+            .. Config.Short(ShopConfig.StarterPack.cash)
+            .. " + "
+            .. ShopConfig.StarterPack.boostMinutes
+            .. " min 2× money & hatch",
         "StarterPack",
         PURP,
-        ICON.StarterPack,
+        SHOP_ICONS.StarterPack,
         nil,
         true,
-        st.starter
+        shopState.starter
     )
 
     -- ===== PASSES: VIP + money multiplier =====
-    heading("PASSES", "PASSES")
-    local pr = row(170)
+    addHeading("PASSES", "PASSES")
+    local passRow = addRow(170)
     do
-        local face = card(pr, PURP, UDim2.new(0.5, -8, 1, 0), UDim2.fromScale(0, 0))
-        icon(face, ICON.Crown, UDim2.new(0, 70, 0.5, 0), UDim2.fromOffset(110, 110), nil, true)
-        lbl(face, "VIP", 34, GOLD, { Position = UDim2.fromOffset(136, 12), Size = UDim2.new(1, -144, 0, 40) })
-        lbl(
+        local face = glowCard(passRow, PURP, UDim2.new(0.5, -8, 1, 0), UDim2.fromScale(0, 0))
+        shopIcon(face, SHOP_ICONS.Crown, UDim2.new(0, 70, 0.5, 0), UDim2.fromOffset(110, 110), nil, true)
+        shopLabel(face, "VIP", 34, GOLD, { Position = UDim2.fromOffset(136, 12), Size = UDim2.new(1, -144, 0, 40) })
+        shopLabel(
             face,
             "Crown + gold chat tag\n+10% cash · 2× daily cash",
             14,
-            c3(235, 225, 255),
+            rgb(235, 225, 255),
             { Position = UDim2.fromOffset(136, 54), Size = UDim2.new(1, -144, 0, 40), NoStroke = true }
         )
-        buy(
+        buyButton(
             face,
-            st.vip and "OWNED" or price("VIP", true),
+            shopState.vip and "OWNED" or priceText("VIP", true),
             UDim2.fromOffset(170, 50),
             UDim2.new(1, -14, 1, -14),
-            (not st.vip) and function()
-                act2("Buy", "VIP")
+            (not shopState.vip) and function()
+                shopAction("Buy", "VIP")
             end or nil,
-            { anchor = Vector2.new(1, 1), disabled = st.vip, color = GOLD, textSize = 20 }
+            { anchor = Vector2.new(1, 1), disabled = shopState.vip, color = GOLD, textSize = 20 }
         )
-        floaters(face, 4, c3(255, 230, 140))
+        addFloatingSparkles(face, 4, rgb(255, 230, 140))
     end
     do
-        local lvl = st.moneyLevel or 0
-        local cur = lvl > 0 and SC.MoneyLevels[lvl].mult or 1
-        local nxt = SC.MoneyLevels[lvl + 1]
-        local face = card(pr, GREEN, UDim2.new(0.5, -8, 1, 0), UDim2.new(0.5, 8, 0, 0))
-        icon(face, ICON.Coins, UDim2.new(0, 64, 0.5, -6), UDim2.fromOffset(96, 96), nil, true)
-        lbl(
+        local moneyLevel = shopState.moneyLevel or 0
+        local currentMult = moneyLevel > 0 and ShopConfig.MoneyLevels[moneyLevel].mult or 1
+        local nextLevel = ShopConfig.MoneyLevels[moneyLevel + 1]
+        local face = glowCard(passRow, SHOP_GREEN, UDim2.new(0.5, -8, 1, 0), UDim2.new(0.5, 8, 0, 0))
+        shopIcon(face, SHOP_ICONS.Coins, UDim2.new(0, 64, 0.5, -6), UDim2.fromOffset(96, 96), nil, true)
+        shopLabel(
             face,
             "MONEY MULTIPLIER",
             20,
-            W1,
+            SHOP_WHITE,
             { Position = UDim2.fromOffset(124, 12), Size = UDim2.new(1, -132, 0, 26) }
         )
-        lbl(
+        shopLabel(
             face,
-            nxt and (cur .. "×  →  " .. nxt.mult .. "×") or (cur .. "×  MAXED!"),
+            nextLevel and (currentMult .. "×  →  " .. nextLevel.mult .. "×") or (currentMult .. "×  MAXED!"),
             28,
-            c3(200, 255, 170),
+            rgb(200, 255, 170),
             { Position = UDim2.fromOffset(124, 42), Size = UDim2.new(1, -132, 0, 34) }
         )
-        local pips = new("Frame", {
+        local pips = create("Frame", {
             BackgroundTransparency = 1,
             Position = UDim2.fromOffset(124, 82),
             Size = UDim2.new(1, -132, 0, 16),
             ZIndex = face.ZIndex + 2,
         }, face)
-        new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4) }, pips)
-        for i = 1, #SC.MoneyLevels do
-            local p = new("Frame", {
-                BackgroundColor3 = i <= lvl and GOLD or c3(30, 60, 30),
+        create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4) }, pips)
+        for i = 1, #ShopConfig.MoneyLevels do
+            local pip = create("Frame", {
+                BackgroundColor3 = i <= moneyLevel and GOLD or rgb(30, 60, 30),
                 Size = UDim2.fromOffset(14, 14),
                 ZIndex = pips.ZIndex,
             }, pips)
-            corner(p, 4)
-            new("UIStroke", { Color = K, Thickness = 1.5 }, p)
+            roundCorners(pip, 4)
+            create("UIStroke", { Color = SHOP_BLACK, Thickness = 1.5 }, pip)
         end
-        if nxt then
-            buy(
+        if nextLevel then
+            buyButton(
                 face,
-                nxt.productId == 0 and "SOON" or ("R$ " .. live(nxt.productId, false, nxt.robux)),
+                nextLevel.productId == 0 and "SOON" or ("R$ " .. livePrice(nextLevel.productId, false, nextLevel.robux)),
                 UDim2.fromOffset(150, 46),
                 UDim2.new(1, -14, 1, -14),
                 function()
-                    act2("BuyMoneyLevel")
+                    shopAction("BuyMoneyLevel")
                 end,
                 { anchor = Vector2.new(1, 1), textSize = 20 }
             )
         end
-        floaters(face, 3)
+        addFloatingSparkles(face, 3)
     end
 
     -- ===== CASH PACKS =====
-    heading("CASH PACKS", "CASH")
-    local cr = row(210)
-    local keys = { "CashSmall", "CashMedium", "CashLarge" }
-    local function rbx(k)
-        return tonumber(live(SC.Products[k], false, SC.Prices[k])) or SC.Prices[k] or 1
+    addHeading("CASH PACKS", "CASH")
+    local cashRow = addRow(210)
+    local cashPackKeys = { "CashSmall", "CashMedium", "CashLarge" }
+    local function robuxPriceOf(productKey)
+        return tonumber(livePrice(ShopConfig.Products[productKey], false, ShopConfig.Prices[productKey]))
+            or ShopConfig.Prices[productKey]
+            or 1
     end
-    local baseRate = (SC.CashPacks.CashSmall or 1) / math.max(rbx("CashSmall"), 1)
-    for i, k in keys do
-        local col = ({ BLUE, GOLD, BLUE })[i]
-        local face, _, sk, gl = card(cr, col, UDim2.new(1 / 3, -10, 1, 0), UDim2.new((i - 1) / 3, 5, 0, 0))
-        local amount = SC.CashPacks[k] or 0
-        local n = ({ 1, 3, 6 })[i]
-        for c = 1, n do
-            icon(
+    local baseRate = (ShopConfig.CashPacks.CashSmall or 1) / math.max(robuxPriceOf("CashSmall"), 1)
+    for i, packKey in cashPackKeys do
+        local cardColor = ({ BLUE, GOLD, BLUE })[i]
+        local face, _, faceStroke, glow =
+            glowCard(cashRow, cardColor, UDim2.new(1 / 3, -10, 1, 0), UDim2.new((i - 1) / 3, 5, 0, 0))
+        local amount = ShopConfig.CashPacks[packKey] or 0
+        local coinCount = ({ 1, 3, 6 })[i]
+        for coinIndex = 1, coinCount do
+            shopIcon(
                 face,
-                ICON.Coins,
-                UDim2.new(0.5, (c - (n + 1) / 2) * 22, 0, 60 - (c % 2) * 8),
+                SHOP_ICONS.Coins,
+                UDim2.new(0.5, (coinIndex - (coinCount + 1) / 2) * 22, 0, 60 - (coinIndex % 2) * 8),
                 UDim2.fromOffset(46, 46),
-                face.ZIndex + 3 + c
+                face.ZIndex + 3 + coinIndex
             )
         end
-        lbl(face, "$" .. Config.Short(amount), 32, c3(150, 255, 120), {
+        shopLabel(face, "$" .. Config.Short(amount), 32, rgb(150, 255, 120), {
             Position = UDim2.fromOffset(0, 96),
             Size = UDim2.new(1, 0, 0, 38),
             TextXAlignment = Enum.TextXAlignment.Center,
         })
-        local rate = amount / math.max(rbx(k), 1)
+        local rate = amount / math.max(robuxPriceOf(packKey), 1)
         local bonus = math.floor((rate / baseRate - 1) * 100 + 0.5)
         if i == 2 then
-            tag(face, "MOST POPULAR", RED, UDim2.new(1, -10, 0, 10))
-            sk.Color = c3(255, 90, 100)
-            TS:Create(
-                sk,
+            badgeTag(face, "MOST POPULAR", RED, UDim2.new(1, -10, 0, 10))
+            faceStroke.Color = rgb(255, 90, 100)
+            ShopTweenService:Create(
+                faceStroke,
                 TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
                 { Thickness = 5 }
             ):Play()
-            gl.ImageColor3 = c3(255, 90, 100)
+            glow.ImageColor3 = rgb(255, 90, 100)
         elseif bonus > 0 then
-            tag(face, "+" .. bonus .. "% MORE", GOLD, UDim2.new(1, -10, 0, 10), nil, K)
+            badgeTag(face, "+" .. bonus .. "% MORE", GOLD, UDim2.new(1, -10, 0, 10), nil, SHOP_BLACK)
         end
-        buy(
+        buyButton(
             face,
-            SC.Products[k] == 0 and "SOON" or price(k),
+            ShopConfig.Products[packKey] == 0 and "SOON" or priceText(packKey),
             UDim2.new(1, -28, 0, 50),
             UDim2.new(0.5, 0, 1, -14),
             function()
-                act2("Buy", k)
+                shopAction("Buy", packKey)
             end,
             { anchor = Vector2.new(0.5, 1), textSize = 22 }
         )
-        floaters(face, 3 + i, c3(255, 240, 160))
+        addFloatingSparkles(face, 3 + i, rgb(255, 240, 160))
     end
 
     -- ===== DAILY REWARDS =====
-    heading("DAILY REWARDS", "DAILY")
-    local d = st.daily
-    local dr = row(220)
-    local df = card(dr, BLUE, UDim2.fromScale(1, 1))
-    for i, r in SC.Daily do
-        local claimed = (i < d.day) or (i == d.day and not d.ready)
-        local today = i == d.day and d.ready
-        local col = today and GOLD or (i == 7 and RED or c3(42, 31, 74))
-        local t = card(df, col, UDim2.new(1 / 7, -10, 0, 128), UDim2.new((i - 1) / 7, 5, 0, 16), df.ZIndex + 1)
-        lbl(t, "DAY " .. i, 14, W1, {
+    addHeading("DAILY REWARDS", "DAILY")
+    local daily = shopState.daily
+    local dailyRow = addRow(220)
+    local dailyCard = glowCard(dailyRow, BLUE, UDim2.fromScale(1, 1))
+    for i, reward in ShopConfig.Daily do
+        local isClaimed = (i < daily.day) or (i == daily.day and not daily.ready)
+        local isToday = i == daily.day and daily.ready
+        local dayColor = isToday and GOLD or (i == 7 and RED or rgb(42, 31, 74))
+        local dayCard = glowCard(
+            dailyCard,
+            dayColor,
+            UDim2.new(1 / 7, -10, 0, 128),
+            UDim2.new((i - 1) / 7, 5, 0, 16),
+            dailyCard.ZIndex + 1
+        )
+        shopLabel(dayCard, "DAY " .. i, 14, SHOP_WHITE, {
             Position = UDim2.fromOffset(0, 6),
             Size = UDim2.new(1, 0, 0, 18),
             TextXAlignment = Enum.TextXAlignment.Center,
         })
-        local key = r.kind == "cash" and "Coins"
-            or r.kind == "mystery" and (ICON.Chalice and "Chalice" or "Chest")
-            or r.boost
-        icon(t, ICON[key], UDim2.new(0.5, 0, 0, 54), UDim2.fromOffset(44, 44), nil, today)
-        lbl(
-            t,
-            r.label or ("$" .. Config.Short(r.amount)),
+        local iconKey = reward.kind == "cash" and "Coins"
+            or reward.kind == "mystery" and (SHOP_ICONS.Chalice and "Chalice" or "Chest")
+            or reward.boost
+        shopIcon(dayCard, SHOP_ICONS[iconKey], UDim2.new(0.5, 0, 0, 54), UDim2.fromOffset(44, 44), nil, isToday)
+        shopLabel(
+            dayCard,
+            reward.label or ("$" .. Config.Short(reward.amount)),
             13,
-            r.kind == "cash" and c3(150, 255, 120) or c3(230, 200, 255),
+            reward.kind == "cash" and rgb(150, 255, 120) or rgb(230, 200, 255),
             {
                 Position = UDim2.fromOffset(2, 80),
                 Size = UDim2.new(1, -4, 0, 28),
                 TextXAlignment = Enum.TextXAlignment.Center,
             }
         )
-        lbl(t, claimed and "✓" or (today and "READY" or "🔒"), 13, claimed and GREEN or W1, {
-            Position = UDim2.new(0, 0, 1, -22),
-            Size = UDim2.new(1, 0, 0, 18),
-            TextXAlignment = Enum.TextXAlignment.Center,
-        })
-        if today then
-            local s2 = t:FindFirstChildOfClass("UIStroke")
-            if s2 then
-                TS:Create(
-                    s2,
+        shopLabel(
+            dayCard,
+            isClaimed and "✓" or (isToday and "READY" or "🔒"),
+            13,
+            isClaimed and SHOP_GREEN or SHOP_WHITE,
+            {
+                Position = UDim2.new(0, 0, 1, -22),
+                Size = UDim2.new(1, 0, 0, 18),
+                TextXAlignment = Enum.TextXAlignment.Center,
+            }
+        )
+        if isToday then
+            local dayStroke = dayCard:FindFirstChildOfClass("UIStroke")
+            if dayStroke then
+                ShopTweenService:Create(
+                    dayStroke,
                     TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
                     { Thickness = 5 }
                 ):Play()
             end
         end
     end
-    if d.ready then
-        buy(df, "CLAIM DAY " .. d.day, UDim2.fromOffset(260, 46), UDim2.new(0.5, 0, 1, -12), function()
-            act2("ClaimDaily")
+    if daily.ready then
+        buyButton(dailyCard, "CLAIM DAY " .. daily.day, UDim2.fromOffset(260, 46), UDim2.new(0.5, 0, 1, -12), function()
+            shopAction("ClaimDaily")
         end, { anchor = Vector2.new(0.5, 1), textSize = 20, pulse = true })
     else
-        local nl = lbl(df, "Next reward in " .. hms(d.nextIn), 17, c3(220, 225, 255), {
+        local nextLabel = shopLabel(dailyCard, "Next reward in " .. formatHms(daily.nextIn), 17, rgb(220, 225, 255), {
             Position = UDim2.new(0, 0, 1, -40),
             Size = UDim2.new(1, 0, 0, 24),
             TextXAlignment = Enum.TextXAlignment.Center,
         })
-        local endAt = os.clock() + d.nextIn
+        local nextRewardAt = os.clock() + daily.nextIn
         task.spawn(function()
-            while nl.Parent and panel.Visible do
-                nl.Text = "Next reward in " .. hms(endAt - os.clock())
+            while nextLabel.Parent and panel.Visible do
+                nextLabel.Text = "Next reward in " .. formatHms(nextRewardAt - os.clock())
                 task.wait(1)
             end
         end)
     end
 
     -- ===== sidebar tabs: jump to a section =====
-    local TABS = {
-        { "FEATURED", ICON.Fire or ICON.StarterPack, PINK },
-        { "BOOSTS", ICON.Money2x, GREEN },
-        { "PASSES", ICON.Crown, PURP },
-        { "CASH", ICON.Coins, GOLD },
-        { "DAILY", ICON.Chest, BLUE },
+    local SIDEBAR_TABS = {
+        { "FEATURED", SHOP_ICONS.Fire or SHOP_ICONS.StarterPack, PINK },
+        { "BOOSTS", SHOP_ICONS.Money2x, SHOP_GREEN },
+        { "PASSES", SHOP_ICONS.Crown, PURP },
+        { "CASH", SHOP_ICONS.Coins, GOLD },
+        { "DAILY", SHOP_ICONS.Chest, BLUE },
     }
     local tabFaces = {}
-    local function setActive(name)
-        for n, f in tabFaces do
-            local on = n == name
-            f.face.BackgroundColor3 = on and f.color or c3(53, 40, 98)
-            f.stroke.Thickness = on and 4 or 2.5
+    local function setActiveTab(name)
+        for tabName, tab in tabFaces do
+            local isActive = tabName == name
+            tab.face.BackgroundColor3 = isActive and tab.color or rgb(53, 40, 98)
+            tab.stroke.Thickness = isActive and 4 or 2.5
         end
     end
-    for i, tdef in TABS do
-        local h = new("TextButton", {
+    for i, tabDef in SIDEBAR_TABS do
+        local tabButton = create("TextButton", {
             LayoutOrder = i,
             Text = "",
             AutoButtonColor = false,
-            BackgroundColor3 = c3(53, 40, 98),
+            BackgroundColor3 = rgb(53, 40, 98),
             Size = UDim2.new(1, 0, 0, 58),
             ZIndex = 11,
-        }, side)
-        corner(h, 10)
-        studs(h, 0.65, 20)
-        local s2 = new("UIStroke", { Color = W1, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, h)
-        icon(h, tdef[2], UDim2.new(0, 28, 0.5, 0), UDim2.fromOffset(38, 38), 13)
-        lbl(h, tdef[1], 16, W1, { Position = UDim2.fromOffset(52, 0), Size = UDim2.new(1, -56, 1, 0), ZIndex = 13 })
-        tabFaces[tdef[1]] = { face = h, stroke = s2, color = tdef[3] }
-        if tdef[1] == "DAILY" and d.ready then
-            local b = new("Frame", {
+        }, sidebar)
+        roundCorners(tabButton, 10)
+        addStudTexture(tabButton, 0.65, 20)
+        local tabStroke = create(
+            "UIStroke",
+            { Color = SHOP_WHITE, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+            tabButton
+        )
+        shopIcon(tabButton, tabDef[2], UDim2.new(0, 28, 0.5, 0), UDim2.fromOffset(38, 38), 13)
+        shopLabel(
+            tabButton,
+            tabDef[1],
+            16,
+            SHOP_WHITE,
+            { Position = UDim2.fromOffset(52, 0), Size = UDim2.new(1, -56, 1, 0), ZIndex = 13 }
+        )
+        tabFaces[tabDef[1]] = { face = tabButton, stroke = tabStroke, color = tabDef[3] }
+        if tabDef[1] == "DAILY" and daily.ready then
+            local alertBadge = create("Frame", {
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 Position = UDim2.new(1, -6, 0, 6),
                 Size = UDim2.fromOffset(24, 24),
                 BackgroundColor3 = RED,
                 ZIndex = 15,
-            }, h)
-            corner(b, 12)
-            new("UIStroke", { Color = W1, Thickness = 2 }, b)
-            lbl(
-                b,
+            }, tabButton)
+            roundCorners(alertBadge, 12)
+            create("UIStroke", { Color = SHOP_WHITE, Thickness = 2 }, alertBadge)
+            shopLabel(
+                alertBadge,
                 "!",
                 16,
-                W1,
+                SHOP_WHITE,
                 { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 16 }
             )
-            local bs = new("UIScale", {}, b)
-            TS:Create(
-                bs,
+            local badgeScale = create("UIScale", {}, alertBadge)
+            ShopTweenService:Create(
+                badgeScale,
                 TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
                 { Scale = 1.2 }
             ):Play()
         end
-        local sc = new("UIScale", {}, h)
-        h.MouseEnter:Connect(function()
+        local hoverScale = create("UIScale", {}, tabButton)
+        tabButton.MouseEnter:Connect(function()
             UISound.Play("Hover")
-            TS:Create(sc, TweenInfo.new(0.1), { Scale = 1.05 }):Play()
+            ShopTweenService:Create(hoverScale, TweenInfo.new(0.1), { Scale = 1.05 }):Play()
         end)
-        h.MouseLeave:Connect(function()
-            TS:Create(sc, TweenInfo.new(0.1), { Scale = 1 }):Play()
+        tabButton.MouseLeave:Connect(function()
+            ShopTweenService:Create(hoverScale, TweenInfo.new(0.1), { Scale = 1 }):Play()
         end)
-        h.Activated:Connect(function()
+        tabButton.Activated:Connect(function()
             UISound.Play("Click")
-            local target = sections[tdef[1]]
+            local target = sections[tabDef[1]]
             if target then
-                local y = target.AbsolutePosition.Y - sf.AbsolutePosition.Y + sf.CanvasPosition.Y - 8
-                TS:Create(
-                    sf,
+                local scrollY = target.AbsolutePosition.Y
+                    - pageScroll.AbsolutePosition.Y
+                    + pageScroll.CanvasPosition.Y
+                    - 8
+                ShopTweenService:Create(
+                    pageScroll,
                     TweenInfo.new(0.35, Enum.EasingStyle.Quad),
-                    { CanvasPosition = Vector2.new(0, math.max(0, y)) }
+                    { CanvasPosition = Vector2.new(0, math.max(0, scrollY)) }
                 ):Play()
             end
-            setActive(tdef[1])
+            setActiveTab(tabDef[1])
         end)
     end
-    setActive("FEATURED")
-    sf:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
-        local best, bestY = "FEATURED", -math.huge
-        for _, tdef in TABS do
-            local s = sections[tdef[1]]
-            if s then
-                local y = s.AbsolutePosition.Y - sf.AbsolutePosition.Y
-                if y <= 40 and y > bestY then
-                    best, bestY = tdef[1], y
+    setActiveTab("FEATURED")
+    pageScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+        local bestTab, bestTabY = "FEATURED", -math.huge
+        for _, tabDef in SIDEBAR_TABS do
+            local sectionHeading = sections[tabDef[1]]
+            if sectionHeading then
+                local sectionY = sectionHeading.AbsolutePosition.Y - pageScroll.AbsolutePosition.Y
+                if sectionY <= 40 and sectionY > bestTabY then
+                    bestTab, bestTabY = tabDef[1], sectionY
                 end
             end
         end
-        setActive(best)
+        setActiveTab(bestTab)
     end)
 end
 
+-- ===== 9. Plot panel ("My Temple") =====
+-- _plotTabs / _legacyOverview / _legacyUpgrades (and plotPage) are the old pages; nothing calls them any more
+-- because RENDER.Plot draws the Figma layout. Kept for reference.
 local plotPage = "overview" -- "overview" | "upgrades"
 local SLOT_PRICES =
     { 0, 250, 2500, 25000, 150000, 750000, 5000000, 25000000, 150000000, 750000000, 3000000000, 15000000000 }
 
-local function myPlot()
-    for _, p in workspace.Plots:GetChildren() do
-        if p:GetAttribute("OwnerUserId") == player.UserId then
-            return p
+-- The workspace.Plots child owned by the local player (nil if none yet).
+local function findMyPlot()
+    for _, plot in workspace.Plots:GetChildren() do
+        if plot:GetAttribute("OwnerUserId") == player.UserId then
+            return plot
         end
     end
 end
 
 -- page switch tab on top of the panel
-local function tabs(L, panel)
-    local bar = box(L, 0.5, 0.235, 0.9, 0.065)
+local function _plotTabs(layer, panel)
+    local bar = box(layer, 0.5, 0.235, 0.9, 0.065)
     bar.Name = "PlotTabs"
     local function tab(x, label, page)
-        local on = plotPage == page
-        local b =
-            button(bar, x, 0.5, 0.48, 1, label, on and Color3.fromRGB(214, 52, 45) or Color3.fromRGB(150, 120, 100))
-        b.Name = page == "upgrades" and "UpgradesTab" or "OverviewTab"
-        b.Activated:Connect(function()
+        local isActive = plotPage == page
+        local tabButton = button(
+            bar,
+            x,
+            0.5,
+            0.48,
+            1,
+            label,
+            isActive and Color3.fromRGB(214, 52, 45) or Color3.fromRGB(150, 120, 100)
+        )
+        tabButton.Name = page == "upgrades" and "UpgradesTab" or "OverviewTab"
+        tabButton.Activated:Connect(function()
             if plotPage ~= page then
                 plotPage = page
                 RENDER.Plot(panel)
@@ -2421,27 +2755,28 @@ local function tabs(L, panel)
     tab(0.75, "UPGRADES", "upgrades")
 end
 
-local function overview(L, data)
-    local plot = myPlot()
-    local placed, stored, income = {}, 0, 0
-    for _, it in data.items or {} do
-        if it.state == "placed" then
-            table.insert(placed, it)
-            income += it.income or 0
+local function _legacyOverview(layer, data)
+    local plot = findMyPlot()
+    local placed, storedCount, income = {}, 0, 0
+    for _, item in data.items or {} do
+        if item.state == "placed" then
+            table.insert(placed, item)
+            income += item.income or 0
         else
-            stored += 1
+            storedCount += 1
         end
     end
     local level = data.level or 1
-    local cap = data.availableSlots or level * 12
-    local unlocked = data.unlocked or 0
+    local slotCap = data.availableSlots or level * 12
+    local unlockedCount = data.unlocked or 0
     local RED = Color3.fromRGB(188, 57, 44)
     local MUTED = Color3.fromRGB(170, 195, 205)
     local PAPER = Color3.fromRGB(34, 58, 70)
-    local sheet = box(L, 0.5, 0.615, 0.9, 0.65, { BackgroundTransparency = 0, BackgroundColor3 = CREAM, ZIndex = 7 })
+    local sheet =
+        box(layer, 0.5, 0.615, 0.9, 0.65, { BackgroundTransparency = 0, BackgroundColor3 = CREAM, ZIndex = 7 })
     sheet.Name = "PlotContent"
-    new("UICorner", { CornerRadius = UDim.new(0, 14) }, sheet)
-    local scroll = new("ScrollingFrame", {
+    create("UICorner", { CornerRadius = UDim.new(0, 14) }, sheet)
+    local scroll = create("ScrollingFrame", {
         Name = "Sections",
         Size = UDim2.new(1, -8, 1, -8),
         Position = UDim2.fromOffset(4, 4),
@@ -2454,17 +2789,17 @@ local function overview(L, data)
         ScrollingDirection = Enum.ScrollingDirection.Y,
         ZIndex = 8,
     }, sheet)
-    new("UIPadding", {
+    create("UIPadding", {
         PaddingLeft = UDim.new(0, 5),
         PaddingRight = UDim.new(0, 12),
         PaddingTop = UDim.new(0, 4),
         PaddingBottom = UDim.new(0, 8),
     }, scroll)
-    new("UIListLayout", { Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
+    create("UIListLayout", { Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
     local order = 0
     local function section(name, height)
         order += 1
-        local f = new("Frame", {
+        local sectionFrame = create("Frame", {
             Name = name,
             LayoutOrder = order,
             Size = UDim2.new(1, 0, 0, height),
@@ -2472,20 +2807,20 @@ local function overview(L, data)
             BorderSizePixel = 0,
             ZIndex = 8,
         }, scroll)
-        new("UIStroke", {
+        create("UIStroke", {
             Color = Color3.new(0, 0, 0),
             Thickness = 3,
             LineJoinMode = Enum.LineJoinMode.Miter,
             ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        }, f)
-        new("Frame", {
+        }, sectionFrame)
+        create("Frame", {
             Name = "Accent",
             BackgroundColor3 = SKINS.Plot.grad[1],
             BorderSizePixel = 0,
             Size = UDim2.new(0, 6, 1, 0),
             ZIndex = 9,
-        }, f)
-        return f
+        }, sectionFrame)
+        return sectionFrame
     end
     local function label(parent, str, x, y, w, h, size, color)
         return text(parent, str, color or INK, {
@@ -2496,8 +2831,8 @@ local function overview(L, data)
             ZIndex = 10,
         })
     end
-    local function action(parent, name, x, y, w, h, labelText, color, callback)
-        local b = new("TextButton", {
+    local function addActionButton(parent, name, x, y, w, h, labelText, color, callback)
+        local buttonInstance = create("TextButton", {
             Name = name,
             AnchorPoint = Vector2.new(0, 0),
             Position = UDim2.new(x, 0, 0, y),
@@ -2508,35 +2843,40 @@ local function overview(L, data)
             AutoButtonColor = false,
             ZIndex = 10,
         }, parent)
-        new("UIStroke", {
+        create("UIStroke", {
             Color = Color3.new(0, 0, 0),
             Thickness = 2.5,
             LineJoinMode = Enum.LineJoinMode.Miter,
             ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        }, b)
-        local t = text(
-            b,
+        }, buttonInstance)
+        local _buttonLabel = text(
+            buttonInstance,
             labelText,
             Color3.new(1, 1, 1),
             { Position = UDim2.new(0, 7, 0, 4), Size = UDim2.new(1, -14, 1, -8), Max = 16, ZIndex = 11 }
         )
-        b.MouseEnter:Connect(function()
+        buttonInstance.MouseEnter:Connect(function()
             UISound.Play("Hover")
-            TweenService:Create(b, TweenInfo.new(0.12), { BackgroundColor3 = color:Lerp(Color3.new(1, 1, 1), 0.1) })
+            TweenService
+                :Create(
+                    buttonInstance,
+                    TweenInfo.new(0.12),
+                    { BackgroundColor3 = color:Lerp(Color3.new(1, 1, 1), 0.1) }
+                )
                 :Play()
         end)
-        b.MouseLeave:Connect(function()
-            TweenService:Create(b, TweenInfo.new(0.12), { BackgroundColor3 = color }):Play()
+        buttonInstance.MouseLeave:Connect(function()
+            TweenService:Create(buttonInstance, TweenInfo.new(0.12), { BackgroundColor3 = color }):Play()
         end)
         if callback then
-            b.Activated:Connect(function()
+            buttonInstance.Activated:Connect(function()
                 UISound.Play("Click")
                 callback()
             end)
         else
-            b.Interactable = false
+            buttonInstance.Interactable = false
         end
-        return b
+        return buttonInstance
     end
     local hero = section("TempleSummary", 86)
     label(hero, "TEMPLE  /  LEVEL " .. level, 0.035, 12, 0.59, 25, 23)
@@ -2550,7 +2890,7 @@ local function overview(L, data)
         14,
         MUTED
     )
-    action(
+    addActionButton(
         hero,
         "UpgradeTemple",
         0.66,
@@ -2561,74 +2901,82 @@ local function overview(L, data)
             or data.canUpgrade and ("UPGRADE $" .. Config.Short(
                 require(game.ReplicatedStorage.UpgradePrices).Temple[level + 1]
             ))
-            or unlocked .. " / " .. cap .. " SLOTS",
+            or unlockedCount .. " / " .. slotCap .. " SLOTS",
         data.canUpgrade and RED or Color3.fromRGB(70, 92, 104),
         level < 3
                 and function()
                     if data.canUpgrade then
-                        act("UpgradeTemple")
+                        runAction("UpgradeTemple")
                     else
-                        say("Unlock all " .. cap .. " slots to open the next floor")
+                        showToast("Unlock all " .. slotCap .. " slots to open the next floor")
                     end
                 end
             or nil
     )
     local stats = section("Stats", 58)
-    for i, v in
+    for i, stat in
         {
             { title = "INCOME / SEC", value = "$" .. Config.Short(income), color = Color3.fromRGB(60, 137, 65) },
-            { title = "CHARACTERS PLACED", value = #placed .. " / " .. unlocked },
-            { title = "IN BACKPACK", value = tostring(stored) },
+            { title = "CHARACTERS PLACED", value = #placed .. " / " .. unlockedCount },
+            { title = "IN BACKPACK", value = tostring(storedCount) },
         }
     do
-        local x = 0.035 + (i - 1) * 0.325
-        label(stats, v.title, x, 7, 0.3, 17, 11, MUTED)
-        label(stats, v.value, x, 25, 0.3, 25, 22, v.color)
+        local columnX = 0.035 + (i - 1) * 0.325
+        label(stats, stat.title, columnX, 7, 0.3, 17, 11, MUTED)
+        label(stats, stat.value, columnX, 25, 0.3, 25, 22, stat.color)
     end
     local incubators = section("Incubators", 150)
     label(incubators, "INCUBATORS", 0.035, 10, 0.8, 24, 18)
     local chambers = plot and plot:FindFirstChild("Chambers")
-    local count = chambers and #chambers:GetChildren() or 0
+    local chamberCount = chambers and #chambers:GetChildren() or 0
     for i = 1, 3 do
-        local x = 0.035 + (i - 1) * 0.325
-        local f = new("Frame", {
+        local columnX = 0.035 + (i - 1) * 0.325
+        local incubatorCard = create("Frame", {
             Name = "Incubator" .. i,
-            Position = UDim2.new(x, 0, 0, 43),
+            Position = UDim2.new(columnX, 0, 0, 43),
             Size = UDim2.new(0.305, 0, 0, 95),
             BackgroundColor3 = Color3.fromRGB(40, 66, 80),
             BorderSizePixel = 0,
             ZIndex = 9,
         }, incubators)
-        new("UICorner", { CornerRadius = UDim.new(0, 8) }, f)
+        create("UICorner", { CornerRadius = UDim.new(0, 8) }, incubatorCard)
         local chamber = chambers and chambers:FindFirstChild("Chamber" .. i)
-        local lv = chamber and (chamber:GetAttribute("UpgradeLevel") or 1)
-        label(f, "#" .. i .. (lv and "   LEVEL " .. lv or "   LOCKED"), 0.07, 6, 0.88, 20, 15)
+        local chamberLevel = chamber and (chamber:GetAttribute("UpgradeLevel") or 1)
+        label(
+            incubatorCard,
+            "#" .. i .. (chamberLevel and "   LEVEL " .. chamberLevel or "   LOCKED"),
+            0.07,
+            6,
+            0.88,
+            20,
+            15
+        )
         local status = chamber and tostring(chamber:GetAttribute("Status") or "Ready")
-            or (i == count + 1 and "Expand your hatchery" or "Buy the previous incubator")
-        label(f, status, 0.07, 29, 0.88, 18, 12, MUTED)
+            or (i == chamberCount + 1 and "Expand your hatchery" or "Buy the previous incubator")
+        label(incubatorCard, status, 0.07, 29, 0.88, 18, 12, MUTED)
         if chamber then
-            action(
-                f,
+            addActionButton(
+                incubatorCard,
                 "UpgradeIncubator" .. i,
                 0.07,
                 55,
                 0.86,
                 31,
-                lv < 3
+                chamberLevel < 3
                         and ("UPGRADE $" .. Config.Short(
-                            require(game.ReplicatedStorage.UpgradePrices).IncubatorLevel[lv + 1]
+                            require(game.ReplicatedStorage.UpgradePrices).IncubatorLevel[chamberLevel + 1]
                         ))
                     or "MAX LEVEL",
-                lv < 3 and RED or MUTED,
-                lv < 3
+                chamberLevel < 3 and RED or MUTED,
+                chamberLevel < 3
                         and function()
-                            act("UpgradeIncubator", { index = i })
+                            runAction("UpgradeIncubator", { index = i })
                         end
                     or nil
             )
-        elseif i == count + 1 then
-            action(
-                f,
+        elseif i == chamberCount + 1 then
+            addActionButton(
+                incubatorCard,
                 "AddIncubator",
                 0.07,
                 55,
@@ -2637,40 +2985,40 @@ local function overview(L, data)
                 "+ ADD $" .. Config.Short(require(game.ReplicatedStorage.UpgradePrices).AddIncubator[i]),
                 Color3.fromRGB(70, 151, 74),
                 function()
-                    act("AddIncubator")
+                    runAction("AddIncubator")
                 end
             )
         end
     end
     local slots = section("CharacterSlots", 168)
     label(slots, "CHARACTER SLOTS", 0.035, 10, 0.6, 24, 18)
-    label(slots, unlocked .. " / " .. cap .. " unlocked", 0.67, 12, 0.3, 20, 14, MUTED)
+    label(slots, unlockedCount .. " / " .. slotCap .. " unlocked", 0.67, 12, 0.3, 20, 14, MUTED)
     local nextPrice
-    for i = 1, cap do
-        local sl = plot and plot.Slots:FindFirstChild(string.format("Slot%02d", i))
-        if sl and not sl:GetAttribute("Unlocked") then
-            nextPrice = sl:GetAttribute("UnlockPrice")
+    for i = 1, slotCap do
+        local slot = plot and plot.Slots:FindFirstChild(string.format("Slot%02d", i))
+        if slot and not slot:GetAttribute("Unlocked") then
+            nextPrice = slot:GetAttribute("UnlockPrice")
             break
         end
     end
-    local track = new("Frame", {
+    local track = create("Frame", {
         Position = UDim2.new(0.035, 0, 0, 43),
         Size = UDim2.new(0.93, 0, 0, 6),
         BackgroundColor3 = Color3.fromRGB(20, 30, 36),
         BorderSizePixel = 0,
         ZIndex = 9,
     }, slots)
-    new("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-    local fill = new("Frame", {
-        Size = UDim2.fromScale(math.clamp(unlocked / cap, 0, 1), 1),
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
+    local fill = create("Frame", {
+        Size = UDim2.fromScale(math.clamp(unlockedCount / slotCap, 0, 1), 1),
         BackgroundColor3 = Color3.fromRGB(91, 163, 80),
         BorderSizePixel = 0,
         ZIndex = 10,
     }, track)
-    new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
     label(
         slots,
-        #placed .. " working  ·  " .. math.max(0, unlocked - #placed) .. " empty",
+        #placed .. " working  ·  " .. math.max(0, unlockedCount - #placed) .. " empty",
         0.035,
         56,
         0.53,
@@ -2678,7 +3026,7 @@ local function overview(L, data)
         15,
         MUTED
     )
-    action(
+    addActionButton(
         slots,
         "UnlockSlot",
         0.60,
@@ -2688,10 +3036,10 @@ local function overview(L, data)
         nextPrice and "UNLOCK  $" .. Config.Short(nextPrice) or "ALL UNLOCKED",
         nextPrice and Color3.fromRGB(70, 151, 74) or MUTED,
         nextPrice and function()
-            act("UnlockSlot")
+            runAction("UnlockSlot")
         end or nil
     )
-    local list = new("ScrollingFrame", {
+    local placedList = create("ScrollingFrame", {
         Name = "PlacedCharacters",
         Position = UDim2.new(0.035, 0, 0, 101),
         Size = UDim2.new(0.93, 0, 0, 55),
@@ -2703,35 +3051,44 @@ local function overview(L, data)
         ScrollingDirection = Enum.ScrollingDirection.X,
         ZIndex = 9,
     }, slots)
-    new("UIListLayout", {
+    create("UIListLayout", {
         FillDirection = Enum.FillDirection.Horizontal,
         Padding = UDim.new(0, 8),
         SortOrder = Enum.SortOrder.LayoutOrder,
-    }, list)
+    }, placedList)
     table.sort(placed, function(a, b)
         return (a.income or 0) > (b.income or 0)
     end)
     if #placed == 0 then
-        label(list, "Place a character to start earning cash.", 0, 7, 1, 28, 14, MUTED)
+        label(placedList, "Place a character to start earning cash.", 0, 7, 1, 28, 14, MUTED)
     else
-        for i, it in placed do
-            local f = new("Frame", {
+        for i, item in placed do
+            local characterCard = create("Frame", {
                 Name = "Character" .. i,
                 LayoutOrder = i,
                 Size = UDim2.fromOffset(145, 46),
                 BackgroundColor3 = Color3.fromRGB(40, 66, 80),
                 BorderSizePixel = 0,
                 ZIndex = 10,
-            }, list)
-            new("UICorner", { CornerRadius = UDim.new(0, 7) }, f)
-            label(f, it.name, 0.06, 3, 0.88, 20, 14, RARITY[it.rarity] or INK)
-            label(f, "$" .. Config.Short(it.income or 0) .. "/sec", 0.06, 24, 0.88, 16, 12, Color3.fromRGB(60, 137, 65))
+            }, placedList)
+            create("UICorner", { CornerRadius = UDim.new(0, 7) }, characterCard)
+            label(characterCard, item.name, 0.06, 3, 0.88, 20, 14, RARITY_COLORS[item.rarity] or INK)
+            label(
+                characterCard,
+                "$" .. Config.Short(item.income or 0) .. "/sec",
+                0.06,
+                24,
+                0.88,
+                16,
+                12,
+                Color3.fromRGB(60, 137, 65)
+            )
         end
     end
     local footer = section("QuickActions", 48)
     label(footer, "Put your strongest characters to work", 0.035, 10, 0.59, 28, 14, MUTED)
-    action(footer, "EquipBest", 0.66, 7, 0.305, 34, "EQUIP BEST", Color3.fromRGB(66, 126, 177), function()
-        act("EquipBest")
+    addActionButton(footer, "EquipBest", 0.66, 7, 0.305, 34, "EQUIP BEST", Color3.fromRGB(66, 126, 177), function()
+        runAction("EquipBest")
     end)
     task.defer(function()
         if scroll.Parent then
@@ -2740,27 +3097,27 @@ local function overview(L, data)
     end)
 end
 
-local function upgrades(L, data)
+local function _legacyUpgrades(layer, data)
     -- cover the baked overview art inside the panel with one clean cream sheet
     local sheet = box(
-        L,
+        layer,
         0.5,
         0.57,
         0.9,
         0.55,
         { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(26, 44, 52), ZIndex = 7 }
     )
-    new("UICorner", { CornerRadius = UDim.new(0.06, 0) }, sheet)
-    new("UIStroke", { Color = Color3.fromRGB(205, 170, 120), Thickness = 2 }, sheet)
+    create("UICorner", { CornerRadius = UDim.new(0.06, 0) }, sheet)
+    create("UIStroke", { Color = Color3.fromRGB(205, 170, 120), Thickness = 2 }, sheet)
     local cover = box(
-        L,
+        layer,
         0.496,
         0.887,
         0.27,
         0.105,
         { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(26, 44, 52), ZIndex = 7 }
     )
-    new("UICorner", { CornerRadius = UDim.new(0.4, 0) }, cover)
+    create("UICorner", { CornerRadius = UDim.new(0.4, 0) }, cover)
     text(cover, "Upgrades work from anywhere on your plot", Color3.fromRGB(150, 115, 90), {
         Size = UDim2.fromScale(0.95, 0.42),
         Position = UDim2.fromScale(0.5, 0.5),
@@ -2768,7 +3125,7 @@ local function upgrades(L, data)
         Max = 14,
     })
     local function row(y, title)
-        local r = box(
+        local rowFrame = box(
             sheet,
             0.5,
             y,
@@ -2776,64 +3133,64 @@ local function upgrades(L, data)
             0.27,
             { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(34, 58, 70), ZIndex = 8 }
         )
-        new("UICorner", { CornerRadius = UDim.new(0.2, 0) }, r)
-        text(r, title, Color3.fromRGB(200, 60, 45), {
+        create("UICorner", { CornerRadius = UDim.new(0.2, 0) }, rowFrame)
+        text(rowFrame, title, Color3.fromRGB(200, 60, 45), {
             Size = UDim2.fromScale(0.24, 0.32),
             Position = UDim2.fromScale(0.02, 0.06),
             X = Enum.TextXAlignment.Left,
             ZIndex = 9,
             Max = 18,
         })
-        return r
+        return rowFrame
     end
-    local plot = myPlot()
+    local plot = findMyPlot()
 
     -- TEMPLE
-    local t = row(0.17, "TEMPLE")
-    t.Name = "TempleUpgrades"
-    local lv = data.level or 1
+    local templeRow = row(0.17, "TEMPLE")
+    templeRow.Name = "TempleUpgrades"
+    local templeLevel = data.level or 1
     for i = 1, 3 do
-        local pip = box(t, 0.06 + i * 0.075, 0.66, 0.06, 0.36, {
+        local pip = box(templeRow, 0.06 + i * 0.075, 0.66, 0.06, 0.36, {
             BackgroundTransparency = 0,
-            BackgroundColor3 = i <= lv and Color3.fromRGB(235, 175, 30) or Color3.fromRGB(50, 70, 80),
+            BackgroundColor3 = i <= templeLevel and Color3.fromRGB(235, 175, 30) or Color3.fromRGB(50, 70, 80),
             ZIndex = 9,
         })
-        new("UICorner", { CornerRadius = UDim.new(0.3, 0) }, pip)
-        new("UIStroke", { Color = INK, Thickness = 2 }, pip)
+        create("UICorner", { CornerRadius = UDim.new(0.3, 0) }, pip)
+        create("UIStroke", { Color = INK, Thickness = 2 }, pip)
     end
-    text(t, "Level " .. lv .. " / 3", INK, {
+    text(templeRow, "Level " .. templeLevel .. " / 3", INK, {
         Size = UDim2.fromScale(0.3, 0.4),
         Position = UDim2.fromScale(0.33, 0.45),
         X = Enum.TextXAlignment.Left,
         ZIndex = 9,
     })
-    if lv < 3 then
-        local allowed = data.canUpgrade == true
-        local cost = require(game.ReplicatedStorage.UpgradePrices).Temple[lv + 1]
-        local b = button(
-            t,
+    if templeLevel < 3 then
+        local canUpgrade = data.canUpgrade == true
+        local cost = require(game.ReplicatedStorage.UpgradePrices).Temple[templeLevel + 1]
+        local upgradeButton = button(
+            templeRow,
             0.84,
             0.5,
             0.26,
             0.62,
-            allowed and ("UPGRADE • $" .. Config.Short(cost)) or "BUY ALL SLOTS",
-            allowed and Color3.fromRGB(214, 52, 45) or Color3.fromRGB(70, 92, 104)
+            canUpgrade and ("UPGRADE • $" .. Config.Short(cost)) or "BUY ALL SLOTS",
+            canUpgrade and Color3.fromRGB(214, 52, 45) or Color3.fromRGB(70, 92, 104)
         )
-        b.Interactable = allowed
-        if not allowed then
+        upgradeButton.Interactable = canUpgrade
+        if not canUpgrade then
             text(
-                t,
+                templeRow,
                 "Buy every current slot first",
                 Color3.fromRGB(150, 90, 60),
                 { Size = UDim2.fromScale(0.5, 0.22), Position = UDim2.fromScale(0.3, 0.06), ZIndex = 9, Max = 13 }
             )
         end
-        b.Activated:Connect(function()
-            act("UpgradeTemple")
+        upgradeButton.Activated:Connect(function()
+            runAction("UpgradeTemple")
         end)
     else
         text(
-            t,
+            templeRow,
             "MAX",
             Color3.fromRGB(235, 175, 30),
             { Stroke = 2, Size = UDim2.fromScale(0.2, 0.5), Position = UDim2.fromScale(0.74, 0.25), ZIndex = 9 }
@@ -2841,52 +3198,52 @@ local function upgrades(L, data)
     end
 
     -- INCUBATORS
-    local ir = row(0.5, "INCUBATORS")
-    ir.Name = "IncubatorUpgrades"
+    local incubatorRow = row(0.5, "INCUBATORS")
+    incubatorRow.Name = "IncubatorUpgrades"
     local chambers = plot and plot:FindFirstChild("Chambers")
-    local count = chambers and #chambers:GetChildren() or 0
+    local chamberCount = chambers and #chambers:GetChildren() or 0
     for i = 1, 3 do
-        local c = chambers and chambers:FindFirstChild("Chamber" .. i)
-        local card = box(
-            ir,
+        local chamber = chambers and chambers:FindFirstChild("Chamber" .. i)
+        local chamberCard = box(
+            incubatorRow,
             0.36 + (i - 1) * 0.215,
             0.62,
             0.2,
             0.62,
             { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(26, 44, 52), ZIndex = 9 }
         )
-        new("UICorner", { CornerRadius = UDim.new(0.2, 0) }, card)
-        new("UIStroke", { Color = Color3.fromRGB(205, 170, 120), Thickness = 2 }, card)
-        if c then
-            local l = c:GetAttribute("UpgradeLevel") or 1
-            text(card, "#" .. i .. "  LV " .. l, INK, {
+        create("UICorner", { CornerRadius = UDim.new(0.2, 0) }, chamberCard)
+        create("UIStroke", { Color = Color3.fromRGB(205, 170, 120), Thickness = 2 }, chamberCard)
+        if chamber then
+            local chamberLevel = chamber:GetAttribute("UpgradeLevel") or 1
+            text(chamberCard, "#" .. i .. "  LV " .. chamberLevel, INK, {
                 Size = UDim2.fromScale(0.38, 0.5),
                 Position = UDim2.fromScale(0.04, 0.25),
                 X = Enum.TextXAlignment.Left,
                 ZIndex = 10,
                 Max = 16,
             })
-            if l < 3 then
-                local b = button(card, 0.71, 0.5, 0.52, 0.72, "UPGRADE", Color3.fromRGB(214, 52, 45))
-                b.ZIndex = 10
-                b.Activated:Connect(function()
-                    act("UpgradeIncubator", { index = i })
+            if chamberLevel < 3 then
+                local upgradeButton = button(chamberCard, 0.71, 0.5, 0.52, 0.72, "UPGRADE", Color3.fromRGB(214, 52, 45))
+                upgradeButton.ZIndex = 10
+                upgradeButton.Activated:Connect(function()
+                    runAction("UpgradeIncubator", { index = i })
                 end)
             else
-                text(card, "MAX", Color3.fromRGB(235, 175, 30), {
+                text(chamberCard, "MAX", Color3.fromRGB(235, 175, 30), {
                     Stroke = 1.5,
                     Size = UDim2.fromScale(0.35, 0.5),
                     Position = UDim2.fromScale(0.6, 0.25),
                     ZIndex = 10,
                 })
             end
-        elseif i == count + 1 then
-            local b = button(card, 0.5, 0.5, 0.8, 0.7, "+ ADD INCUBATOR", GREEN)
-            b.Activated:Connect(function()
-                act("AddIncubator")
+        elseif i == chamberCount + 1 then
+            local upgradeButton = button(chamberCard, 0.5, 0.5, 0.8, 0.7, "+ ADD INCUBATOR", GREEN)
+            upgradeButton.Activated:Connect(function()
+                runAction("AddIncubator")
             end)
         else
-            text(card, "LOCKED", GREY, {
+            text(chamberCard, "LOCKED", GREY, {
                 Size = UDim2.fromScale(0.6, 0.45),
                 Position = UDim2.fromScale(0.5, 0.5),
                 AnchorPoint = Vector2.new(0.5, 0.5),
@@ -2896,48 +3253,45 @@ local function upgrades(L, data)
     end
 
     -- CHARACTER SLOTS
-    local sr = row(0.83, "CHARACTER SLOTS")
-    local unlocked, nextPrice = 0, nil
-    local cap = data.availableSlots or (lv * 12)
-    for i = 1, cap do
-        local s = plot and plot.Slots:FindFirstChild(string.format("Slot%02d", i))
-        local on = s and s:GetAttribute("Unlocked")
-        if on then
-            unlocked += 1
+    local slotRow = row(0.83, "CHARACTER SLOTS")
+    local unlockedCount, nextPrice = 0, nil
+    local slotCap = data.availableSlots or (templeLevel * 12)
+    for i = 1, slotCap do
+        local slot = plot and plot.Slots:FindFirstChild(string.format("Slot%02d", i))
+        local isUnlocked = slot and slot:GetAttribute("Unlocked")
+        if isUnlocked then
+            unlockedCount += 1
         elseif not nextPrice then
-            nextPrice = s and s:GetAttribute("UnlockPrice") or SLOT_PRICES[i]
+            nextPrice = slot and slot:GetAttribute("UnlockPrice") or SLOT_PRICES[i]
         end
-        local pip = box(
-            sr,
-            0.05 + i * (0.516 / cap),
-            0.68,
-            (0.408 / cap),
-            0.34,
-            { BackgroundTransparency = 0, BackgroundColor3 = on and GREEN or Color3.fromRGB(50, 70, 80), ZIndex = 9 }
-        )
-        new("UICorner", { CornerRadius = UDim.new(0.3, 0) }, pip)
-        new("UIStroke", { Color = INK, Thickness = 1.5 }, pip)
+        local pip = box(slotRow, 0.05 + i * (0.516 / slotCap), 0.68, (0.408 / slotCap), 0.34, {
+            BackgroundTransparency = 0,
+            BackgroundColor3 = isUnlocked and GREEN or Color3.fromRGB(50, 70, 80),
+            ZIndex = 9,
+        })
+        create("UICorner", { CornerRadius = UDim.new(0.3, 0) }, pip)
+        create("UIStroke", { Color = INK, Thickness = 1.5 }, pip)
     end
     text(
-        sr,
-        "FLOOR " .. lv,
+        slotRow,
+        "FLOOR " .. templeLevel,
         Color3.fromRGB(150, 90, 60),
         { Size = UDim2.fromScale(0.13, 0.25), Position = UDim2.fromScale(0.6, 0.12), ZIndex = 9, Max = 13 }
     )
     text(
-        sr,
-        unlocked .. " / " .. cap,
+        slotRow,
+        unlockedCount .. " / " .. slotCap,
         INK,
         { Size = UDim2.fromScale(0.13, 0.4), Position = UDim2.fromScale(0.6, 0.45), ZIndex = 9 }
     )
     if nextPrice then
-        local b = button(sr, 0.86, 0.5, 0.24, 0.62, "UNLOCK • $" .. Config.Short(nextPrice), GREEN)
-        b.Activated:Connect(function()
-            act("UnlockSlot")
+        local upgradeButton = button(slotRow, 0.86, 0.5, 0.24, 0.62, "UNLOCK • $" .. Config.Short(nextPrice), GREEN)
+        upgradeButton.Activated:Connect(function()
+            runAction("UnlockSlot")
         end)
     else
         text(
-            sr,
+            slotRow,
             "ALL UNLOCKED",
             Color3.fromRGB(235, 175, 30),
             { Stroke = 2, Size = UDim2.fromScale(0.24, 0.45), Position = UDim2.fromScale(0.74, 0.28), ZIndex = 9 }
@@ -2945,19 +3299,17 @@ local function upgrades(L, data)
     end
 end
 
-RENDER.Plot = function(panel)
-    local data, err = fetch("plot")
-    local L = layerOf(panel)
-    clear(L)
+-- Hides the clean skin, adds the FigmaWindow art once and moves the Close hit-box onto the art's X.
+local function applyFigmaWindow(panel)
     -- figma window art replaces the old skin
-    for _, n in { "CleanSkin", "CleanBase" } do
-        local x = panel:FindFirstChild(n)
-        if x then
-            x.Visible = false
+    for _, skinName in { "CleanSkin", "CleanBase" } do
+        local oldSkin = panel:FindFirstChild(skinName)
+        if oldSkin then
+            oldSkin.Visible = false
         end
     end
-    local art = panel:FindFirstChild("FigmaWindow")
-        or new("ImageLabel", {
+    local _figmaArt = panel:FindFirstChild("FigmaWindow")
+        or create("ImageLabel", {
             Name = "FigmaWindow",
             BackgroundTransparency = 1,
             Image = "rbxassetid://85782174721137",
@@ -2965,129 +3317,105 @@ RENDER.Plot = function(panel)
             ScaleType = Enum.ScaleType.Stretch,
             ZIndex = 2,
         }, panel)
-    local cb = panel:FindFirstChild("Close")
-    if cb then
-        cb.AnchorPoint = Vector2.new(0.5, 0.5)
-        cb.Position = UDim2.fromScale(0.951, 0.064)
-        cb.Size = UDim2.fromScale(0.058, 0.088)
-        cb.BackgroundTransparency = 1
-        for _, c in cb:GetDescendants() do
-            if c:IsA("GuiObject") then
-                c.Visible = false
-            elseif c:IsA("UIStroke") then
-                c.Enabled = false
+    local closeButton = panel:FindFirstChild("Close")
+    if closeButton then
+        closeButton.AnchorPoint = Vector2.new(0.5, 0.5)
+        closeButton.Position = UDim2.fromScale(0.951, 0.064)
+        closeButton.Size = UDim2.fromScale(0.058, 0.088)
+        closeButton.BackgroundTransparency = 1
+        for _, descendant in closeButton:GetDescendants() do
+            if descendant:IsA("GuiObject") then
+                descendant.Visible = false
+            elseif descendant:IsA("UIStroke") then
+                descendant.Enabled = false
             end
         end
-        cb.ZIndex = 30
+        closeButton.ZIndex = 30
     end
+end
+-- Current Plot layout: drawn over the "FigmaWindow" art (the clean skin is hidden).
+RENDER.Plot = function(panel)
+    local data, errorMessage = fetchState("plot")
+    local layer = liveLayerOf(panel)
+    clear(layer)
+    applyFigmaWindow(panel)
     if not data then
-        text(box(L, 0.5, 0.5, 0.6, 0.08), err)
+        text(box(layer, 0.5, 0.5, 0.6, 0.08), errorMessage)
         return
     end
-    local PX = Font.new("rbxasset://fonts/families/Bangers.json")
-    local PF = FONT
-    local K = Color3.new(0, 0, 0)
-    local function card(cx, cy, w, h, col, z)
-        local f = box(L, cx, cy, w, h, { BackgroundTransparency = 0, BackgroundColor3 = col, ZIndex = z or 8 })
-        f:SetAttribute("NoSkin", true)
-        new("UICorner", { CornerRadius = UDim.new(0.08, 0) }, f)
-        new("UIStroke", { Color = K, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, f)
-        new("ImageLabel", {
+    local _BANGERS_FONT = Font.new("rbxasset://fonts/families/Bangers.json")
+    local PANEL_FONT = FONT
+    local PLOT_BLACK = Color3.new(0, 0, 0)
+    local function plotCard(cx, cy, w, h, color, zIndex)
+        local cardFrame =
+            box(layer, cx, cy, w, h, { BackgroundTransparency = 0, BackgroundColor3 = color, ZIndex = zIndex or 8 })
+        cardFrame:SetAttribute("NoSkin", true)
+        create("UICorner", { CornerRadius = UDim.new(0.08, 0) }, cardFrame)
+        create(
+            "UIStroke",
+            { Color = PLOT_BLACK, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+            cardFrame
+        )
+        create("ImageLabel", {
             BackgroundTransparency = 1,
             Size = UDim2.fromScale(1, 1),
             Image = "rbxassetid://132561191216691",
             ScaleType = Enum.ScaleType.Tile,
             TileSize = UDim2.fromOffset(26, 26),
             ImageTransparency = 0.55,
-            ZIndex = f.ZIndex,
-        }, f)
-        return f
+            ZIndex = cardFrame.ZIndex,
+        }, cardFrame)
+        return cardFrame
     end
-    local function t(parent, str, x, y, w, h, max, col, align)
-        local l = new("TextLabel", {
+    local function plotText(parent, str, x, y, w, h, maxTextSize, color, alignment)
+        local label = create("TextLabel", {
             BackgroundTransparency = 1,
             Position = UDim2.fromScale(x, y),
             Size = UDim2.fromScale(w, h),
             Text = str,
-            FontFace = PF,
+            FontFace = PANEL_FONT,
             TextScaled = true,
-            TextColor3 = col or Color3.new(1, 1, 1),
-            TextXAlignment = align or Enum.TextXAlignment.Left,
+            TextColor3 = color or Color3.new(1, 1, 1),
+            TextXAlignment = alignment or Enum.TextXAlignment.Left,
             ZIndex = parent.ZIndex + 2,
         }, parent)
-        new("UITextSizeConstraint", { MaxTextSize = max or 30 }, l)
-        new("UIStroke", { Color = K, Thickness = 2 }, l)
-        return l
+        create("UITextSizeConstraint", { MaxTextSize = maxTextSize or 30 }, label)
+        create("UIStroke", { Color = PLOT_BLACK, Thickness = 2 }, label)
+        return label
     end
-    local plot = myPlot()
-    local UP = require(game.ReplicatedStorage.UpgradePrices)
-    local placed, income = {}, 0
-    for _, it in data.items or {} do
-        if it.state == "placed" then
-            table.insert(placed, it)
-            income += it.income or 0
-        end
-    end
-    local level, cap, unlocked = data.level or 1, data.availableSlots or 12, data.unlocked or 0
-    local chambers = plot and plot:FindFirstChild("Chambers")
-    local nInc = chambers and #chambers:GetChildren() or 0
-    -- stat cards
-    local stats = {
-        { "INCOME", "$" .. Config.Short(income) .. "/s", Color3.fromRGB(70, 200, 70) },
-        { "SLOTS", #placed .. " / " .. unlocked, Color3.fromRGB(40, 110, 230) },
-        { "TEMPLE", "Lv. " .. level, Color3.fromRGB(240, 170, 30) },
-        { "INCUBATORS", nInc .. " / 3", Color3.fromRGB(240, 70, 150) },
-    }
-    for i, s in stats do
-        local c = card(0.035 + (i - 1) * 0.245 + 0.1075, 0.21, 0.215, 0.12, s[3])
-        t(c, s[1], 0.06, 0.08, 0.8, 0.3, 16)
-        t(c, s[2], 0.06, 0.38, 0.9, 0.52, 36)
-    end
-    -- slots grid
-    local grid = box(
-        L,
-        0.265,
-        0.615,
-        0.45,
-        0.64,
-        { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(120, 120, 128), ZIndex = 7 }
-    )
-    new("UICorner", { CornerRadius = UDim.new(0.03, 0) }, grid)
-    new("UIStroke", { Color = Color3.fromRGB(60, 60, 70), Thickness = 2 }, grid)
-    t(grid, "SLOTS", 0.04, 0.02, 0.4, 0.08, 20)
-    local slotsF = plot and plot:FindFirstChild("Slots")
-    for i = 1, 12 do
-        local col, row = (i - 1) % 4, math.floor((i - 1) / 4)
+    -- Slot i of the 4x3 grid: placed character + income, EMPTY, or locked with its unlock price.
+    local function addSlotCell(grid, i, slotsFolder, placed, unlockedCount)
+        local column, row = (i - 1) % 4, math.floor((i - 1) / 4)
         local cell = box(
             grid,
-            0.14 + col * 0.24,
+            0.14 + column * 0.24,
             0.27 + row * 0.305,
             0.21,
             0.28,
             { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(46, 36, 92), ZIndex = 8 }
         )
-        new("UICorner", { CornerRadius = UDim.new(0.08, 0) }, cell)
-        new(
+        create("UICorner", { CornerRadius = UDim.new(0.08, 0) }, cell)
+        create(
             "UIStroke",
             { Color = Color3.new(1, 1, 1), Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
             cell
         )
-        local it = placed[i]
-        local slot = slotsF and slotsF:FindFirstChild(string.format("Slot%02d", i))
-        if it then
-            if it.image and it.image ~= "" then
-                new("ImageLabel", {
+        local item = placed[i]
+        local slot = slotsFolder and slotsFolder:FindFirstChild(string.format("Slot%02d", i))
+        if item then
+            if item.image and item.image ~= "" then
+                create("ImageLabel", {
                     BackgroundTransparency = 1,
-                    Image = it.image,
+                    Image = item.image,
                     ScaleType = Enum.ScaleType.Fit,
                     Position = UDim2.fromScale(0.1, 0.04),
                     Size = UDim2.fromScale(0.8, 0.7),
                     ZIndex = 9,
                 }, cell)
             end
-            t(
+            plotText(
                 cell,
-                "$" .. Config.Short(it.income or 0) .. "/s",
+                "$" .. Config.Short(item.income or 0) .. "/s",
                 0.05,
                 0.74,
                 0.9,
@@ -3096,16 +3424,16 @@ RENDER.Plot = function(panel)
                 Color3.fromRGB(110, 255, 110),
                 Enum.TextXAlignment.Center
             )
-        elseif i <= unlocked then
+        elseif i <= unlockedCount then
             cell.BackgroundColor3 = Color3.fromRGB(60, 50, 110)
-            t(cell, "EMPTY", 0.05, 0.4, 0.9, 0.22, 14, Color3.fromRGB(190, 180, 230), Enum.TextXAlignment.Center)
+            plotText(cell, "EMPTY", 0.05, 0.4, 0.9, 0.22, 14, Color3.fromRGB(190, 180, 230), Enum.TextXAlignment.Center)
         else
             cell.BackgroundColor3 = Color3.fromRGB(110, 110, 118)
-            t(cell, "🔒", 0.2, 0.12, 0.6, 0.45, 40, Color3.new(1, 1, 1), Enum.TextXAlignment.Center)
-            local price = slot and slot:GetAttribute("UnlockPrice")
-            t(
+            plotText(cell, "🔒", 0.2, 0.12, 0.6, 0.45, 40, Color3.new(1, 1, 1), Enum.TextXAlignment.Center)
+            local unlockPrice = slot and slot:GetAttribute("UnlockPrice")
+            plotText(
                 cell,
-                price and ("$" .. Config.Short(price)) or "LOCKED",
+                unlockPrice and ("$" .. Config.Short(unlockPrice)) or "LOCKED",
                 0.05,
                 0.72,
                 0.9,
@@ -3116,24 +3444,163 @@ RENDER.Plot = function(panel)
             )
         end
     end
+    -- Upgrade row i: title, subtitle, progress bar and a price button that fires rowDef[6].
+    local function addUpgradeRow(i, rowDef, slotCap)
+        local rowFrame = box(
+            layer,
+            0.74,
+            0.21 + i * 0.16 + 0.02,
+            0.45,
+            0.145,
+            { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(40, 30, 80), ZIndex = 7 }
+        )
+        create("UICorner", { CornerRadius = UDim.new(0.08, 0) }, rowFrame)
+        create(
+            "UIStroke",
+            { Color = PLOT_BLACK, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+            rowFrame
+        )
+        create("ImageLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 1),
+            Image = "rbxassetid://132561191216691",
+            ScaleType = Enum.ScaleType.Tile,
+            TileSize = UDim2.fromOffset(26, 26),
+            ImageTransparency = 0.7,
+            ZIndex = 7,
+        }, rowFrame)
+        plotText(rowFrame, rowDef[1], 0.04, 0.1, 0.6, 0.32, 24)
+        plotText(rowFrame, rowDef[2], 0.04, 0.44, 0.6, 0.2, 13, Color3.fromRGB(200, 195, 230))
+        local progressBar = create("Frame", {
+            BackgroundColor3 = Color3.fromRGB(20, 15, 40),
+            BorderSizePixel = 0,
+            Position = UDim2.fromScale(0.04, 0.72),
+            Size = UDim2.fromScale(0.6, 0.14),
+            ZIndex = 9,
+        }, rowFrame)
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }, progressBar)
+        create("UIStroke", { Color = PLOT_BLACK, Thickness = 1.5 }, progressBar)
+        local fill = create("Frame", {
+            BackgroundColor3 = rowDef[5],
+            BorderSizePixel = 0,
+            Size = UDim2.fromScale(math.clamp(rowDef[4], 0.05, 1), 1),
+            ZIndex = 10,
+        }, progressBar)
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+        local canBuy = rowDef[7] and rowDef[3] ~= nil
+        local buyButton = create("TextButton", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.fromScale(0.96, 0.5),
+            Size = UDim2.fromScale(0.28, 0.66),
+            BackgroundColor3 = canBuy and Color3.fromRGB(70, 200, 70) or Color3.fromRGB(110, 110, 118),
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 10,
+        }, rowFrame)
+        create("UICorner", { CornerRadius = UDim.new(0.12, 0) }, buyButton)
+        create(
+            "UIStroke",
+            { Color = PLOT_BLACK, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+            buyButton
+        )
+        create("ImageLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 1),
+            Image = "rbxassetid://132561191216691",
+            ScaleType = Enum.ScaleType.Tile,
+            TileSize = UDim2.fromOffset(22, 22),
+            ImageTransparency = 0.45,
+            ZIndex = 10,
+        }, buyButton)
+        plotText(
+            buyButton,
+            rowDef[3] and ("$" .. Config.Short(rowDef[3])) or "MAX",
+            0.06,
+            0.15,
+            0.88,
+            0.7,
+            26,
+            Color3.new(1, 1, 1),
+            Enum.TextXAlignment.Center
+        )
+        buyButton.MouseEnter:Connect(function()
+            UISound.Play("Hover")
+            TweenService:Create(buyButton, TweenInfo.new(0.1), { Size = UDim2.fromScale(0.3, 0.7) }):Play()
+        end)
+        buyButton.MouseLeave:Connect(function()
+            TweenService:Create(buyButton, TweenInfo.new(0.1), { Size = UDim2.fromScale(0.28, 0.66) }):Play()
+        end)
+        buyButton.Activated:Connect(function()
+            if not canBuy then
+                showToast(
+                    rowDef[3]
+                            and (rowDef[1] == "Temple Upgrade" and "Unlock all " .. slotCap .. " slots first" or "Not available yet")
+                        or "Already maxed"
+                )
+                return
+            end
+            UISound.Play("Click")
+            runAction(rowDef[6], { index = 1 })
+        end)
+    end
+    local plot = findMyPlot()
+    local UpgradePrices = require(game.ReplicatedStorage.UpgradePrices)
+    local placed, income = {}, 0
+    for _, item in data.items or {} do
+        if item.state == "placed" then
+            table.insert(placed, item)
+            income += item.income or 0
+        end
+    end
+    local level, slotCap, unlockedCount = data.level or 1, data.availableSlots or 12, data.unlocked or 0
+    local chambers = plot and plot:FindFirstChild("Chambers")
+    local incubatorCount = chambers and #chambers:GetChildren() or 0
+    -- stat cards
+    local stats = {
+        { "INCOME", "$" .. Config.Short(income) .. "/s", Color3.fromRGB(70, 200, 70) },
+        { "SLOTS", #placed .. " / " .. unlockedCount, Color3.fromRGB(40, 110, 230) },
+        { "TEMPLE", "Lv. " .. level, Color3.fromRGB(240, 170, 30) },
+        { "INCUBATORS", incubatorCount .. " / 3", Color3.fromRGB(240, 70, 150) },
+    }
+    for i, stat in stats do
+        local statCard = plotCard(0.035 + (i - 1) * 0.245 + 0.1075, 0.21, 0.215, 0.12, stat[3])
+        plotText(statCard, stat[1], 0.06, 0.08, 0.8, 0.3, 16)
+        plotText(statCard, stat[2], 0.06, 0.38, 0.9, 0.52, 36)
+    end
+    -- slots grid
+    local grid = box(
+        layer,
+        0.265,
+        0.615,
+        0.45,
+        0.64,
+        { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(120, 120, 128), ZIndex = 7 }
+    )
+    create("UICorner", { CornerRadius = UDim.new(0.03, 0) }, grid)
+    create("UIStroke", { Color = Color3.fromRGB(60, 60, 70), Thickness = 2 }, grid)
+    plotText(grid, "SLOTS", 0.04, 0.02, 0.4, 0.08, 20)
+    local slotsFolder = plot and plot:FindFirstChild("Slots")
+    for i = 1, 12 do
+        addSlotCell(grid, i, slotsFolder, placed, unlockedCount)
+    end
     -- upgrade rows
     local nextSlot, nextPrice
-    for i = 1, cap do
-        local sl = slotsF and slotsF:FindFirstChild(string.format("Slot%02d", i))
-        if sl and not sl:GetAttribute("Unlocked") then
-            nextSlot, nextPrice = i, sl:GetAttribute("UnlockPrice")
+    for i = 1, slotCap do
+        local slot = slotsFolder and slotsFolder:FindFirstChild(string.format("Slot%02d", i))
+        if slot and not slot:GetAttribute("Unlocked") then
+            nextSlot, nextPrice = i, slot:GetAttribute("UnlockPrice")
             break
         end
     end
-    local lv1 = chambers
+    local chamber1Level = chambers
             and chambers:FindFirstChild("Chamber1")
             and (chambers.Chamber1:GetAttribute("UpgradeLevel") or 1)
         or 1
-    local rows = {
+    local upgradeRows = {
         {
             "Temple Upgrade",
             level >= 3 and "Max level" or ("Lv. " .. level .. " → " .. (level + 1) .. " · unlock all slots first"),
-            level >= 3 and nil or UP.Temple[level + 1],
+            level >= 3 and nil or UpgradePrices.Temple[level + 1],
             level / 3,
             Color3.fromRGB(240, 170, 30),
             "UpgradeTemple",
@@ -3143,131 +3610,49 @@ RENDER.Plot = function(panel)
             "Unlock Slot",
             nextSlot and ("Slot " .. nextSlot .. " · +1 character") or "Floor full",
             nextPrice,
-            unlocked / math.max(cap, 1),
+            unlockedCount / math.max(slotCap, 1),
             Color3.fromRGB(40, 110, 230),
             "UnlockSlot",
             nextSlot ~= nil,
         },
         {
             "Incubator Speed",
-            lv1 >= 3 and "Max level" or ("Lv. " .. lv1 .. " → " .. (lv1 + 1) .. " · faster hatching"),
-            lv1 < 3 and UP.IncubatorLevel[lv1 + 1] or nil,
-            lv1 / 3,
+            chamber1Level >= 3 and "Max level"
+                or ("Lv. " .. chamber1Level .. " → " .. (chamber1Level + 1) .. " · faster hatching"),
+            chamber1Level < 3 and UpgradePrices.IncubatorLevel[chamber1Level + 1] or nil,
+            chamber1Level / 3,
             Color3.fromRGB(70, 200, 70),
             "UpgradeIncubator",
-            lv1 < 3,
+            chamber1Level < 3,
         },
         {
             "More Incubators",
-            nInc >= 3 and "All 3 built" or (nInc .. " → " .. (nInc + 1) .. " · hatch more at once"),
-            nInc < 3 and UP.AddIncubator[nInc + 1] or nil,
-            nInc / 3,
+            incubatorCount >= 3 and "All 3 built"
+                or (incubatorCount .. " → " .. (incubatorCount + 1) .. " · hatch more at once"),
+            incubatorCount < 3 and UpgradePrices.AddIncubator[incubatorCount + 1] or nil,
+            incubatorCount / 3,
             Color3.fromRGB(150, 90, 230),
             "AddIncubator",
-            nInc < 3,
+            incubatorCount < 3,
         },
     }
-    for i, r in rows do
-        local row = box(
-            L,
-            0.74,
-            0.21 + i * 0.16 + 0.02,
-            0.45,
-            0.145,
-            { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(40, 30, 80), ZIndex = 7 }
-        )
-        new("UICorner", { CornerRadius = UDim.new(0.08, 0) }, row)
-        new("UIStroke", { Color = K, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, row)
-        new("ImageLabel", {
-            BackgroundTransparency = 1,
-            Size = UDim2.fromScale(1, 1),
-            Image = "rbxassetid://132561191216691",
-            ScaleType = Enum.ScaleType.Tile,
-            TileSize = UDim2.fromOffset(26, 26),
-            ImageTransparency = 0.7,
-            ZIndex = 7,
-        }, row)
-        t(row, r[1], 0.04, 0.1, 0.6, 0.32, 24)
-        t(row, r[2], 0.04, 0.44, 0.6, 0.2, 13, Color3.fromRGB(200, 195, 230))
-        local bar = new("Frame", {
-            BackgroundColor3 = Color3.fromRGB(20, 15, 40),
-            BorderSizePixel = 0,
-            Position = UDim2.fromScale(0.04, 0.72),
-            Size = UDim2.fromScale(0.6, 0.14),
-            ZIndex = 9,
-        }, row)
-        new("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
-        new("UIStroke", { Color = K, Thickness = 1.5 }, bar)
-        local fill = new("Frame", {
-            BackgroundColor3 = r[5],
-            BorderSizePixel = 0,
-            Size = UDim2.fromScale(math.clamp(r[4], 0.05, 1), 1),
-            ZIndex = 10,
-        }, bar)
-        new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
-        local can = r[7] and r[3] ~= nil
-        local b = new("TextButton", {
-            AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.fromScale(0.96, 0.5),
-            Size = UDim2.fromScale(0.28, 0.66),
-            BackgroundColor3 = can and Color3.fromRGB(70, 200, 70) or Color3.fromRGB(110, 110, 118),
-            Text = "",
-            AutoButtonColor = false,
-            ZIndex = 10,
-        }, row)
-        new("UICorner", { CornerRadius = UDim.new(0.12, 0) }, b)
-        new("UIStroke", { Color = K, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b)
-        new("ImageLabel", {
-            BackgroundTransparency = 1,
-            Size = UDim2.fromScale(1, 1),
-            Image = "rbxassetid://132561191216691",
-            ScaleType = Enum.ScaleType.Tile,
-            TileSize = UDim2.fromOffset(22, 22),
-            ImageTransparency = 0.45,
-            ZIndex = 10,
-        }, b)
-        t(
-            b,
-            r[3] and ("$" .. Config.Short(r[3])) or "MAX",
-            0.06,
-            0.15,
-            0.88,
-            0.7,
-            26,
-            Color3.new(1, 1, 1),
-            Enum.TextXAlignment.Center
-        )
-        b.MouseEnter:Connect(function()
-            UISound.Play("Hover")
-            TweenService:Create(b, TweenInfo.new(0.1), { Size = UDim2.fromScale(0.3, 0.7) }):Play()
-        end)
-        b.MouseLeave:Connect(function()
-            TweenService:Create(b, TweenInfo.new(0.1), { Size = UDim2.fromScale(0.28, 0.66) }):Play()
-        end)
-        b.Activated:Connect(function()
-            if not can then
-                say(
-                    r[3]
-                            and (r[1] == "Temple Upgrade" and "Unlock all " .. cap .. " slots first" or "Not available yet")
-                        or "Already maxed"
-                )
-                return
-            end
-            UISound.Play("Click")
-            act(r[6], { index = 1 })
-        end)
+    for i, rowDef in upgradeRows do
+        addUpgradeRow(i, rowDef, slotCap)
     end
     panel:SetAttribute("Page", "figma")
 end
 
-local open
-for _, c in gui:GetChildren() do
-    if c:IsA("ImageLabel") then
-        c.Visible = false
+-- ===== 10. Open / close, refresh loop and wiring =====
+local openPanel -- the panel currently shown (nil = all closed)
+for _, child in gui:GetChildren() do
+    if child:IsA("ImageLabel") then
+        child.Visible = false
     end
 end
-dim.Visible = false
+dimOverlay.Visible = false
 
+-- Coalescing refresh: calls made while a render runs only set refreshPending, so exactly one more render
+-- of the (then) open panel follows.
 local refreshRunning = false
 local refreshPending = false
 refresh = function()
@@ -3279,7 +3664,7 @@ refresh = function()
     task.spawn(function()
         repeat
             refreshPending = false
-            local current = open
+            local current = openPanel
             if current and RENDER[current.Name] then
                 local ok, err = pcall(RENDER[current.Name], current)
                 if not ok then
@@ -3293,185 +3678,197 @@ refresh = function()
         refreshRunning = false
     end)
 end
-local function close()
-    if not open then
+-- Shrink-out tween, then hide; the dim overlay is hidden only if no other panel opened meanwhile.
+local function closeMenu()
+    if not openPanel then
         return
     end
-    local p = open
-    open = nil
+    local panel = openPanel
+    openPanel = nil
     UISound.Play("Close")
-    closing = p
+    closingPanel = panel
     TweenService:Create(
-        p.UIScale,
+        panel.UIScale,
         TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-        { Scale = 0.85 * (p:GetAttribute("Fit") or 1) }
+        { Scale = 0.85 * (panel:GetAttribute("Fit") or 1) }
     ):Play()
     task.delay(0.15, function()
-        if closing == p then
-            closing = nil
+        if closingPanel == panel then
+            closingPanel = nil
         end
-        if open ~= p then
-            p.Visible = false
+        if openPanel ~= panel then
+            panel.Visible = false
         end
-        if not open then
-            dim.Visible = false
+        if not openPanel then
+            dimOverlay.Visible = false
         end
     end)
 end
-local function show(p)
-    if open == p then
-        close()
+-- Toggle: showing the open panel closes it. Skins the panel on first open, then refreshes it.
+local function showPanel(panel)
+    if openPanel == panel then
+        closeMenu()
         return
     end
-    if open then
-        open.Visible = false
+    if openPanel then
+        openPanel.Visible = false
     end
-    skinPanel(p)
-    open = p
-    p.Visible = true
-    dim.Visible = true
-    if closing == p then
-        closing = nil
+    skinPanel(panel)
+    openPanel = panel
+    panel.Visible = true
+    dimOverlay.Visible = true
+    if closingPanel == panel then
+        closingPanel = nil
     end
-    local fit = p:GetAttribute("Fit") or 1
-    p.UIScale.Scale = 0.85 * fit
-    TweenService:Create(p.UIScale, TweenInfo.new(0.25, Enum.EasingStyle.Back), { Scale = fit }):Play()
+    local fit = panel:GetAttribute("Fit") or 1
+    panel.UIScale.Scale = 0.85 * fit
+    TweenService:Create(panel.UIScale, TweenInfo.new(0.25, Enum.EasingStyle.Back), { Scale = fit }):Play()
     UISound.Play("Open")
     refresh()
 end
-local function __clickOnPanel(dimObj, input)
+local function isClickOnPanel(dimInstance, input)
     -- true if the click landed on any visible part of a panel (anything in this ScreenGui that isn't the dim)
     if not (input and input.Position) then
         return false
     end
-    local pg = game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    local root = dimObj:FindFirstAncestorWhichIsA("LayerCollector")
-    for _, o in pg:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y) do
-        if o ~= dimObj and root and o:IsDescendantOf(root) and not o:IsDescendantOf(dimObj) then
+    local playerGui = game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local rootGui = dimInstance:FindFirstAncestorWhichIsA("LayerCollector")
+    for _, guiObject in playerGui:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y) do
+        if
+            guiObject ~= dimInstance
+            and rootGui
+            and guiObject:IsDescendantOf(rootGui)
+            and not guiObject:IsDescendantOf(dimInstance)
+        then
             return true
         end
     end
     return false
 end
-dim.Activated:Connect(function(input)
-    if __clickOnPanel(dim, input) then
+dimOverlay.Activated:Connect(function(input)
+    if isClickOnPanel(dimOverlay, input) then
         return
     end
-    close()
+    closeMenu()
 end)
 Changed.OnClientEvent:Connect(refresh)
 do
-    local lr = gui:FindFirstChild("LocalRefresh") or Instance.new("BindableEvent")
-    lr.Name = "LocalRefresh"
-    lr.Parent = gui
-    lr.Event:Connect(function()
+    local localRefreshEvent = gui:FindFirstChild("LocalRefresh") or Instance.new("BindableEvent")
+    localRefreshEvent.Name = "LocalRefresh"
+    localRefreshEvent.Parent = gui
+    localRefreshEvent.Event:Connect(function()
         if refresh then
             refresh()
         end
     end)
 end
 do
-    local om = gui:FindFirstChild("OpenMenu") or Instance.new("BindableEvent")
-    om.Name = "OpenMenu"
-    om.Parent = gui
-    om.Event:Connect(function(name)
-        local p = gui:FindFirstChild(name)
-        if p and open ~= p then
-            show(p)
+    local openMenuEvent = gui:FindFirstChild("OpenMenu") or Instance.new("BindableEvent")
+    openMenuEvent.Name = "OpenMenu"
+    openMenuEvent.Parent = gui
+    openMenuEvent.Event:Connect(function(panelName)
+        local panel = gui:FindFirstChild(panelName)
+        if panel and openPanel ~= panel then
+            showPanel(panel)
         end
     end)
 end
 
-for _, b in side:GetChildren() do
-    if b:IsA("GuiButton") then
-        local panel = gui:WaitForChild(b:GetAttribute("Panel"))
-        panel:WaitForChild("Close").Activated:Connect(close)
-        local s = b:FindFirstChildOfClass("UIScale")
-        b.MouseEnter:Connect(function()
+for _, sideButton in sideButtons:GetChildren() do
+    if sideButton:IsA("GuiButton") then
+        local panel = gui:WaitForChild(sideButton:GetAttribute("Panel"))
+        panel:WaitForChild("Close").Activated:Connect(closeMenu)
+        local hoverScale = sideButton:FindFirstChildOfClass("UIScale")
+        sideButton.MouseEnter:Connect(function()
             UISound.Play("Hover")
-            if s then
-                TweenService:Create(s, TweenInfo.new(0.12), { Scale = 1.08 }):Play()
+            if hoverScale then
+                TweenService:Create(hoverScale, TweenInfo.new(0.12), { Scale = 1.08 }):Play()
             end
         end)
-        b.MouseLeave:Connect(function()
-            if s then
-                TweenService:Create(s, TweenInfo.new(0.12), { Scale = 1 }):Play()
+        sideButton.MouseLeave:Connect(function()
+            if hoverScale then
+                TweenService:Create(hoverScale, TweenInfo.new(0.12), { Scale = 1 }):Play()
             end
         end)
-        local face = b:FindFirstChild("Face", true)
+        local face = sideButton:FindFirstChild("Face", true)
         if face then
-            b.MouseButton1Down:Connect(function()
+            sideButton.MouseButton1Down:Connect(function()
                 TweenService:Create(face, TweenInfo.new(0.06), { Position = UDim2.new(0.5, 0, 0, 9) }):Play()
             end)
-            local function up()
+            local function raiseFace()
                 TweenService
                     :Create(face, TweenInfo.new(0.12, Enum.EasingStyle.Back), { Position = UDim2.new(0.5, 0, 0, 4) })
                     :Play()
             end
-            b.MouseButton1Up:Connect(up)
-            b.MouseLeave:Connect(up)
+            sideButton.MouseButton1Up:Connect(raiseFace)
+            sideButton.MouseLeave:Connect(raiseFace)
         end
-        b.Activated:Connect(function()
+        sideButton.Activated:Connect(function()
             UISound.Play("Click")
-            show(panel)
+            showPanel(panel)
         end)
     end
 end
 
 -- TileIcons: use the object-only icons once they're set in ReplicatedStorage.GameMenuImages
-local imgs = RS:FindFirstChild("GameMenuImages")
-if imgs then
-    for _, b in side:GetChildren() do
-        if b:IsA("GuiButton") then
-            local ic = b:FindFirstChild("Icon", true)
-            local sh = b:FindFirstChild("IconShadow", true)
-            local function upd()
-                local v = imgs:GetAttribute("Tile" .. b.Name)
-                if ic and v and v ~= "" then
-                    ic.Image = v
-                    if sh then
-                        sh.Image = v
+local menuImages = ReplicatedStorage:FindFirstChild("GameMenuImages")
+if menuImages then
+    for _, sideButton in sideButtons:GetChildren() do
+        if sideButton:IsA("GuiButton") then
+            local tileIcon = sideButton:FindFirstChild("Icon", true)
+            local tileIconShadow = sideButton:FindFirstChild("IconShadow", true)
+            local function applyTileImage()
+                local tileImage = menuImages:GetAttribute("Tile" .. sideButton.Name)
+                if tileIcon and tileImage and tileImage ~= "" then
+                    tileIcon.Image = tileImage
+                    if tileIconShadow then
+                        tileIconShadow.Image = tileImage
                     end
                 end
             end
-            imgs:GetAttributeChangedSignal("Tile" .. b.Name):Connect(upd)
-            upd()
+            menuImages:GetAttributeChangedSignal("Tile" .. sideButton.Name):Connect(applyTileImage)
+            applyTileImage()
         end
     end
 end
 
+-- ===== 11. Warm the shared Robux price cache (_G.__shopPrices) without blocking start-up =====
 task.defer(function()
-    local SR = RS:FindFirstChild("ShopSystem")
-    local ok, SC = pcall(function()
-        return require(SR.ShopConfig)
+    local shopSystem = ReplicatedStorage:FindFirstChild("ShopSystem")
+    local ok, ShopConfig = pcall(function()
+        return require(shopSystem.ShopConfig)
     end)
     if not ok then
         return
     end
     _G.__shopPrices = _G.__shopPrices or {}
-    local MPS = game:GetService("MarketplaceService")
-    local function warm(id, pass)
+    local MarketplaceService = game:GetService("MarketplaceService")
+    local function warmPrice(id, isGamePass)
         if not id or id == 0 then
             return
         end
-        local k = (pass and "p" or "d") .. id
-        if _G.__shopPrices[k] ~= nil then
+        local cacheKey = (isGamePass and "p" or "d") .. id
+        if _G.__shopPrices[cacheKey] ~= nil then
             return
         end
-        _G.__shopPrices[k] = false
+        _G.__shopPrices[cacheKey] = false
         task.spawn(function()
-            local ok2, info =
-                pcall(MPS.GetProductInfo, MPS, id, pass and Enum.InfoType.GamePass or Enum.InfoType.Product)
-            _G.__shopPrices[k] = ok2 and info and info.PriceInRobux or false
+            local fetched, productInfo = pcall(
+                MarketplaceService.GetProductInfo,
+                MarketplaceService,
+                id,
+                isGamePass and Enum.InfoType.GamePass or Enum.InfoType.Product
+            )
+            _G.__shopPrices[cacheKey] = fetched and productInfo and productInfo.PriceInRobux or false
         end)
     end
-    for _, id in SC.Products do
-        warm(id)
+    for _, id in ShopConfig.Products do
+        warmPrice(id)
     end
-    for _, id in SC.GamePasses do
-        warm(id, true)
+    for _, id in ShopConfig.GamePasses do
+        warmPrice(id, true)
     end
-    for _, lv in SC.MoneyLevels or {} do
-        warm(lv.productId)
+    for _, moneyLevel in ShopConfig.MoneyLevels or {} do
+        warmPrice(moneyLevel.productId)
     end
 end)

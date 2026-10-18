@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 67 |
+| Pending | 66 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 117 |
+| Refactored | 118 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -200,7 +200,7 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/UI/Screens/GameMenus/MenuLogic.client.luau` | LocalScript | 1246 | 3477 | Pending | — | — |
+| `client/UI/Screens/GameMenus/MenuLogic.client.luau` | LocalScript | 1246 | 3874 | Refactored | CHANGED | Full header (panels, remotes, bindables, _G, attributes, init order, TOC), 11 section banners, ~2240 local renames, 15 extracted helpers (layout, Index, Quests, shop deal, Plot); nested closures bytecode-identical |
 
 ## Batch 14 — Client UI — GameHUD
 
@@ -1417,12 +1417,12 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/UI/Screens/GameMenus/MenuLogic.client.luau`
 
-- **Type:** LocalScript · **Batch:** 13 · **Priority:** High · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 13 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** StarterGui.GameMenus.MenuLogic (LocalScript) Opens/closes the four ForgeGUI panels and fills them with live data from ServerScriptService.GameMenu (GetState / Action / Changed remotes). All positions 
 - **Dependencies:** Config, ShopConfig, UISound, UpgradePrices
 - **Public functions:** —
 - **Events:** Connect×50, OnClientEvent×1, RunService×1
-- **Readability problems:** 106 dense one-line statements; 180 lines >160 chars; 21 one-letter locals
+- **Readability problems:** 3477-line script with 1-3 letter locals (RS, L, SC, st, sk, sf, tl, ce, b, t, c3...), many shadowed helpers (card, hms, side, GREEN), no section structure, 300-1000 line render fns mixing layout/data/input, dead legacy Plot pages
 
 ### `client/UI/Controllers/GameHUD.client.luau`
 
