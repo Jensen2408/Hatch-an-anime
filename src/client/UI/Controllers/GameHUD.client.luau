@@ -1,20 +1,69 @@
--- GameHUD: custom hotbar (replaces Roblox's), backpack with egg and character selling, and the top-centre night timer.
+--[[ StarterPlayerScripts.GameHUD (LocalScript)
+Main in-game HUD. Builds two ScreenGuis in PlayerGui:
+  GameHUD   custom hotbar (Roblox's backpack stays hidden - ReplicatedFirst.CustomInventoryBootstrap), the
+            Backpack button, the Inventory panel above the hotbar, the hotbar hover tooltip and the PLOT button
+  NightBar  top-centre day/night countdown banner + the big 5..1 countdown before night starts
+and disables the legacy NighttimeHUD / NighttimeStatus ScreenGuis (now and whenever they are re-added).
+
+Table of contents (section banners below are "-- ===== N. ... =====")
+  1. Services, modules, palette, UI primitives (create / addCorner / addStroke / tween / formatMoney)
+  2. Tool preview (catalog portrait, mutation aura, 3D viewport) and tool description
+  3. Hotbar: tray, tool order, egg stacking, renderBar, number keys 1-9
+  4. Drag items onto the hotbar (and tap-to-hold)
+  5. Legacy sell bag ("EggBag"), Backpack button, quotes and selling. The bag panel itself is retired
+     (setBagOpen forwards to the Inventory panel), but it is still built and its helpers are shared.
+  6. Inventory panel (tabs, rarity/mutation filters, search, SELL mode; Backpack button or the ` key)
+  7. Hotbar hover tooltip
+  8. Backpack/character change watchers + the hotbar refresh loop
+  9. Night timer (NightBar)
+ 10. Away-earnings popup (disabled - OfflineEarningsUI replaced it)
+ 11. PLOT button (teleport home; key H)
+
+Remotes (ReplicatedStorage):
+  SellEgg                              (RF, WaitForChild 10 s)  "Quote", tool -> number | other
+                                                                 "Sell", tool -> ok, cashOrMessage
+                                                                 "SellAll" -> ok, cashOrMessage, count
+  CharacterInventory.InventoryRequest  (RF)  "Fetch" -> { ok, snapshot }
+                                             "SellBackpack", { id } / "SellBackpackAll", { ids }
+                                               -> { ok, message (JSON { cash, count } on success), snapshot? }
+  CharacterInventory.InventoryEvent    (RE)  server -> "Snapshot", snapshot ({ items = { { id, sellValue, power,
+                                             income, ... } } })
+  GoHome                               (RE, WaitForChild 10 s)  FireServer(); server replies with a message string
+Modules: CharacterCatalog (ById: Name, Rarity, Id, image), UISound (Play), PixelIcon (builds the "bag" icons).
+Attributes read:
+  Tool: CharacterId / BrainrotId, EggType, Mutation, Rarity, UnknownEgg, GoldVariant, DesignName, ItemId, Power,
+        IncomePerSecond; tool parts: CarryOriginalTransparency
+  workspace: NighttimeActive, NighttimeEndsAt, NighttimeNextAt (server time)
+  player: OfflineEarnings (changed signal only), OfflineSeconds
+Attributes written: hotbar slot "Sig" / "ToolRef", slot button "EdgeColor", bag card "ItemId" / "Category",
+  PLOT button parts "KeepRound" (read by SharpUI). Instance names (GameHUD, NightBar, RightButtons.BagButton,
+  HomeButton, EggBag, Inventory, Hotbar, ...) are looked up by FigmaSkin, SharpUI and FirstHatchTutorial.
+Input: keys 1-9 (equip hotbar slot), ` (Inventory), H (go home).
+
+Init order (top level, in file order - WaitForChild calls yield):
+  PlayerGui -> CharacterCatalog, UISound -> GameHUD ScreenGui -> catalog image map -> hotbar -> 1-9 keys ->
+  SellEgg (10 s), CharacterInventory remotes -> right buttons (PixelIcon) -> legacy bag -> Inventory panel ->
+  tooltip -> change watchers + refresh loop -> NightBar -> away earnings -> PLOT button (GoHome, 10 s;
+  GameMenus.SideButtons is waited for in a spawned thread).
+]]
+
+-- ===== 1. Services, modules, palette, UI primitives =====
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
-local SG = game:GetService("StarterGui")
-local UIS = game:GetService("UserInputService")
-local TS = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local _StarterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
-local pg = player:WaitForChild("PlayerGui")
-local Catalog = require(RS:WaitForChild("CharacterCatalog"))
-local UISound = require(RS:WaitForChild("UISound"))
+local playerGui = player:WaitForChild("PlayerGui")
+local CharacterCatalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
+local UISound = require(ReplicatedStorage:WaitForChild("UISound"))
 local INK = Color3.fromRGB(29, 20, 32)
 local CREAM = Color3.fromRGB(255, 243, 220)
 local GOLD = Color3.fromRGB(255, 200, 80)
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
 local BOLD = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold)
-local RARITY = {
+local RARITY_COLORS = {
     Common = Color3.fromRGB(190, 195, 205),
     Uncommon = Color3.fromRGB(109, 225, 132),
     Rare = Color3.fromRGB(98, 172, 255),
@@ -22,180 +71,266 @@ local RARITY = {
     Legendary = Color3.fromRGB(255, 207, 92),
     Limited = Color3.fromRGB(255, 60, 90),
 }
-local function make(c, p, parent)
-    local o = Instance.new(c)
-    for k, v in p do
-        o[k] = v
+-- Instance builder: sets every prop, then parents last (property writes happen before it enters the tree).
+local function create(className, props, parent)
+    local instance = Instance.new(className)
+    for key, value in props do
+        instance[key] = value
     end
     if parent then
-        o.Parent = parent
+        instance.Parent = parent
     end
-    return o
+    return instance
 end
-local function round(o, r)
-    return make("UICorner", { CornerRadius = r or UDim.new(0, 12) }, o)
+local function addCorner(target, radius)
+    return create("UICorner", { CornerRadius = radius or UDim.new(0, 12) }, target)
 end
-local function stroke(o, t, c)
-    return make("UIStroke", { Thickness = t or 3, Color = c or INK, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, o)
+local function addStroke(target, thickness, color)
+    return create(
+        "UIStroke",
+        { Thickness = thickness or 3, Color = color or INK, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+        target
+    )
 end
-local function tw(o, t, p, st, dir)
-    local x = TS:Create(o, TweenInfo.new(t, st or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), p)
-    x:Play()
-    return x
+local function tween(target, duration, goals, style, direction)
+    local tweenObject = TweenService:Create(
+        target,
+        TweenInfo.new(duration, style or Enum.EasingStyle.Quad, direction or Enum.EasingDirection.Out),
+        goals
+    )
+    tweenObject:Play()
+    return tweenObject
 end
-local function money(n)
-    local u = { { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }
-    for _, x in u do
-        if n >= x[1] then
-            local v = n / x[1]
-            local t = v >= 100 and string.format("%d", v) or string.format("%.1f", v)
-            return "$" .. t:gsub("%.0$", "") .. x[2]
+-- 1234 -> "$1.2K", 150000 -> "$150K" (a trailing ".0" is dropped), below 1000 -> "$123".
+local function formatMoney(n)
+    local suffixes = { { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }
+    for _, suffix in suffixes do
+        if n >= suffix[1] then
+            local scaled = n / suffix[1]
+            local text = scaled >= 100 and string.format("%d", scaled) or string.format("%.1f", scaled)
+            return "$" .. text:gsub("%.0$", "") .. suffix[2]
         end
     end
     return "$" .. math.floor(n)
 end
 
-local gui = make(
+local gui = create(
     "ScreenGui",
     { Name = "GameHUD", ResetOnSpawn = false, DisplayOrder = 40, ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets },
-    pg
+    playerGui
 )
 
 -- ReplicatedFirst.CustomInventoryBootstrap keeps Roblox's backpack hidden from startup.
 
----------------------------------------------------------------- tool preview (3D icon)
+-- ===== 2. Tool preview (3D icon) and tool description =====
+-- Weak-keyed by tool: the cleaned preview model is built once per tool and cloned for every later preview.
 local PREVIEW_CACHE = setmetatable({}, { __mode = "k" })
-local CATALOG_IMG
+local CATALOG_IMAGES
 do
-    local ok, C = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("CharacterCatalog"))
-    CATALOG_IMG = {}
+    local ok, catalogModule = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("CharacterCatalog"))
+    CATALOG_IMAGES = {}
     if ok then
-        for id, en in C.ById do
-            CATALOG_IMG[id] = en.image
+        for id, entry in catalogModule.ById do
+            CATALOG_IMAGES[id] = entry.image
         end
     end
 end
-local function preview(tool, parent)
+-- Animated aura behind a mutated character portrait: a tinted, spinning gradient disc that pulses, plus a
+-- shine sweep. Re-parents the portrait so it draws above the aura. The loop ends once the portrait is unparented.
+local function addMutationAura(portrait, parent, mutation)
+    local mutationGradients = {
+        Silver = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(170, 180, 200)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(140, 155, 185)),
+        }),
+        Gold = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 170, 30)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 240, 140)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(230, 130, 20)),
+        }),
+        Diamond = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 190, 255)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(220, 250, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(110, 140, 255)),
+        }),
+    }
+    local auraColors = mutationGradients[mutation]
+        or ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 90)),
+            ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 170, 40)),
+            ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 240, 70)),
+            ColorSequenceKeypoint.new(0.6, Color3.fromRGB(70, 230, 120)),
+            ColorSequenceKeypoint.new(0.8, Color3.fromRGB(70, 150, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 90, 255)),
+        })
+    local aura = create("Frame", {
+        Name = "RainbowAura",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(0.95, 0.95),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+        ZIndex = parent.ZIndex,
+    }, parent)
+    create("UICorner", { CornerRadius = UDim.new(0.5, 0) }, aura)
+    local auraGradient = create("UIGradient", {
+        Color = auraColors,
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.35),
+            NumberSequenceKeypoint.new(0.5, 0.55),
+            NumberSequenceKeypoint.new(1, 0.35),
+        }),
+    }, aura)
+    local core = create("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(0.62, 0.62),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BackgroundTransparency = 0.55,
+        BorderSizePixel = 0,
+        ZIndex = parent.ZIndex,
+    }, aura)
+    create("UICorner", { CornerRadius = UDim.new(0.5, 0) }, core)
+    portrait.Parent = nil
+    portrait.Parent = parent
+    portrait.ZIndex = parent.ZIndex + 1
+    local shineClip = create("Frame", {
+        Name = "ShineClip",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(0.8, 0.8),
+        BackgroundTransparency = 1,
+        ClipsDescendants = true,
+        ZIndex = parent.ZIndex + 2,
+    }, parent)
+    local shine = create("Frame", {
+        Name = "Shine",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Size = UDim2.new(0.18, 0, 2, 0),
+        Rotation = 25,
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BackgroundTransparency = 0.55,
+        BorderSizePixel = 0,
+        ZIndex = parent.ZIndex + 2,
+    }, shineClip)
+    create("UIGradient", {
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.5, 0),
+            NumberSequenceKeypoint.new(1, 1),
+        }),
+    }, shine)
+    task.spawn(function()
+        local startTime = os.clock()
+        while portrait.Parent do
+            local elapsed = os.clock() - startTime
+            auraGradient.Rotation = (elapsed * 90) % 360
+            local pulse = 1 + 0.06 * math.sin(elapsed * 3)
+            aura.Size = UDim2.fromScale(0.95 * pulse, 0.95 * pulse)
+            local phase = (elapsed / 2.2) % 1
+            shine.Position = UDim2.fromScale(-0.4 + phase * 1.8, 0.5)
+            shine.Visible = phase < 0.6
+            task.wait(0.03)
+        end
+    end)
+end
+-- Cache miss in buildPreview: a Model holding anchored, cleaned clones of the tool's visible parts, positioned in
+-- the egg's/tool's own upright frame (falls back to the Handle). Caches a copy in PREVIEW_CACHE if non-empty.
+local function buildPreviewModel(tool)
+    local model = Instance.new("Model")
+    local egg = tool:FindFirstChild("Egg")
+    local sourceModel = egg and egg:IsA("Model") and egg or tool
+    -- the egg Model's WorldPivot goes stale once its parts move with the welded Handle, so frame from the Handle
+    -- (eggs are built with Handle and egg both at the origin, so Handle space = the egg's upright template space)
+    local handle = tool:FindFirstChild("Handle")
+    local pivot = (egg and handle and handle:IsA("BasePart")) and handle.CFrame
+        or (sourceModel:IsA("Model") and sourceModel:GetPivot() or CFrame.new())
+    -- invisible helper parts (aura/particle holders) stay out: viewports can't draw particles, so they'd show as grey blocks
+    local function isFxHelper(part)
+        if part:GetAttribute("CarryOriginalTransparency") ~= nil or part.Transparency < 1 then
+            return false
+        end
+        if part:IsA("MeshPart") or part:FindFirstChildWhichIsA("DataModelMesh") then
+            return part:FindFirstChildWhichIsA("ParticleEmitter", true) ~= nil
+                and not (part:IsA("MeshPart") and part.TextureID ~= "")
+                and not part:FindFirstChildWhichIsA("SurfaceAppearance")
+        end
+        return true
+    end
+    for _, descendant in sourceModel:GetDescendants() do
+        if descendant:IsA("BasePart") and descendant.Name ~= "Handle" and not isFxHelper(descendant) then
+            local partClone = descendant:Clone()
+            for _, child in partClone:GetChildren() do
+                if
+                    not (
+                        child:IsA("DataModelMesh")
+                        or child:IsA("Decal")
+                        or child:IsA("SurfaceAppearance")
+                        or child:IsA("Texture")
+                    )
+                then
+                    child:Destroy()
+                end
+            end
+            partClone.Transparency = descendant:GetAttribute("CarryOriginalTransparency")
+                or (descendant.Transparency >= 1 and 0 or descendant.Transparency)
+            partClone.LocalTransparencyModifier = 0
+            partClone.Anchored = true
+            partClone.CFrame = pivot:ToObjectSpace(descendant.CFrame)
+            partClone.Parent = model
+        end
+    end -- back into the egg's own upright frame
+    if #model:GetChildren() == 0 then
+        local fallbackHandle = tool:FindFirstChild("Handle")
+        if fallbackHandle then
+            local handleClone = fallbackHandle:Clone()
+            for _, child in handleClone:GetChildren() do
+                if not (child:IsA("DataModelMesh") or child:IsA("SurfaceAppearance")) then
+                    child:Destroy()
+                end
+            end
+            handleClone.Transparency = 0
+            handleClone.Anchored = true
+            handleClone.CFrame = CFrame.new()
+            handleClone.Parent = model
+        end
+    end
+    if #model:GetChildren() > 0 then
+        PREVIEW_CACHE[tool] = model:Clone()
+    end
+    return model
+end
+-- Fills `parent` with the tool's icon and returns it: catalog portrait for characters (with an animated aura
+-- for mutations), the tool's TextureId if set, else a ViewportFrame with a slowly turning copy of its parts.
+-- The spawned animation loops end on their own once the icon is unparented.
+local function buildPreview(tool, parent)
     -- characters: clean 2D portrait from the catalog (same art as the Index)
-    local cid = tool:GetAttribute("CharacterId") or tool:GetAttribute("BrainrotId")
-    if cid and CATALOG_IMG[cid] then
-        local im = make("ImageLabel", {
+    local characterId = tool:GetAttribute("CharacterId") or tool:GetAttribute("BrainrotId")
+    if characterId and CATALOG_IMAGES[characterId] then
+        local portrait = create("ImageLabel", {
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.46),
             Size = UDim2.fromScale(1.25, 1.25),
             BackgroundTransparency = 1,
-            Image = CATALOG_IMG[cid],
+            Image = CATALOG_IMAGES[characterId],
             ScaleType = Enum.ScaleType.Fit,
             ZIndex = parent.ZIndex,
         }, parent)
-        local mut = tool:GetAttribute("Mutation")
-        if mut == "Gold" then
-            im.ImageColor3 = Color3.fromRGB(255, 215, 110)
-        elseif mut == "Diamond" then
-            im.ImageColor3 = Color3.fromRGB(150, 235, 255)
-        elseif mut == "Silver" then
-            im.ImageColor3 = Color3.fromRGB(220, 225, 235)
+        local mutation = tool:GetAttribute("Mutation")
+        if mutation == "Gold" then
+            portrait.ImageColor3 = Color3.fromRGB(255, 215, 110)
+        elseif mutation == "Diamond" then
+            portrait.ImageColor3 = Color3.fromRGB(150, 235, 255)
+        elseif mutation == "Silver" then
+            portrait.ImageColor3 = Color3.fromRGB(220, 225, 235)
         end
-        if mut then
-            local PAL = {
-                Silver = ColorSequence.new({
-                    ColorSequenceKeypoint.new(0, Color3.fromRGB(170, 180, 200)),
-                    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)),
-                    ColorSequenceKeypoint.new(1, Color3.fromRGB(140, 155, 185)),
-                }),
-                Gold = ColorSequence.new({
-                    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 170, 30)),
-                    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 240, 140)),
-                    ColorSequenceKeypoint.new(1, Color3.fromRGB(230, 130, 20)),
-                }),
-                Diamond = ColorSequence.new({
-                    ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 190, 255)),
-                    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(220, 250, 255)),
-                    ColorSequenceKeypoint.new(1, Color3.fromRGB(110, 140, 255)),
-                }),
-            }
-            local RB = PAL[mut]
-                or ColorSequence.new({
-                    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 90)),
-                    ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 170, 40)),
-                    ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 240, 70)),
-                    ColorSequenceKeypoint.new(0.6, Color3.fromRGB(70, 230, 120)),
-                    ColorSequenceKeypoint.new(0.8, Color3.fromRGB(70, 150, 255)),
-                    ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 90, 255)),
-                })
-            local aura = make("Frame", {
-                Name = "RainbowAura",
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromScale(0.5, 0.5),
-                Size = UDim2.fromScale(0.95, 0.95),
-                BackgroundColor3 = Color3.new(1, 1, 1),
-                BorderSizePixel = 0,
-                ZIndex = parent.ZIndex,
-            }, parent)
-            make("UICorner", { CornerRadius = UDim.new(0.5, 0) }, aura)
-            local ag = make("UIGradient", {
-                Color = RB,
-                Transparency = NumberSequence.new({
-                    NumberSequenceKeypoint.new(0, 0.35),
-                    NumberSequenceKeypoint.new(0.5, 0.55),
-                    NumberSequenceKeypoint.new(1, 0.35),
-                }),
-            }, aura)
-            local core = make("Frame", {
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromScale(0.5, 0.5),
-                Size = UDim2.fromScale(0.62, 0.62),
-                BackgroundColor3 = Color3.new(1, 1, 1),
-                BackgroundTransparency = 0.55,
-                BorderSizePixel = 0,
-                ZIndex = parent.ZIndex,
-            }, aura)
-            make("UICorner", { CornerRadius = UDim.new(0.5, 0) }, core)
-            im.Parent = nil
-            im.Parent = parent
-            im.ZIndex = parent.ZIndex + 1
-            local clip = make("Frame", {
-                Name = "ShineClip",
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromScale(0.5, 0.5),
-                Size = UDim2.fromScale(0.8, 0.8),
-                BackgroundTransparency = 1,
-                ClipsDescendants = true,
-                ZIndex = parent.ZIndex + 2,
-            }, parent)
-            local shine = make("Frame", {
-                Name = "Shine",
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Size = UDim2.new(0.18, 0, 2, 0),
-                Rotation = 25,
-                BackgroundColor3 = Color3.new(1, 1, 1),
-                BackgroundTransparency = 0.55,
-                BorderSizePixel = 0,
-                ZIndex = parent.ZIndex + 2,
-            }, clip)
-            make("UIGradient", {
-                Transparency = NumberSequence.new({
-                    NumberSequenceKeypoint.new(0, 1),
-                    NumberSequenceKeypoint.new(0.5, 0),
-                    NumberSequenceKeypoint.new(1, 1),
-                }),
-            }, shine)
-            task.spawn(function()
-                local t0 = os.clock()
-                while im.Parent do
-                    local t = os.clock() - t0
-                    ag.Rotation = (t * 90) % 360
-                    local p = 1 + 0.06 * math.sin(t * 3)
-                    aura.Size = UDim2.fromScale(0.95 * p, 0.95 * p)
-                    local ph = (t / 2.2) % 1
-                    shine.Position = UDim2.fromScale(-0.4 + ph * 1.8, 0.5)
-                    shine.Visible = ph < 0.6
-                    task.wait(0.03)
-                end
-            end)
+        if mutation then
+            addMutationAura(portrait, parent, mutation)
         end
+        -- disabled rainbow tint (dead code, kept as-is)
         if false then
-            local gr = make("UIGradient", {
+            local rainbowGradient = create("UIGradient", {
                 Rotation = 45,
                 Color = ColorSequence.new({
                     ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 140, 140)),
@@ -203,18 +338,18 @@ local function preview(tool, parent)
                     ColorSequenceKeypoint.new(0.66, Color3.fromRGB(150, 255, 170)),
                     ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 190, 255)),
                 }),
-            }, im)
+            }, portrait)
             task.spawn(function()
-                while im.Parent do
-                    gr.Rotation = (gr.Rotation + 2) % 360
+                while portrait.Parent do
+                    rainbowGradient.Rotation = (rainbowGradient.Rotation + 2) % 360
                     task.wait(0.03)
                 end
             end)
         end
-        return im
+        return portrait
     end
     if tool.TextureId ~= "" then
-        return make("ImageLabel", {
+        return create("ImageLabel", {
             Size = UDim2.fromScale(1, 1),
             BackgroundTransparency = 1,
             Image = tool.TextureId,
@@ -222,7 +357,7 @@ local function preview(tool, parent)
             ZIndex = parent.ZIndex,
         }, parent)
     end
-    local vp = make("ViewportFrame", {
+    local viewport = create("ViewportFrame", {
         Size = UDim2.fromScale(1, 1),
         BackgroundTransparency = 1,
         ZIndex = parent.ZIndex,
@@ -230,88 +365,34 @@ local function preview(tool, parent)
         Ambient = Color3.fromRGB(235, 235, 240),
         LightDirection = Vector3.new(-0.3, -0.6, -1),
     }, parent)
-    local m
+    local model
     if PREVIEW_CACHE[tool] then
-        m = PREVIEW_CACHE[tool]:Clone()
+        model = PREVIEW_CACHE[tool]:Clone()
     else
-        m = Instance.new("Model")
-        local egg = tool:FindFirstChild("Egg")
-        local src = egg and egg:IsA("Model") and egg or tool
-        -- the egg Model's WorldPivot goes stale once its parts move with the welded Handle, so frame from the Handle
-        -- (eggs are built with Handle and egg both at the origin, so Handle space = the egg's upright template space)
-        local h = tool:FindFirstChild("Handle")
-        local pivot = (egg and h and h:IsA("BasePart")) and h.CFrame
-            or (src:IsA("Model") and src:GetPivot() or CFrame.new())
-        -- invisible helper parts (aura/particle holders) stay out: viewports can't draw particles, so they'd show as grey blocks
-        local function fxHelper(d)
-            if d:GetAttribute("CarryOriginalTransparency") ~= nil or d.Transparency < 1 then
-                return false
-            end
-            if d:IsA("MeshPart") or d:FindFirstChildWhichIsA("DataModelMesh") then
-                return d:FindFirstChildWhichIsA("ParticleEmitter", true) ~= nil
-                    and not (d:IsA("MeshPart") and d.TextureID ~= "")
-                    and not d:FindFirstChildWhichIsA("SurfaceAppearance")
-            end
-            return true
-        end
-        for _, d in src:GetDescendants() do
-            if d:IsA("BasePart") and d.Name ~= "Handle" and not fxHelper(d) then
-                local c = d:Clone()
-                for _, k in c:GetChildren() do
-                    if
-                        not (k:IsA("DataModelMesh") or k:IsA("Decal") or k:IsA("SurfaceAppearance") or k:IsA("Texture"))
-                    then
-                        k:Destroy()
-                    end
-                end
-                c.Transparency = d:GetAttribute("CarryOriginalTransparency")
-                    or (d.Transparency >= 1 and 0 or d.Transparency)
-                c.LocalTransparencyModifier = 0
-                c.Anchored = true
-                c.CFrame = pivot:ToObjectSpace(d.CFrame)
-                c.Parent = m
-            end
-        end -- back into the egg's own upright frame
-        if #m:GetChildren() == 0 then
-            local h = tool:FindFirstChild("Handle")
-            if h then
-                local c = h:Clone()
-                for _, k in c:GetChildren() do
-                    if not (k:IsA("DataModelMesh") or k:IsA("SurfaceAppearance")) then
-                        k:Destroy()
-                    end
-                end
-                c.Transparency = 0
-                c.Anchored = true
-                c.CFrame = CFrame.new()
-                c.Parent = m
-            end
-        end
-        if #m:GetChildren() > 0 then
-            PREVIEW_CACHE[tool] = m:Clone()
-        end
+        model = buildPreviewModel(tool)
     end
-    m.Parent = vp
-    local cf, size = m:GetBoundingBox()
-    local cam = make("Camera", { FieldOfView = 20 }, vp)
-    vp.CurrentCamera = cam
-    local c = cf.Position
-    local dist = math.max(size.X, size.Y, size.Z) / 2 / math.tan(math.rad(10)) * 1.05
+    model.Parent = viewport
+    local boxCFrame, boxSize = model:GetBoundingBox()
+    local camera = create("Camera", { FieldOfView = 20 }, viewport)
+    viewport.CurrentCamera = camera
+    local center = boxCFrame.Position
+    local distance = math.max(boxSize.X, boxSize.Y, boxSize.Z) / 2 / math.tan(math.rad(10)) * 1.05
     local front = tool:GetAttribute("EggType") and Vector3.new(0, 0, -1) or Vector3.new(0.5, 0.2, -1).Unit
-    cam.CFrame = CFrame.lookAt(c + front * dist + Vector3.new(0, size.Y * 0.05, 0), c)
+    camera.CFrame = CFrame.lookAt(center + front * distance + Vector3.new(0, boxSize.Y * 0.05, 0), center)
     -- slow turn so 3D eggs feel alive
     task.spawn(function()
-        local a = 0
-        while vp.Parent do
-            a += 0.012
-            local f = CFrame.Angles(0, math.sin(a) * 0.35, 0):VectorToWorldSpace(front)
-            cam.CFrame = CFrame.lookAt(c + f * dist + Vector3.new(0, size.Y * 0.05, 0), c)
+        local angle = 0
+        while viewport.Parent do
+            angle += 0.012
+            local direction = CFrame.Angles(0, math.sin(angle) * 0.35, 0):VectorToWorldSpace(front)
+            camera.CFrame = CFrame.lookAt(center + direction * distance + Vector3.new(0, boxSize.Y * 0.05, 0), center)
             task.wait(0.03)
         end
     end)
-    return vp
+    return viewport
 end
-local function category(tool)
+-- "Characters" | "Eggs" | nil (any other tool is ignored by the bag and the Inventory panel)
+local function getCategory(tool)
     if tool:GetAttribute("CharacterId") or tool:GetAttribute("BrainrotId") then
         return "Characters"
     end
@@ -319,37 +400,38 @@ local function category(tool)
         return "Eggs"
     end
 end
-local function info(tool)
-    local kind = category(tool)
+-- Returns displayName, rarity, isEgg.
+local function describeTool(tool)
+    local kind = getCategory(tool)
     local id = tool:GetAttribute("CharacterId") or tool:GetAttribute("BrainrotId") or tool:GetAttribute("EggType")
-    local e = id and Catalog.ById[id]
-    local rarity = tool:GetAttribute("Rarity") or (e and e.Rarity)
+    local entry = id and CharacterCatalog.ById[id]
+    local rarity = tool:GetAttribute("Rarity") or (entry and entry.Rarity)
     local name = tool.Name
     if kind == "Eggs" then
-        name = tool:GetAttribute("UnknownEgg") and "Unknown Egg" or ((e and e.Id or id) .. " Egg")
+        name = tool:GetAttribute("UnknownEgg") and "Unknown Egg" or ((entry and entry.Id or id) .. " Egg")
     elseif kind == "Characters" then
         name = (tool:GetAttribute("GoldVariant") and "Golden " or "")
-            .. (e and e.Name or tool:GetAttribute("DesignName") or tool.Name)
+            .. (entry and entry.Name or tool:GetAttribute("DesignName") or tool.Name)
     end
     return name, rarity, kind == "Eggs"
 end
 
----------------------------------------------------------------- hotbar
+-- ===== 3. Hotbar =====
 local BLACK = Color3.new(0, 0, 0)
 local PLATE = Color3.fromRGB(38, 56, 68)
-local function studs(parent, size, transp)
-    return make("ImageLabel", {
+local function addStuds(parent, tileSize, transparency)
+    return create("ImageLabel", {
         Name = "Studs",
         BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1),
         Image = "rbxassetid://132561191216691",
         ScaleType = Enum.ScaleType.Tile,
-        TileSize = UDim2.fromOffset(size, size),
-        ImageTransparency = transp,
+        TileSize = UDim2.fromOffset(tileSize, tileSize),
+        ImageTransparency = transparency,
         ZIndex = parent.ZIndex,
     }, parent)
 end
-local trayShadow = make("Frame", {
+local trayShadow = create("Frame", {
     Name = "HotbarShadow",
     AnchorPoint = Vector2.new(0.5, 1),
     Position = UDim2.new(0.5, 6, 1, -6),
@@ -358,7 +440,7 @@ local trayShadow = make("Frame", {
     BorderSizePixel = 0,
     Visible = false,
 }, gui)
-local bar = make("Frame", {
+local hotbar = create("Frame", {
     Name = "Hotbar",
     AnchorPoint = Vector2.new(0.5, 1),
     Position = UDim2.new(0.5, 0, 1, -12),
@@ -369,7 +451,7 @@ local bar = make("Frame", {
     ZIndex = 3,
 }, gui)
 -- backing layer (outside the bar so its UIListLayout only arranges slots)
-local traySkin = make("Frame", {
+local traySkin = create("Frame", {
     Name = "HotbarSkin",
     AnchorPoint = Vector2.new(0.5, 1),
     Position = UDim2.new(0.5, 0, 1, -12),
@@ -379,391 +461,414 @@ local traySkin = make("Frame", {
     ZIndex = 2,
     Visible = false,
 }, gui)
-studs(traySkin, 24, 0.82)
-make("Frame", {
+addStuds(traySkin, 24, 0.82)
+create("Frame", {
     Name = "TopStrip",
     Size = UDim2.new(1, 0, 0, 5),
     BackgroundColor3 = Color3.fromRGB(255, 150, 30),
     BorderSizePixel = 0,
     ZIndex = 2,
 }, traySkin)
-make("UIStroke", { Color = BLACK, Thickness = 3, LineJoinMode = Enum.LineJoinMode.Miter }, bar)
-make("UIPadding", {
+create("UIStroke", { Color = BLACK, Thickness = 3, LineJoinMode = Enum.LineJoinMode.Miter }, hotbar)
+create("UIPadding", {
     PaddingLeft = UDim.new(0, 8),
     PaddingRight = UDim.new(0, 8),
     PaddingTop = UDim.new(0, 10),
     PaddingBottom = UDim.new(0, 8),
-}, bar)
-make("UIListLayout", {
+}, hotbar)
+create("UIListLayout", {
     FillDirection = Enum.FillDirection.Horizontal,
     Padding = UDim.new(0, 8),
     HorizontalAlignment = Enum.HorizontalAlignment.Center,
     VerticalAlignment = Enum.VerticalAlignment.Bottom,
     SortOrder = Enum.SortOrder.LayoutOrder,
-}, bar)
-bar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-    local sz = UDim2.fromOffset(bar.AbsoluteSize.X, bar.AbsoluteSize.Y)
-    trayShadow.Size = sz
-    traySkin.Size = sz
+}, hotbar)
+hotbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+    local barSize = UDim2.fromOffset(hotbar.AbsoluteSize.X, hotbar.AbsoluteSize.Y)
+    trayShadow.Size = barSize
+    traySkin.Size = barSize
 end)
 -- phones: shrink fixed-pixel HUD pieces (hotbar, night timer) on short screens; desktop stays 1
 local function phoneScale()
-    local c = workspace.CurrentCamera
-    local v = c and c.ViewportSize or Vector2.new(1280, 720)
-    local short = math.min(v.X, v.Y)
-    return short < 600 and math.clamp(short / 720, 0.6, 1) or 1
+    local camera = workspace.CurrentCamera
+    local viewportSize = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    local shortSide = math.min(viewportSize.X, viewportSize.Y)
+    return shortSide < 600 and math.clamp(shortSide / 720, 0.6, 1) or 1
 end
-local barScale = make("UIScale", { Scale = phoneScale() }, bar)
+local hotbarScale = create("UIScale", { Scale = phoneScale() }, hotbar)
 local bagOpen = false
-local MAX = 9
+local MAX_SLOTS = 9
 local slots = {}
-local function visibleSlots()
-    local v = gui.AbsoluteSize
-    return math.min(v.X, v.Y) < 600 and math.clamp(math.floor((v.X - 240) / 60), 2, 5) or MAX
+local function visibleSlotCount()
+    local screenSize = gui.AbsoluteSize
+    return math.min(screenSize.X, screenSize.Y) < 600 and math.clamp(math.floor((screenSize.X - 240) / 60), 2, 5)
+        or MAX_SLOTS
 end
-local function backpack()
+local function getBackpack()
     return player:FindFirstChildOfClass("Backpack")
 end
-local function equipped()
-    local c = player.Character
-    return c and c:FindFirstChildOfClass("Tool")
+local function getEquippedTool()
+    local character = player.Character
+    return character and character:FindFirstChildOfClass("Tool")
 end
-local order = {} -- stable order of tools
+local toolOrder = {} -- stable order of tools
+-- Backpack tools + the held tool in a stable order: toolOrder keeps its order across calls, drops tools that
+-- are gone and appends new ones. Returns the shared toolOrder table itself.
 local function allTools()
     local list = {}
-    local bp = backpack()
-    if bp then
-        for _, t in bp:GetChildren() do
-            if t:IsA("Tool") then
-                table.insert(list, t)
+    local backpackInstance = getBackpack()
+    if backpackInstance then
+        for _, tool in backpackInstance:GetChildren() do
+            if tool:IsA("Tool") then
+                table.insert(list, tool)
             end
         end
     end
-    local e = equipped()
-    if e then
-        table.insert(list, e)
+    local equippedTool = getEquippedTool()
+    if equippedTool then
+        table.insert(list, equippedTool)
     end
-    for i = #order, 1, -1 do
-        if not table.find(list, order[i]) then
-            table.remove(order, i)
+    for i = #toolOrder, 1, -1 do
+        if not table.find(list, toolOrder[i]) then
+            table.remove(toolOrder, i)
         end
     end
-    for _, t in list do
-        if not table.find(order, t) then
-            table.insert(order, t)
+    for _, tool in list do
+        if not table.find(toolOrder, tool) then
+            table.insert(toolOrder, tool)
         end
     end
-    return order
+    return toolOrder
 end
-local function toggle(tool)
-    local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-    if not hum then
+local function toggleEquip(tool)
+    local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
         return
     end
-    if equipped() == tool then
-        hum:UnequipTools()
+    if getEquippedTool() == tool then
+        humanoid:UnequipTools()
     else
-        hum:EquipTool(tool)
+        humanoid:EquipTool(tool)
     end
 end
 local USE_DEFAULT_BACKPACK = false -- false = this custom hotbar + the Inventory panel above it (Roblox's backpack stays hidden)
 local barGroups = {} -- [slot] = { tools = {...} } ; identical eggs stack into one slot ("x3"), like Roblox's hotbar
-local function stackKey(t)
-    if t:GetAttribute("CharacterId") or t:GetAttribute("BrainrotId") then
-        return t
+local function stackKey(tool)
+    if tool:GetAttribute("CharacterId") or tool:GetAttribute("BrainrotId") then
+        return tool
     end -- every character is unique (own power)
-    local e = t:GetAttribute("EggType")
-    if not e then
-        return t
+    local eggType = tool:GetAttribute("EggType")
+    if not eggType then
+        return tool
     end
-    return e
+    return eggType
         .. "|"
-        .. tostring(t:GetAttribute("Mutation") or "")
+        .. tostring(tool:GetAttribute("Mutation") or "")
         .. "|"
-        .. tostring(t:GetAttribute("GoldVariant") or "")
+        .. tostring(tool:GetAttribute("GoldVariant") or "")
         .. "|"
-        .. tostring(t:GetAttribute("UnknownEgg") or "")
+        .. tostring(tool:GetAttribute("UnknownEgg") or "")
 end
 local function buildGroups()
-    local list, byKey = {}, {}
-    for _, t in allTools() do
-        local k = stackKey(t)
-        local g = byKey[k]
-        if g then
-            table.insert(g.tools, t)
+    local groups, byKey = {}, {}
+    for _, tool in allTools() do
+        local key = stackKey(tool)
+        local group = byKey[key]
+        if group then
+            table.insert(group.tools, tool)
         else
-            g = { tools = { t } }
-            byKey[k] = g
-            table.insert(list, g)
+            group = { tools = { tool } }
+            byKey[key] = group
+            table.insert(groups, group)
         end
     end
     -- the equipped tool shows first in its stack
-    local e = equipped()
-    if e then
-        for _, g in list do
-            local i = table.find(g.tools, e)
-            if i and i > 1 then
-                table.remove(g.tools, i)
-                table.insert(g.tools, 1, e)
+    local equippedTool = getEquippedTool()
+    if equippedTool then
+        for _, group in groups do
+            local index = table.find(group.tools, equippedTool)
+            if index and index > 1 then
+                table.remove(group.tools, index)
+                table.insert(group.tools, 1, equippedTool)
             end
         end
     end
-    return list
+    return groups
 end
-local function groupHas(g, t)
-    return table.find(g.tools, t) ~= nil
+local function groupHas(group, tool)
+    return table.find(group.tools, tool) ~= nil
 end
-local MUTC = {
+local MUTATION_COLORS = {
     Silver = Color3.fromRGB(200, 210, 225),
     Gold = Color3.fromRGB(255, 196, 60),
     Diamond = Color3.fromRGB(90, 220, 255),
     Rainbow = Color3.fromRGB(255, 90, 200),
 }
-local SLOT = 62
+local SLOT_SIZE = 62
+-- renderBar's cheap path: same slots, only re-highlight the one whose stack holds the equipped tool.
+local function restyleHeldSlots(groups)
+    for i, holder in slots do
+        local isHeld = groupHas(groups[i], getEquippedTool())
+        local button = holder:FindFirstChild("Button")
+        if button then
+            local edge = button:FindFirstChild("Edge")
+            if edge then
+                edge.Color = isHeld and Color3.fromRGB(255, 255, 255)
+                    or (button:GetAttribute("EdgeColor") or Color3.fromRGB(0, 0, 0))
+                edge.Thickness = isHeld and 2.5 or 1.5
+            end
+            button.BackgroundTransparency = isHeld and 0.15 or 0.35
+        end
+    end
+end
+-- One hotbar slot: holder + button, mutation edge/tag, icon, slot number and stack count, equip/hover handlers.
+local function buildSlot(slotIndex, group, signatures)
+    local tool = group.tools[1]
+    local _name, _rarity = describeTool(tool)
+    local isHeld = groupHas(group, getEquippedTool())
+    local mutation = tool:GetAttribute("Mutation")
+    local holder = create("Frame", {
+        LayoutOrder = slotIndex,
+        Size = UDim2.fromOffset(SLOT_SIZE, SLOT_SIZE),
+        BackgroundTransparency = 1,
+        ZIndex = 6,
+    }, hotbar)
+    local button = create("TextButton", {
+        Name = "Button",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.fromRGB(20, 20, 24),
+        BackgroundTransparency = isHeld and 0.15 or 0.35,
+        BorderSizePixel = 0,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 6,
+    }, holder)
+    create("UICorner", { CornerRadius = UDim.new(0, 6) }, button)
+    local edgeColor = mutation and (MUTATION_COLORS[mutation] or Color3.new(1, 1, 1)) or Color3.fromRGB(0, 0, 0)
+    button:SetAttribute("EdgeColor", edgeColor)
+    local edge = create("UIStroke", {
+        Name = "Edge",
+        Color = isHeld and Color3.new(1, 1, 1) or edgeColor,
+        Thickness = isHeld and 2.5 or 1.5,
+        Transparency = 0,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, button)
+    if mutation == "Rainbow" then
+        create("UIGradient", {
+            Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80, 80)),
+                ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 230, 60)),
+                ColorSequenceKeypoint.new(0.66, Color3.fromRGB(80, 230, 120)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 150, 255)),
+            }),
+        }, edge)
+    end
+    local icon = create("Frame", {
+        Position = UDim2.fromOffset(6, 6),
+        Size = UDim2.new(1, -12, 1, -12),
+        BackgroundTransparency = 1,
+        ZIndex = 7,
+    }, button)
+    local previewImage = buildPreview(tool, icon)
+    if previewImage then
+        previewImage.ZIndex = 7
+    end
+    -- slot number (top-left) and stack count (bottom-right), white with a thin outline like Roblox
+    local slotNumberLabel = create("TextLabel", {
+        Position = UDim2.fromOffset(4, 1),
+        Size = UDim2.fromOffset(14, 14),
+        BackgroundTransparency = 1,
+        Text = tostring(slotIndex),
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        TextColor3 = Color3.new(1, 1, 1),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 9,
+    }, button)
+    create("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1, Transparency = 0.3 }, slotNumberLabel)
+    if #group.tools > 1 then
+        local stackCountLabel = create("TextLabel", {
+            AnchorPoint = Vector2.new(1, 1),
+            Position = UDim2.new(1, -3, 1, -1),
+            Size = UDim2.fromOffset(30, 16),
+            BackgroundTransparency = 1,
+            Text = "x" .. #group.tools,
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            TextColor3 = Color3.new(1, 1, 1),
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 9,
+        }, button)
+        create("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.2, Transparency = 0.2 }, stackCountLabel)
+    end
+    if mutation then
+        local mutationTag = create("TextLabel", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0, 0),
+            Size = UDim2.fromOffset(0, 11),
+            AutomaticSize = Enum.AutomaticSize.X,
+            BackgroundColor3 = MUTATION_COLORS[mutation] or Color3.new(1, 1, 1),
+            Text = " " .. string.upper(mutation) .. " ",
+            Font = Enum.Font.GothamBold,
+            TextSize = 8,
+            TextColor3 = Color3.new(0, 0, 0),
+            ZIndex = 10,
+        }, button)
+        create("UICorner", { CornerRadius = UDim.new(0, 3) }, mutationTag)
+        if mutation == "Rainbow" then
+            create("UIGradient", {
+                Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80, 80)),
+                    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 230, 60)),
+                    ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 150, 255)),
+                }),
+            }, mutationTag)
+        end
+        local edgeGradient = edge:FindFirstChildOfClass("UIGradient")
+        if edgeGradient then
+            task.spawn(function()
+                local startTime = os.clock()
+                while button.Parent do
+                    edgeGradient.Rotation = ((os.clock() - startTime) * 120) % 360
+                    task.wait(0.03)
+                end
+            end)
+        end
+    end
+    button.Activated:Connect(function()
+        toggleEquip(group.tools[1])
+    end)
+    button.MouseEnter:Connect(function()
+        tween(button, 0.08, { BackgroundTransparency = 0.1 })
+    end)
+    button.MouseLeave:Connect(function()
+        tween(button, 0.08, { BackgroundTransparency = groupHas(group, getEquippedTool()) and 0.15 or 0.35 })
+    end)
+    holder:SetAttribute("ToolRef", tostring(tool))
+    holder:SetAttribute("Sig", signatures[slotIndex])
+    table.insert(slots, holder)
+end
+-- Rebuilds the hotbar slots from buildGroups(). If the slot signatures (first tool + stack size) are unchanged,
+-- it only restyles which slot is held instead of rebuilding (cheap path, runs on every refresh tick).
 local function renderBar()
     if USE_DEFAULT_BACKPACK then
-        bar.Visible = false
-        for _, s in slots do
-            s:Destroy()
+        hotbar.Visible = false
+        for _, slot in slots do
+            slot:Destroy()
         end
         table.clear(slots)
         return
     end
     local groups = buildGroups()
-    local n = math.min(#groups, visibleSlots())
+    local slotCount = math.min(#groups, visibleSlotCount())
     -- reuse the slots when nothing changed except which one is held
-    local sig = {}
-    for i = 1, n do
-        local g = groups[i]
-        sig[i] = tostring(g.tools[1]) .. ":" .. #g.tools
+    local signatures = {}
+    for i = 1, slotCount do
+        local group = groups[i]
+        signatures[i] = tostring(group.tools[1]) .. ":" .. #group.tools
     end
-    local same = #slots == n
-    if same then
-        for i, h in slots do
-            if h:GetAttribute("Sig") ~= sig[i] then
-                same = false
+    local canReuse = #slots == slotCount
+    if canReuse then
+        for i, holder in slots do
+            if holder:GetAttribute("Sig") ~= signatures[i] then
+                canReuse = false
                 break
             end
         end
     end
     barGroups = groups
-    if same then
-        for i, h in slots do
-            local on = groupHas(groups[i], equipped())
-            local b = h:FindFirstChild("Button")
-            if b then
-                local st = b:FindFirstChild("Edge")
-                if st then
-                    st.Color = on and Color3.fromRGB(255, 255, 255)
-                        or (b:GetAttribute("EdgeColor") or Color3.fromRGB(0, 0, 0))
-                    st.Thickness = on and 2.5 or 1.5
-                end
-                b.BackgroundTransparency = on and 0.15 or 0.35
-            end
-        end
-        bar.Visible = n > 0
+    if canReuse then
+        restyleHeldSlots(groups)
+        hotbar.Visible = slotCount > 0
         return
     end
-    for _, s in slots do
-        s:Destroy()
+    for _, slot in slots do
+        slot:Destroy()
     end
     table.clear(slots)
-    bar.Visible = n > 0
+    hotbar.Visible = slotCount > 0
     trayShadow.Visible = false
     traySkin.Visible = false
-    for _, x in bar:GetChildren() do
-        if x:IsA("UIStroke") then
-            x.Enabled = false
+    for _, child in hotbar:GetChildren() do
+        if child:IsA("UIStroke") then
+            child.Enabled = false
         end
     end -- no frame around the whole bar (Roblox style)
-    for i = 1, n do
-        local g = groups[i]
-        local t = g.tools[1]
-        local name, rarity = info(t)
-        local on = groupHas(g, equipped())
-        local mut = t:GetAttribute("Mutation")
-        local hold = make(
-            "Frame",
-            { LayoutOrder = i, Size = UDim2.fromOffset(SLOT, SLOT), BackgroundTransparency = 1, ZIndex = 6 },
-            bar
-        )
-        local b = make("TextButton", {
-            Name = "Button",
-            Size = UDim2.fromScale(1, 1),
-            BackgroundColor3 = Color3.fromRGB(20, 20, 24),
-            BackgroundTransparency = on and 0.15 or 0.35,
-            BorderSizePixel = 0,
-            Text = "",
-            AutoButtonColor = false,
-            ZIndex = 6,
-        }, hold)
-        make("UICorner", { CornerRadius = UDim.new(0, 6) }, b)
-        local edgeCol = mut and (MUTC[mut] or Color3.new(1, 1, 1)) or Color3.fromRGB(0, 0, 0)
-        b:SetAttribute("EdgeColor", edgeCol)
-        local st = make("UIStroke", {
-            Name = "Edge",
-            Color = on and Color3.new(1, 1, 1) or edgeCol,
-            Thickness = on and 2.5 or 1.5,
-            Transparency = 0,
-            ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        }, b)
-        if mut == "Rainbow" then
-            make("UIGradient", {
-                Color = ColorSequence.new({
-                    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80, 80)),
-                    ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 230, 60)),
-                    ColorSequenceKeypoint.new(0.66, Color3.fromRGB(80, 230, 120)),
-                    ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 150, 255)),
-                }),
-            }, st)
-        end
-        local icon = make("Frame", {
-            Position = UDim2.fromOffset(6, 6),
-            Size = UDim2.new(1, -12, 1, -12),
-            BackgroundTransparency = 1,
-            ZIndex = 7,
-        }, b)
-        local pv = preview(t, icon)
-        if pv then
-            pv.ZIndex = 7
-        end
-        -- slot number (top-left) and stack count (bottom-right), white with a thin outline like Roblox
-        local key = make("TextLabel", {
-            Position = UDim2.fromOffset(4, 1),
-            Size = UDim2.fromOffset(14, 14),
-            BackgroundTransparency = 1,
-            Text = tostring(i),
-            Font = Enum.Font.GothamBold,
-            TextSize = 12,
-            TextColor3 = Color3.new(1, 1, 1),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            ZIndex = 9,
-        }, b)
-        make("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1, Transparency = 0.3 }, key)
-        if #g.tools > 1 then
-            local cnt = make("TextLabel", {
-                AnchorPoint = Vector2.new(1, 1),
-                Position = UDim2.new(1, -3, 1, -1),
-                Size = UDim2.fromOffset(30, 16),
-                BackgroundTransparency = 1,
-                Text = "x" .. #g.tools,
-                Font = Enum.Font.GothamBold,
-                TextSize = 13,
-                TextColor3 = Color3.new(1, 1, 1),
-                TextXAlignment = Enum.TextXAlignment.Right,
-                ZIndex = 9,
-            }, b)
-            make("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.2, Transparency = 0.2 }, cnt)
-        end
-        if mut then
-            local tag = make("TextLabel", {
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.new(0.5, 0, 0, 0),
-                Size = UDim2.fromOffset(0, 11),
-                AutomaticSize = Enum.AutomaticSize.X,
-                BackgroundColor3 = MUTC[mut] or Color3.new(1, 1, 1),
-                Text = " " .. string.upper(mut) .. " ",
-                Font = Enum.Font.GothamBold,
-                TextSize = 8,
-                TextColor3 = Color3.new(0, 0, 0),
-                ZIndex = 10,
-            }, b)
-            make("UICorner", { CornerRadius = UDim.new(0, 3) }, tag)
-            if mut == "Rainbow" then
-                make("UIGradient", {
-                    Color = ColorSequence.new({
-                        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80, 80)),
-                        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 230, 60)),
-                        ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 150, 255)),
-                    }),
-                }, tag)
-            end
-            local gr = st:FindFirstChildOfClass("UIGradient")
-            if gr then
-                task.spawn(function()
-                    local t0 = os.clock()
-                    while b.Parent do
-                        gr.Rotation = ((os.clock() - t0) * 120) % 360
-                        task.wait(0.03)
-                    end
-                end)
-            end
-        end
-        b.Activated:Connect(function()
-            toggle(g.tools[1])
-        end)
-        b.MouseEnter:Connect(function()
-            tw(b, 0.08, { BackgroundTransparency = 0.1 })
-        end)
-        b.MouseLeave:Connect(function()
-            tw(b, 0.08, { BackgroundTransparency = groupHas(g, equipped()) and 0.15 or 0.35 })
-        end)
-        hold:SetAttribute("ToolRef", tostring(t))
-        hold:SetAttribute("Sig", sig[i])
-        table.insert(slots, hold)
+    for i = 1, slotCount do
+        buildSlot(i, groups[i], signatures)
     end
 end
-UIS.InputBegan:Connect(function(input, gp)
-    if gp or USE_DEFAULT_BACKPACK then
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed or USE_DEFAULT_BACKPACK then
         return
     end
-    local k = input.KeyCode.Value - Enum.KeyCode.One.Value + 1
-    if k >= 1 and k <= MAX then
-        local g = buildGroups()[k]
-        if g then
-            toggle(g.tools[1])
+    local slotIndex = input.KeyCode.Value - Enum.KeyCode.One.Value + 1
+    if slotIndex >= 1 and slotIndex <= MAX_SLOTS then
+        local group = buildGroups()[slotIndex]
+        if group then
+            toggleEquip(group.tools[1])
         end
     end
 end)
 
----------------------------------------------------------------- drag items onto the hotbar
+-- ===== 4. Drag items onto the hotbar =====
 -- Backpack cards (and hotbar slots) can be dragged onto a hotbar slot: the item takes that slot (others shift).
 -- A tap without dragging equips the item, so an egg can go straight into an incubator.
-local function slotAt(pos)
+local function slotIndexAt(position)
     -- input positions and AbsolutePosition share the same space (below the top-bar inset); a little slack makes drops easy
-    for i, h in slots do
-        local a, s = h.AbsolutePosition, h.AbsoluteSize
-        if pos.X >= a.X - 6 and pos.X <= a.X + s.X + 6 and pos.Y >= a.Y - 12 and pos.Y <= a.Y + s.Y + 12 then
+    for i, holder in slots do
+        local absPosition, absSize = holder.AbsolutePosition, holder.AbsoluteSize
+        if
+            position.X >= absPosition.X - 6
+            and position.X <= absPosition.X + absSize.X + 6
+            and position.Y >= absPosition.Y - 12
+            and position.Y <= absPosition.Y + absSize.Y + 12
+        then
             return i
         end
     end
 end
-local function placeInSlot(tool, i)
+local function placeInSlot(tool, slotIndex)
     allTools()
-    local at = table.find(order, tool)
-    if at then
-        table.remove(order, at)
+    local currentIndex = table.find(toolOrder, tool)
+    if currentIndex then
+        table.remove(toolOrder, currentIndex)
     end
     -- slots are stacks now: put the item just before the first item of the stack in slot i
-    local target = barGroups[i] and barGroups[i].tools[1]
-    local pos = target and table.find(order, target) or (#order + 1)
-    table.insert(order, math.clamp(pos, 1, #order + 1), tool)
-    for _, s in slots do
-        s:SetAttribute("ToolRef", "")
+    local stackHead = barGroups[slotIndex] and barGroups[slotIndex].tools[1]
+    local insertAt = stackHead and table.find(toolOrder, stackHead) or (#toolOrder + 1)
+    table.insert(toolOrder, math.clamp(insertAt, 1, #toolOrder + 1), tool)
+    for _, slot in slots do
+        slot:SetAttribute("ToolRef", "")
     end -- force a rebuild
     renderBar()
 end
-local dragging = nil
+local activeDrag = nil
+-- Only one drag at a time (activeDrag). The ghost appears after 8 px of movement; releasing over a slot calls
+-- placeInSlot, releasing without having moved calls onTap.
 local function startDrag(tool, input, onTap)
-    if dragging then
+    if activeDrag then
         return
     end
     local startPos = Vector2.new(input.Position.X, input.Position.Y)
     local ghost, moved
-    dragging = { tool = tool }
-    local function at(p)
-        return UDim2.fromOffset(p.X - gui.AbsolutePosition.X, p.Y - gui.AbsolutePosition.Y)
+    activeDrag = { tool = tool }
+    local function toGuiOffset(screenPosition)
+        return UDim2.fromOffset(screenPosition.X - gui.AbsolutePosition.X, screenPosition.Y - gui.AbsolutePosition.Y)
     end
     local moveConn, endConn
-    moveConn = UIS.InputChanged:Connect(function(i)
-        if i.UserInputType ~= Enum.UserInputType.MouseMovement and i.UserInputType ~= Enum.UserInputType.Touch then
+    moveConn = UserInputService.InputChanged:Connect(function(moveInput)
+        if
+            moveInput.UserInputType ~= Enum.UserInputType.MouseMovement
+            and moveInput.UserInputType ~= Enum.UserInputType.Touch
+        then
             return
         end
-        local p = Vector2.new(i.Position.X, i.Position.Y)
-        dragging.last = p
-        if not moved and (p - startPos).Magnitude > 8 then
+        local position = Vector2.new(moveInput.Position.X, moveInput.Position.Y)
+        activeDrag.last = position
+        if not moved and (position - startPos).Magnitude > 8 then
             moved = true
-            ghost = make("Frame", {
+            ghost = create("Frame", {
                 Name = "DragGhost",
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 Size = UDim2.fromOffset(84, 84),
@@ -772,34 +877,38 @@ local function startDrag(tool, input, onTap)
                 BorderSizePixel = 0,
                 ZIndex = 60,
             }, gui)
-            stroke(ghost, 3, GOLD)
-            local ic = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 61 }, ghost)
-            preview(tool, ic).ZIndex = 61
+            addStroke(ghost, 3, GOLD)
+            local ghostIcon =
+                create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 61 }, ghost)
+            buildPreview(tool, ghostIcon).ZIndex = 61
         end
         if ghost then
-            ghost.Position = at(p)
-            local k = slotAt(p)
-            for i, h in slots do
-                local b = h:FindFirstChild("Button")
-                if b then
-                    b.Position = UDim2.fromOffset(0, i == k and -8 or 0)
+            ghost.Position = toGuiOffset(position)
+            local hoverSlot = slotIndexAt(position)
+            for slotIndex, holder in slots do
+                local button = holder:FindFirstChild("Button")
+                if button then
+                    button.Position = UDim2.fromOffset(0, slotIndex == hoverSlot and -8 or 0)
                 end
             end
         end
     end)
-    endConn = UIS.InputEnded:Connect(function(i)
-        if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then
+    endConn = UserInputService.InputEnded:Connect(function(endInput)
+        if
+            endInput.UserInputType ~= Enum.UserInputType.MouseButton1
+            and endInput.UserInputType ~= Enum.UserInputType.Touch
+        then
             return
         end
         moveConn:Disconnect()
         endConn:Disconnect()
-        local last = dragging and dragging.last
-        dragging = nil
+        local lastPosition = activeDrag and activeDrag.last
+        activeDrag = nil
         if ghost then
             ghost:Destroy()
-            local k = slotAt(last or Vector2.new(i.Position.X, i.Position.Y))
-            if k and tool.Parent then
-                placeInSlot(tool, k)
+            local hoverSlot = slotIndexAt(lastPosition or Vector2.new(endInput.Position.X, endInput.Position.Y))
+            if hoverSlot and tool.Parent then
+                placeInSlot(tool, hoverSlot)
                 UISound.Play("Open")
             else
                 renderBar()
@@ -810,22 +919,26 @@ local function startDrag(tool, input, onTap)
     end)
 end
 
----------------------------------------------------------------- backpack
-local SellRF = RS:WaitForChild("SellEgg", 10)
-local InventoryRF = RS:WaitForChild("CharacterInventory"):WaitForChild("InventoryRequest")
-local InventoryEvent = RS.CharacterInventory:WaitForChild("InventoryEvent")
+-- ===== 5. Legacy sell bag ("EggBag"), Backpack button, quotes and selling =====
+-- The big bag panel is retired (setBagOpen forwards to the Inventory panel), but it is still built, and its
+-- quote cache, snapshot handling, sellCharacters and showPopup are shared with the Inventory panel.
+local sellEggRemote = ReplicatedStorage:WaitForChild("SellEgg", 10)
+local inventoryRequest = ReplicatedStorage:WaitForChild("CharacterInventory"):WaitForChild("InventoryRequest")
+local inventoryEvent = ReplicatedStorage.CharacterInventory:WaitForChild("InventoryEvent")
+-- bag state: tap-twice confirmation for single characters (armedTool) and for SELL ALL characters (bulkIds),
+-- each valid for 4 s; `selling` blocks overlapping sell requests
 local selectedTab = "Eggs"
 local armedTool, armedUntil = nil, 0
 local bulkIds, bulkUntil = nil, 0
 local selling = false
-local right = make("Frame", {
+local rightButtons = create("Frame", {
     Name = "RightButtons",
     AnchorPoint = Vector2.new(1, 0),
     Position = UDim2.new(1, -8, 0, 250),
     Size = UDim2.fromOffset(150, 64),
     BackgroundTransparency = 1,
 }, gui)
-local bagBtn = make("TextButton", {
+local bagButton = create("TextButton", {
     Name = "BagButton",
     AnchorPoint = Vector2.new(1, 0),
     Position = UDim2.fromScale(1, 0),
@@ -833,16 +946,16 @@ local bagBtn = make("TextButton", {
     BackgroundColor3 = Color3.fromRGB(255, 196, 60),
     Text = "",
     AutoButtonColor = false,
-}, right)
-round(bagBtn, UDim.new(0, 16))
-stroke(bagBtn, 3)
+}, rightButtons)
+addCorner(bagButton, UDim.new(0, 16))
+addStroke(bagButton, 3)
 
 require(game:GetService("ReplicatedStorage"):WaitForChild("PixelIcon")).build(
-    bagBtn,
+    bagButton,
     "bag",
     { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 4), Size = UDim2.new(1, -12, 1, -20) }
 )
-make("TextLabel", {
+create("TextLabel", {
     AnchorPoint = Vector2.new(0.5, 1),
     Position = UDim2.new(0.5, 0, 1, -2),
     Size = UDim2.new(1, 0, 0, 16),
@@ -851,8 +964,8 @@ make("TextLabel", {
     FontFace = FONT,
     TextSize = 9,
     TextColor3 = Color3.new(1, 1, 1),
-}, bagBtn)
-local badge = make("TextLabel", {
+}, bagButton)
+local bagBadge = create("TextLabel", {
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.new(1, -4, 0, 4),
     Size = UDim2.fromOffset(24, 24),
@@ -862,29 +975,29 @@ local badge = make("TextLabel", {
     TextSize = 14,
     TextColor3 = Color3.new(1, 1, 1),
     Visible = false,
-}, bagBtn)
-round(badge, UDim.new(1, 0))
-stroke(badge, 2)
+}, bagButton)
+addCorner(bagBadge, UDim.new(1, 0))
+addStroke(bagBadge, 2)
 -- phones: the EGGS button would sit on the jump button at y=250, so shrink it and stack it right under the settings gear
-local rightScale = make("UIScale", {}, right)
-local function layoutRight()
-    local v = gui.AbsoluteSize
-    if v.Y <= 0 then
+local rightScale = create("UIScale", {}, rightButtons)
+local function layoutRightButtons()
+    local screenSize = gui.AbsoluteSize
+    if screenSize.Y <= 0 then
         return
     end
-    local k = phoneScale()
-    rightScale.Scale = k
-    if k < 1 then
-        local s = math.min(1, v.X / 600, v.Y / 560)
-        right.Position = UDim2.new(1, -10, 0, 20 + 104 * s + (56 + 10) * k)
+    local scale = phoneScale()
+    rightScale.Scale = scale
+    if scale < 1 then
+        local menuScale = math.min(1, screenSize.X / 600, screenSize.Y / 560)
+        rightButtons.Position = UDim2.new(1, -10, 0, 20 + 104 * menuScale + (56 + 10) * scale)
     else
-        right.Position = UDim2.new(1, -8, 0, 250)
+        rightButtons.Position = UDim2.new(1, -8, 0, 250)
     end
 end
-gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutRight)
-task.defer(layoutRight)
+gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutRightButtons)
+task.defer(layoutRightButtons)
 
-local panel = make("Frame", {
+local bagPanel = create("Frame", {
     Name = "EggBag",
     Active = true,
     AnchorPoint = Vector2.new(0.5, 0.5),
@@ -894,9 +1007,9 @@ local panel = make("Frame", {
     Visible = false,
     ZIndex = 5,
 }, gui)
-stroke(panel, 4)
-studs(panel, 28, 0.82)
-local bagShadow = make("Frame", {
+addStroke(bagPanel, 4)
+addStuds(bagPanel, 28, 0.82)
+local bagShadow = create("Frame", {
     Name = "EggBagShadow",
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.new(0.5, 10, 0.5, 10),
@@ -906,43 +1019,43 @@ local bagShadow = make("Frame", {
     Visible = false,
     ZIndex = 4,
 }, gui)
-make("UISizeConstraint", { MaxSize = Vector2.new(620, 470) }, bagShadow)
-panel:GetPropertyChangedSignal("Visible"):Connect(function()
-    bagOpen = panel.Visible
+create("UISizeConstraint", { MaxSize = Vector2.new(620, 470) }, bagShadow)
+bagPanel:GetPropertyChangedSignal("Visible"):Connect(function()
+    bagOpen = bagPanel.Visible
     bagShadow.Visible = bagOpen
     gui.DisplayOrder = bagOpen and 60 or 40
     renderBar()
 end)
-make("UISizeConstraint", { MaxSize = Vector2.new(620, 470) }, panel)
+create("UISizeConstraint", { MaxSize = Vector2.new(620, 470) }, bagPanel)
 
-local pscale = make("UIScale", {}, panel)
-local shadowScale = make("UIScale", {}, bagShadow)
-pscale:GetPropertyChangedSignal("Scale"):Connect(function()
-    shadowScale.Scale = pscale.Scale
+local bagScale = create("UIScale", {}, bagPanel)
+local bagShadowScale = create("UIScale", {}, bagShadow)
+bagScale:GetPropertyChangedSignal("Scale"):Connect(function()
+    bagShadowScale.Scale = bagScale.Scale
 end)
-local head = make("Frame", {
+local bagHeader = create("Frame", {
     Name = "Header",
     Size = UDim2.new(1, 0, 0, 62),
     BackgroundColor3 = Color3.fromRGB(240, 110, 20),
     BorderSizePixel = 0,
     ZIndex = 6,
-}, panel)
-studs(head, 26, 0.1)
-make("Frame", {
+}, bagPanel)
+addStuds(bagHeader, 26, 0.1)
+create("Frame", {
     Position = UDim2.new(0, 0, 1, 0),
     Size = UDim2.new(1, 0, 0, 4),
     BackgroundColor3 = Color3.new(0, 0, 0),
     BorderSizePixel = 0,
     ZIndex = 8,
-}, head)
-require(game:GetService("ReplicatedStorage"):WaitForChild("PixelIcon")).build(head, "bag", {
+}, bagHeader)
+require(game:GetService("ReplicatedStorage"):WaitForChild("PixelIcon")).build(bagHeader, "bag", {
     AnchorPoint = Vector2.new(0, 0.5),
     Position = UDim2.new(0, 16, 0.5, 0),
     Size = UDim2.fromOffset(40, 40),
     ZIndex = 7,
 })
 
-local title = make("TextLabel", {
+local bagTitle = create("TextLabel", {
     Position = UDim2.fromOffset(66, 0),
     Size = UDim2.new(1, -140, 1, 0),
     BackgroundTransparency = 1,
@@ -953,9 +1066,9 @@ local title = make("TextLabel", {
     TextColor3 = Color3.new(1, 1, 1),
     TextXAlignment = Enum.TextXAlignment.Left,
     ZIndex = 7,
-}, head)
-stroke(title, 2.5).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-local close = make("TextButton", {
+}, bagHeader)
+addStroke(bagTitle, 2.5).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+local bagCloseButton = create("TextButton", {
     Name = "Close",
     AnchorPoint = Vector2.new(1, 0.5),
     Position = UDim2.new(1, -14, 0.5, 0),
@@ -966,24 +1079,24 @@ local close = make("TextButton", {
     TextSize = 28,
     TextColor3 = Color3.new(1, 1, 1),
     ZIndex = 7,
-}, head)
-make(
+}, bagHeader)
+create(
     "UIStroke",
     { Color = Color3.new(0, 0, 0), Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual },
-    close
+    bagCloseButton
 )
-round(close, UDim.new(0, 12))
-stroke(close, 3)
-local tabs = make("Frame", {
+addCorner(bagCloseButton, UDim.new(0, 12))
+addStroke(bagCloseButton, 3)
+local bagTabs = create("Frame", {
     Name = "Tabs",
     Position = UDim2.fromOffset(16, 72),
     Size = UDim2.new(1, -32, 0, 36),
     BackgroundTransparency = 1,
     ZIndex = 6,
-}, panel)
-local tabButtons = {}
+}, bagPanel)
+local bagTabButtons = {}
 for i, name in { "Eggs", "Characters" } do
-    local b = make("TextButton", {
+    local tabButton = create("TextButton", {
         Name = name,
         Position = UDim2.new((i - 1) * 0.5, 0, 0, 0),
         Size = UDim2.new(0.5, -6, 1, 0),
@@ -994,11 +1107,11 @@ for i, name in { "Eggs", "Characters" } do
         TextSize = 19,
         TextColor3 = CREAM,
         ZIndex = 7,
-    }, tabs)
-    stroke(b, 2)
-    tabButtons[name] = b
+    }, bagTabs)
+    addStroke(tabButton, 2)
+    bagTabButtons[name] = tabButton
 end
-local grid = make("ScrollingFrame", {
+local bagGrid = create("ScrollingFrame", {
     Name = "Items",
     Position = UDim2.fromOffset(16, 122),
     Size = UDim2.new(1, -32, 1, -198),
@@ -1008,13 +1121,13 @@ local grid = make("ScrollingFrame", {
     AutomaticCanvasSize = Enum.AutomaticSize.Y,
     CanvasSize = UDim2.new(),
     ZIndex = 6,
-}, panel)
-local gridLayout = make("UIGridLayout", {
+}, bagPanel)
+local bagGridLayout = create("UIGridLayout", {
     CellSize = UDim2.fromOffset(134, 184),
     CellPadding = UDim2.fromOffset(10, 10),
     SortOrder = Enum.SortOrder.LayoutOrder,
-}, grid)
-make("TextLabel", {
+}, bagGrid)
+create("TextLabel", {
     Name = "DragHint",
     AnchorPoint = Vector2.new(1, 0.5),
     Position = UDim2.new(1, -70, 0.5, 0),
@@ -1027,8 +1140,8 @@ make("TextLabel", {
     TextColor3 = Color3.new(1, 1, 1),
     TextXAlignment = Enum.TextXAlignment.Right,
     ZIndex = 7,
-}, head)
-local empty = make("TextLabel", {
+}, bagHeader)
+local bagEmptyLabel = create("TextLabel", {
     Name = "Empty",
     Position = UDim2.fromOffset(16, 122),
     Size = UDim2.new(1, -32, 1, -198),
@@ -1038,16 +1151,16 @@ local empty = make("TextLabel", {
     TextSize = 22,
     TextColor3 = Color3.fromRGB(200, 185, 205),
     ZIndex = 6,
-}, panel)
-local foot = make("Frame", {
+}, bagPanel)
+local bagFooter = create("Frame", {
     Name = "Footer",
     AnchorPoint = Vector2.new(0, 1),
     Position = UDim2.new(0, 16, 1, -14),
     Size = UDim2.new(1, -32, 0, 56),
     BackgroundTransparency = 1,
     ZIndex = 6,
-}, panel)
-local totalL = make("TextLabel", {
+}, bagPanel)
+local bagTotalLabel = create("TextLabel", {
     Size = UDim2.new(0.5, 0, 1, 0),
     BackgroundTransparency = 1,
     Text = "",
@@ -1056,8 +1169,8 @@ local totalL = make("TextLabel", {
     TextColor3 = CREAM,
     TextXAlignment = Enum.TextXAlignment.Left,
     ZIndex = 7,
-}, foot)
-local sellAll = make("TextButton", {
+}, bagFooter)
+local sellAllButton = create("TextButton", {
     Name = "SellAll",
     AnchorPoint = Vector2.new(1, 0),
     Position = UDim2.fromScale(1, 0),
@@ -1068,19 +1181,19 @@ local sellAll = make("TextButton", {
     TextSize = 24,
     TextColor3 = Color3.new(1, 1, 1),
     ZIndex = 7,
-}, foot)
-round(sellAll, UDim.new(0, 14))
-stroke(sellAll, 3)
-make(
+}, bagFooter)
+addCorner(sellAllButton, UDim.new(0, 14))
+addStroke(sellAllButton, 3)
+create(
     "UIStroke",
     { Color = Color3.new(0, 0, 0), Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual },
-    sellAll
+    sellAllButton
 )
 local function bagItems(kind)
     local list = {}
-    for _, t in allTools() do
-        if category(t) == kind then
-            table.insert(list, t)
+    for _, tool in allTools() do
+        if getCategory(tool) == kind then
+            table.insert(list, tool)
         end
     end
     return list
@@ -1088,11 +1201,12 @@ end
 local function bagCount()
     return #bagItems("Eggs") + #bagItems("Characters")
 end
-local quotes = setmetatable({}, { __mode = "k" })
+local sellQuotes = setmetatable({}, { __mode = "k" })
 local characterItems = {}
 local characterLoaded = false
-local fetching = false
+local fetchingCharacters = false
 local onQuote
+-- characterItems[itemId] = server record ({ id, sellValue, power, income, ... }) from the latest snapshot
 local function applySnapshot(snapshot)
     if type(snapshot) ~= "table" then
         return
@@ -1107,48 +1221,50 @@ local function applySnapshot(snapshot)
     end
 end
 local function fetchCharacters()
-    if fetching then
+    if fetchingCharacters then
         return
     end
-    fetching = true
+    fetchingCharacters = true
     task.spawn(function()
-        local ok, res = pcall(InventoryRF.InvokeServer, InventoryRF, "Fetch")
-        fetching = false
-        if ok and type(res) == "table" and res.ok then
-            applySnapshot(res.snapshot)
+        local ok, response = pcall(inventoryRequest.InvokeServer, inventoryRequest, "Fetch")
+        fetchingCharacters = false
+        if ok and type(response) == "table" and response.ok then
+            applySnapshot(response.snapshot)
         end
     end)
 end
-InventoryEvent.OnClientEvent:Connect(function(action, snapshot)
+inventoryEvent.OnClientEvent:Connect(function(action, snapshot)
     if action == "Snapshot" then
         applySnapshot(snapshot)
     end
 end)
-local function quote(t)
-    if category(t) == "Characters" then
+-- number = sell price, false = can't be sold, nil = still loading. An egg quote is requested once per tool and
+-- cached; onQuote re-renders when it arrives.
+local function getSellQuote(tool)
+    if getCategory(tool) == "Characters" then
         if not characterLoaded then
             return nil
         end
-        local item = characterItems[t:GetAttribute("ItemId")]
+        local item = characterItems[tool:GetAttribute("ItemId")]
         return item and item.sellValue or false
     end
-    if quotes[t] == nil then
-        quotes[t] = "wait"
+    if sellQuotes[tool] == nil then
+        sellQuotes[tool] = "wait"
         task.spawn(function()
-            local ok, v = pcall(SellRF.InvokeServer, SellRF, "Quote", t)
-            quotes[t] = (ok and type(v) == "number") and v or false
+            local ok, value = pcall(sellEggRemote.InvokeServer, sellEggRemote, "Quote", tool)
+            sellQuotes[tool] = (ok and type(value) == "number") and value or false
             if onQuote then
                 onQuote()
             end
         end)
     end
-    if quotes[t] == "wait" then
+    if sellQuotes[tool] == "wait" then
         return nil
     end
-    return quotes[t]
+    return sellQuotes[tool]
 end
-local function popup(text, color)
-    local l = make("TextLabel", {
+local function showPopup(text, color)
+    local label = create("TextLabel", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.45),
         Size = UDim2.fromOffset(400, 50),
@@ -1159,223 +1275,229 @@ local function popup(text, color)
         TextColor3 = color or Color3.fromRGB(130, 240, 110),
         ZIndex = 20,
     }, gui)
-    stroke(l, 3).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-    tw(l, 0.9, { Position = UDim2.fromScale(0.5, 0.38), TextTransparency = 1 })
+    addStroke(label, 3).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+    tween(label, 0.9, { Position = UDim2.fromScale(0.5, 0.38), TextTransparency = 1 })
     task.delay(1, function()
-        l:Destroy()
+        label:Destroy()
     end)
 end
 local renderBag
-local setOpen -- defined below; cards use it to close the bag after a tap-to-hold
-local Inv = {} -- the Inventory panel above the hotbar (built further down); the Backpack button opens it
+local setBagOpen -- defined below; cards use it to close the bag after a tap-to-hold
+local inventoryPanel = {} -- the Inventory panel above the hotbar (built further down); the Backpack button opens it
 local function sellCharacters(action, payload)
-    local ok, res = pcall(InventoryRF.InvokeServer, InventoryRF, action, payload)
-    if not ok or type(res) ~= "table" then
-        popup("Couldn't sell. Try again.", Color3.fromRGB(255, 120, 100))
+    local ok, response = pcall(inventoryRequest.InvokeServer, inventoryRequest, action, payload)
+    if not ok or type(response) ~= "table" then
+        showPopup("Couldn't sell. Try again.", Color3.fromRGB(255, 120, 100))
         return
     end
-    if res.snapshot then
-        applySnapshot(res.snapshot)
+    if response.snapshot then
+        applySnapshot(response.snapshot)
     end
-    if res.ok then
-        local decoded, data =
-            pcall(game:GetService("HttpService").JSONDecode, game:GetService("HttpService"), res.message)
+    if response.ok then
+        local decoded, summary =
+            pcall(game:GetService("HttpService").JSONDecode, game:GetService("HttpService"), response.message)
         if decoded then
-            popup("+" .. money(data.cash) .. "  (" .. data.count .. " characters)")
+            showPopup("+" .. formatMoney(summary.cash) .. "  (" .. summary.count .. " characters)")
         end
     else
-        popup(res.message or "Couldn't sell.", Color3.fromRGB(255, 120, 100))
+        showPopup(response.message or "Couldn't sell.", Color3.fromRGB(255, 120, 100))
     end
 end
+-- One legacy bag card: preview (drag / tap to hold), name, rarity, character stats and a SELL button
+-- (characters need a second tap within 4 s to confirm).
+local function buildBagCard(index, tool, name, rarity, quoteValue, canSell, isCharacters)
+    local card = create("Frame", {
+        Name = "Item" .. index,
+        LayoutOrder = index,
+        BackgroundColor3 = Color3.fromRGB(26, 38, 46),
+        BorderSizePixel = 0,
+        ZIndex = 7,
+    }, bagGrid)
+    card:SetAttribute("ItemId", tool:GetAttribute("ItemId"))
+    card:SetAttribute("Category", selectedTab)
+    addStroke(card, 3, BLACK)
+    local cardTop = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 96),
+        BackgroundColor3 = RARITY_COLORS[rarity] or Color3.fromRGB(190, 195, 205),
+        BorderSizePixel = 0,
+        ZIndex = 7,
+    }, card)
+    addStuds(cardTop, 20, 0.55)
+    create("Frame", {
+        Position = UDim2.new(0, 0, 1, 0),
+        Size = UDim2.new(1, 0, 0, 3),
+        BackgroundColor3 = BLACK,
+        BorderSizePixel = 0,
+        ZIndex = 8,
+    }, cardTop)
+    local iconFrame = create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 8 }, cardTop)
+    buildPreview(tool, iconFrame).ZIndex = 8
+    -- drag the picture onto a hotbar slot, or tap it to hold the item
+    local grabButton = create("TextButton", {
+        Name = "Grab",
+        Size = UDim2.new(1, 0, 0, 134),
+        BackgroundTransparency = 1,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 9,
+    }, card)
+    grabButton.InputBegan:Connect(function(input)
+        if
+            input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch
+        then
+            return
+        end
+        startDrag(tool, input, function()
+            local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and tool.Parent then
+                local toolIndex = table.find(allTools(), tool)
+                if not toolIndex or toolIndex > visibleSlotCount() then
+                    placeInSlot(tool, 1)
+                end
+                humanoid:EquipTool(tool)
+                setBagOpen(false)
+            end
+        end)
+    end)
+    create("TextLabel", {
+        Name = "ItemName",
+        Position = UDim2.fromOffset(6, 98),
+        Size = UDim2.new(1, -12, 0, 20),
+        BackgroundTransparency = 1,
+        Text = name,
+        FontFace = FONT,
+        TextScaled = true,
+        TextColor3 = Color3.new(1, 1, 1),
+        ZIndex = 8,
+    }, card)
+    create("TextLabel", {
+        Position = UDim2.fromOffset(6, 119),
+        Size = UDim2.new(1, -12, 0, 14),
+        BackgroundTransparency = 1,
+        Text = string.upper(rarity or ""),
+        FontFace = BOLD,
+        TextScaled = true,
+        TextColor3 = RARITY_COLORS[rarity] or Color3.new(1, 1, 1),
+        ZIndex = 8,
+    }, card)
+    if isCharacters then
+        local record = characterItems[tool:GetAttribute("ItemId")]
+        local power = record and record.power or tool:GetAttribute("Power") or 0
+        local income = record and record.income or tool:GetAttribute("IncomePerSecond") or 0
+        create("TextLabel", {
+            Name = "Stats",
+            Position = UDim2.fromOffset(5, 136),
+            Size = UDim2.new(1, -10, 0, 18),
+            BackgroundTransparency = 1,
+            Text = "PWR " .. formatMoney(power):sub(2) .. " • " .. formatMoney(income) .. "/s",
+            FontFace = BOLD,
+            TextScaled = true,
+            TextColor3 = CREAM,
+            ZIndex = 8,
+        }, card)
+    end
+    local isConfirming = isCharacters and armedTool == tool and os.clock() < armedUntil
+    local sellButton = create("TextButton", {
+        Name = "Sell",
+        AnchorPoint = Vector2.new(0.5, 1),
+        Position = UDim2.new(0.5, 0, 1, -6),
+        Size = UDim2.new(1, -12, 0, 40),
+        BackgroundColor3 = canSell and Color3.fromRGB(92, 192, 70) or Color3.fromRGB(150, 140, 150),
+        Text = canSell and ((isConfirming and "CONFIRM " or "SELL ") .. formatMoney(quoteValue))
+            or (quoteValue == false and "CAN'T SELL" or "…"),
+        FontFace = FONT,
+        TextSize = 14,
+        TextColor3 = Color3.new(1, 1, 1),
+        AutoButtonColor = canSell,
+        Interactable = canSell,
+        ZIndex = 8,
+    }, card)
+    addCorner(sellButton, UDim.new(0, 9))
+    addStroke(sellButton, 2)
+    sellButton.Activated:Connect(function()
+        if not canSell or selling then
+            return
+        end
+        if isCharacters then
+            if armedTool ~= tool or os.clock() >= armedUntil then
+                armedTool = tool
+                armedUntil = os.clock() + 4
+                bulkIds = nil
+                renderBag()
+                task.delay(4, function()
+                    if armedTool == tool then
+                        armedTool = nil
+                        if bagPanel.Visible then
+                            renderBag()
+                        end
+                    end
+                end)
+                return
+            end
+            selling = true
+            armedTool = nil
+            sellCharacters("SellBackpack", { id = tool:GetAttribute("ItemId") })
+        else
+            selling = true
+            local success, ok, result = pcall(sellEggRemote.InvokeServer, sellEggRemote, "Sell", tool)
+            if success and ok then
+                showPopup("+" .. formatMoney(result))
+            else
+                showPopup(tostring(success and result or "Couldn't sell."), Color3.fromRGB(255, 120, 100))
+            end
+        end
+        selling = false
+    end)
+end
 renderBag = function()
-    for _, c in grid:GetChildren() do
-        if c:IsA("GuiObject") then
-            c:Destroy()
+    for _, child in bagGrid:GetChildren() do
+        if child:IsA("GuiObject") then
+            child:Destroy()
         end
     end
     local isCharacters = selectedTab == "Characters"
-    local list = bagItems(selectedTab)
-    local sum, sellable = 0, 0
-    empty.Visible = #list == 0
-    empty.Text = isCharacters and "No characters in your backpack — hatch an egg first!"
+    local items = bagItems(selectedTab)
+    local totalValue, sellableCount = 0, 0
+    bagEmptyLabel.Visible = #items == 0
+    bagEmptyLabel.Text = isCharacters and "No characters in your backpack — hatch an egg first!"
         or "No eggs yet — grab some from the river!"
-    gridLayout.CellSize = UDim2.fromOffset(134, isCharacters and 208 or 184)
-    for name, b in tabButtons do
-        b.BackgroundColor3 = name == selectedTab and GOLD or PLATE
-        b.TextColor3 = name == selectedTab and INK or CREAM
+    bagGridLayout.CellSize = UDim2.fromOffset(134, isCharacters and 208 or 184)
+    for tabName, tabButton in bagTabButtons do
+        tabButton.BackgroundColor3 = tabName == selectedTab and GOLD or PLATE
+        tabButton.TextColor3 = tabName == selectedTab and INK or CREAM
     end
-    local count = bagCount()
-    badge.Visible = count > 0
-    badge.Text = tostring(count)
-    for i, t in list do
-        local name, rarity = info(t)
-        local q = quote(t)
-        local canSell = type(q) == "number"
+    local itemCount = bagCount()
+    bagBadge.Visible = itemCount > 0
+    bagBadge.Text = tostring(itemCount)
+    for i, tool in items do
+        local name, rarity = describeTool(tool)
+        local quoteValue = getSellQuote(tool)
+        local canSell = type(quoteValue) == "number"
         if canSell then
-            sum += q
-            sellable += 1
+            totalValue += quoteValue
+            sellableCount += 1
         end
-        local card = make("Frame", {
-            Name = "Item" .. i,
-            LayoutOrder = i,
-            BackgroundColor3 = Color3.fromRGB(26, 38, 46),
-            BorderSizePixel = 0,
-            ZIndex = 7,
-        }, grid)
-        card:SetAttribute("ItemId", t:GetAttribute("ItemId"))
-        card:SetAttribute("Category", selectedTab)
-        stroke(card, 3, BLACK)
-        local top = make("Frame", {
-            Size = UDim2.new(1, 0, 0, 96),
-            BackgroundColor3 = RARITY[rarity] or Color3.fromRGB(190, 195, 205),
-            BorderSizePixel = 0,
-            ZIndex = 7,
-        }, card)
-        studs(top, 20, 0.55)
-        make("Frame", {
-            Position = UDim2.new(0, 0, 1, 0),
-            Size = UDim2.new(1, 0, 0, 3),
-            BackgroundColor3 = BLACK,
-            BorderSizePixel = 0,
-            ZIndex = 8,
-        }, top)
-        local ic = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 8 }, top)
-        preview(t, ic).ZIndex = 8
-        -- drag the picture onto a hotbar slot, or tap it to hold the item
-        local grab = make("TextButton", {
-            Name = "Grab",
-            Size = UDim2.new(1, 0, 0, 134),
-            BackgroundTransparency = 1,
-            Text = "",
-            AutoButtonColor = false,
-            ZIndex = 9,
-        }, card)
-        grab.InputBegan:Connect(function(input)
-            if
-                input.UserInputType ~= Enum.UserInputType.MouseButton1
-                and input.UserInputType ~= Enum.UserInputType.Touch
-            then
-                return
-            end
-            startDrag(t, input, function()
-                local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-                if hum and t.Parent then
-                    local idx = table.find(allTools(), t)
-                    if not idx or idx > visibleSlots() then
-                        placeInSlot(t, 1)
-                    end
-                    hum:EquipTool(t)
-                    setOpen(false)
-                end
-            end)
-        end)
-        make("TextLabel", {
-            Name = "ItemName",
-            Position = UDim2.fromOffset(6, 98),
-            Size = UDim2.new(1, -12, 0, 20),
-            BackgroundTransparency = 1,
-            Text = name,
-            FontFace = FONT,
-            TextScaled = true,
-            TextColor3 = Color3.new(1, 1, 1),
-            ZIndex = 8,
-        }, card)
-        make("TextLabel", {
-            Position = UDim2.fromOffset(6, 119),
-            Size = UDim2.new(1, -12, 0, 14),
-            BackgroundTransparency = 1,
-            Text = string.upper(rarity or ""),
-            FontFace = BOLD,
-            TextScaled = true,
-            TextColor3 = RARITY[rarity] or Color3.new(1, 1, 1),
-            ZIndex = 8,
-        }, card)
-        if isCharacters then
-            local record = characterItems[t:GetAttribute("ItemId")]
-            local power = record and record.power or t:GetAttribute("Power") or 0
-            local income = record and record.income or t:GetAttribute("IncomePerSecond") or 0
-            make("TextLabel", {
-                Name = "Stats",
-                Position = UDim2.fromOffset(5, 136),
-                Size = UDim2.new(1, -10, 0, 18),
-                BackgroundTransparency = 1,
-                Text = "PWR " .. money(power):sub(2) .. " • " .. money(income) .. "/s",
-                FontFace = BOLD,
-                TextScaled = true,
-                TextColor3 = CREAM,
-                ZIndex = 8,
-            }, card)
-        end
-        local confirming = isCharacters and armedTool == t and os.clock() < armedUntil
-        local sb = make("TextButton", {
-            Name = "Sell",
-            AnchorPoint = Vector2.new(0.5, 1),
-            Position = UDim2.new(0.5, 0, 1, -6),
-            Size = UDim2.new(1, -12, 0, 40),
-            BackgroundColor3 = canSell and Color3.fromRGB(92, 192, 70) or Color3.fromRGB(150, 140, 150),
-            Text = canSell and ((confirming and "CONFIRM " or "SELL ") .. money(q))
-                or (q == false and "CAN'T SELL" or "…"),
-            FontFace = FONT,
-            TextSize = 14,
-            TextColor3 = Color3.new(1, 1, 1),
-            AutoButtonColor = canSell,
-            Interactable = canSell,
-            ZIndex = 8,
-        }, card)
-        round(sb, UDim.new(0, 9))
-        stroke(sb, 2)
-        sb.Activated:Connect(function()
-            if not canSell or selling then
-                return
-            end
-            if isCharacters then
-                if armedTool ~= t or os.clock() >= armedUntil then
-                    armedTool = t
-                    armedUntil = os.clock() + 4
-                    bulkIds = nil
-                    renderBag()
-                    task.delay(4, function()
-                        if armedTool == t then
-                            armedTool = nil
-                            if panel.Visible then
-                                renderBag()
-                            end
-                        end
-                    end)
-                    return
-                end
-                selling = true
-                armedTool = nil
-                sellCharacters("SellBackpack", { id = t:GetAttribute("ItemId") })
-            else
-                selling = true
-                local success, ok, got = pcall(SellRF.InvokeServer, SellRF, "Sell", t)
-                if success and ok then
-                    popup("+" .. money(got))
-                else
-                    popup(tostring(success and got or "Couldn't sell."), Color3.fromRGB(255, 120, 100))
-                end
-            end
-            selling = false
-        end)
+        buildBagCard(i, tool, name, rarity, quoteValue, canSell, isCharacters)
     end
-    totalL.Text = #list > 0 and ("Total value  " .. money(sum)) or ""
-    sellAll.Text = isCharacters and (bulkIds and os.clock() < bulkUntil and "CONFIRM ALL?" or "SELL ALL CHARACTERS")
+    bagTotalLabel.Text = #items > 0 and ("Total value  " .. formatMoney(totalValue)) or ""
+    sellAllButton.Text = isCharacters
+            and (bulkIds and os.clock() < bulkUntil and "CONFIRM ALL?" or "SELL ALL CHARACTERS")
         or "SELL ALL EGGS"
-    sellAll.TextSize = isCharacters and 17 or 21
-    sellAll.Interactable = sellable > 0
-    sellAll.AutoButtonColor = sellable > 0
+    sellAllButton.TextSize = isCharacters and 17 or 21
+    sellAllButton.Interactable = sellableCount > 0
+    sellAllButton.AutoButtonColor = sellableCount > 0
 end
-sellAll.Activated:Connect(function()
+sellAllButton.Activated:Connect(function()
     if selling then
         return
     end
     if selectedTab == "Characters" then
         if not bulkIds or os.clock() >= bulkUntil then
             bulkIds = {}
-            for _, t in bagItems("Characters") do
-                if type(quote(t)) == "number" then
-                    table.insert(bulkIds, t:GetAttribute("ItemId"))
+            for _, tool in bagItems("Characters") do
+                if type(getSellQuote(tool)) == "number" then
+                    table.insert(bulkIds, tool:GetAttribute("ItemId"))
                 end
             end
             if #bulkIds == 0 then
@@ -1385,11 +1507,11 @@ sellAll.Activated:Connect(function()
             bulkUntil = os.clock() + 4
             armedTool = nil
             renderBag()
-            local expires = bulkUntil
+            local armedDeadline = bulkUntil
             task.delay(4, function()
-                if bulkUntil == expires then
+                if bulkUntil == armedDeadline then
                     bulkIds = nil
-                    if panel.Visible then
+                    if bagPanel.Visible then
                         renderBag()
                     end
                 end
@@ -1402,147 +1524,148 @@ sellAll.Activated:Connect(function()
         sellCharacters("SellBackpackAll", { ids = ids })
     else
         selling = true
-        local success, ok, got, n = pcall(SellRF.InvokeServer, SellRF, "SellAll")
+        local success, ok, result, soldCount = pcall(sellEggRemote.InvokeServer, sellEggRemote, "SellAll")
         if success and ok then
-            popup("+" .. money(got) .. "  (" .. n .. " eggs)")
+            showPopup("+" .. formatMoney(result) .. "  (" .. soldCount .. " eggs)")
         else
-            popup(tostring(success and got or "Couldn't sell."), Color3.fromRGB(255, 120, 100))
+            showPopup(tostring(success and result or "Couldn't sell."), Color3.fromRGB(255, 120, 100))
         end
     end
     selling = false
     renderBag()
 end)
-for name, b in tabButtons do
-    b.Activated:Connect(function()
-        selectedTab = name
+for tabName, tabButton in bagTabButtons do
+    tabButton.Activated:Connect(function()
+        selectedTab = tabName
         armedTool = nil
         bulkIds = nil
-        grid.CanvasPosition = Vector2.zero
-        if name == "Characters" then
+        bagGrid.CanvasPosition = Vector2.zero
+        if tabName == "Characters" then
             fetchCharacters()
         end
         renderBag()
     end)
 end
-local qPending = false
+local quoteRefreshPending = false
+-- debounced bag re-render after quotes arrive (replaced by the Inventory panel's version in section 6)
 onQuote = function()
-    if qPending then
+    if quoteRefreshPending then
         return
     end
-    qPending = true
+    quoteRefreshPending = true
     task.delay(0.1, function()
-        qPending = false
-        if panel.Visible then
+        quoteRefreshPending = false
+        if bagPanel.Visible then
             renderBag()
         end
     end)
 end
 -- Shrinks the bag to fit small (phone) screens; desktop keeps the full 620x470 panel.
-local function bagFit()
-    local v = gui.AbsoluteSize
-    if v.X <= 0 or v.Y <= 0 then
+local function bagFitScale()
+    local screenSize = gui.AbsoluteSize
+    if screenSize.X <= 0 or screenSize.Y <= 0 then
         return 1
     end
-    return math.clamp(math.min(1, (v.X - 24) / 620, (v.Y - 24) / 470), 0.4, 1)
+    return math.clamp(math.min(1, (screenSize.X - 24) / 620, (screenSize.Y - 24) / 470), 0.4, 1)
 end
-setOpen = function(v)
-    if Inv.setOpen then
-        return Inv.setOpen(v)
+setBagOpen = function(shouldOpen)
+    if inventoryPanel.setOpen then
+        return inventoryPanel.setOpen(shouldOpen)
     end -- old big backpack panel is retired; Inventory replaces it
-    if panel.Visible ~= v then
-        UISound.Play(v and "Open" or "Close")
+    if bagPanel.Visible ~= shouldOpen then
+        UISound.Play(shouldOpen and "Open" or "Close")
     end
-    if v then
-        panel.Visible = true
+    if shouldOpen then
+        bagPanel.Visible = true
         fetchCharacters()
-        pscale.Scale = bagFit() * 0.85
-        tw(pscale, 0.25, { Scale = bagFit() }, Enum.EasingStyle.Back)
+        bagScale.Scale = bagFitScale() * 0.85
+        tween(bagScale, 0.25, { Scale = bagFitScale() }, Enum.EasingStyle.Back)
         renderBag()
     else
         armedTool = nil
         bulkIds = nil
-        panel.Visible = false
+        bagPanel.Visible = false
     end
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-    if panel.Visible then
-        pscale.Scale = bagFit()
+    if bagPanel.Visible then
+        bagScale.Scale = bagFitScale()
     end
 end)
-bagBtn.Activated:Connect(function()
-    setOpen(not panel.Visible)
+bagButton.Activated:Connect(function()
+    setBagOpen(not bagPanel.Visible)
 end)
-close.Activated:Connect(function()
-    setOpen(false)
+bagCloseButton.Activated:Connect(function()
+    setBagOpen(false)
 end)
-bagBtn.MouseEnter:Connect(function()
-    tw(bagBtn, 0.1, { Rotation = -6 })
+bagButton.MouseEnter:Connect(function()
+    tween(bagButton, 0.1, { Rotation = -6 })
 end)
-bagBtn.MouseLeave:Connect(function()
-    tw(bagBtn, 0.1, { Rotation = 0 })
+bagButton.MouseLeave:Connect(function()
+    tween(bagButton, 0.1, { Rotation = 0 })
 end)
 
----------------------------------------------------------------- Inventory: Roblox-style grid that opens above the hotbar (game style)
+-- ===== 6. Inventory panel: Roblox-style grid that opens above the hotbar (game style) =====
 -- Tabs (All / Eggs / Characters), rarity + mutation filters, search, drag items onto the hotbar, tap to hold,
 -- SELL mode (tap twice to sell). Opens with the Backpack button or the ` key.
 do
-    local RAR_ORDER = { "All", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Limited" }
-    local MUT_ORDER = { "Any", "Mutated", "Silver", "Gold", "Diamond", "Rainbow" }
-    local MC = {
+    local RARITY_FILTERS = { "All", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Limited" }
+    local MUTATION_FILTERS = { "Any", "Mutated", "Silver", "Gold", "Diamond", "Rainbow" }
+    local INVENTORY_MUTATION_COLORS = {
         Silver = Color3.fromRGB(200, 210, 225),
         Gold = Color3.fromRGB(255, 196, 60),
         Diamond = Color3.fromRGB(90, 220, 255),
         Rainbow = Color3.fromRGB(255, 90, 200),
     }
-    local RAINBOW = ColorSequence.new({
+    local RAINBOW_GRADIENT = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80, 80)),
         ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 230, 60)),
         ColorSequenceKeypoint.new(0.66, Color3.fromRGB(80, 230, 120)),
         ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 150, 255)),
     })
-    local tab, rIdx, mIdx, query, sellMode, armed = "All", 1, 1, "", false, nil
-    local W, H = 660, 340
-    local inv = make("Frame", {
+    local activeTab, rarityIndex, mutationIndex, searchQuery, sellMode, armedItem = "All", 1, 1, "", false, nil
+    local PANEL_WIDTH, PANEL_HEIGHT = 660, 340
+    local inventoryFrame = create("Frame", {
         Name = "Inventory",
         Active = true,
         AnchorPoint = Vector2.new(0.5, 1),
         Position = UDim2.new(0.5, 0, 1, -122),
-        Size = UDim2.fromOffset(W, H),
+        Size = UDim2.fromOffset(PANEL_WIDTH, PANEL_HEIGHT),
         BackgroundColor3 = PLATE,
         BorderSizePixel = 0,
         Visible = false,
         ZIndex = 20,
     }, gui)
-    stroke(inv, 4, BLACK)
-    studs(inv, 26, 0.85)
-    local sc = make("UIScale", {}, inv)
+    addStroke(inventoryFrame, 4, BLACK)
+    addStuds(inventoryFrame, 26, 0.85)
+    local inventoryScale = create("UIScale", {}, inventoryFrame)
     local function fitScale()
-        local v = gui.AbsoluteSize
-        if v.X <= 0 then
+        local screenSize = gui.AbsoluteSize
+        if screenSize.X <= 0 then
             return 1
         end
-        return math.clamp(math.min(1, (v.X - 24) / W, (v.Y - 150) / H), 0.45, 1)
+        return math.clamp(math.min(1, (screenSize.X - 24) / PANEL_WIDTH, (screenSize.Y - 150) / PANEL_HEIGHT), 0.45, 1)
     end
     gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-        if inv.Visible then
-            sc.Scale = fitScale()
+        if inventoryFrame.Visible then
+            inventoryScale.Scale = fitScale()
         end
     end)
-    local head = make("Frame", {
+    local header = create("Frame", {
         Size = UDim2.new(1, 0, 0, 46),
         BackgroundColor3 = Color3.fromRGB(240, 110, 20),
         BorderSizePixel = 0,
         ZIndex = 21,
-    }, inv)
-    studs(head, 22, 0.1)
-    make("Frame", {
+    }, inventoryFrame)
+    addStuds(header, 22, 0.1)
+    create("Frame", {
         Position = UDim2.new(0, 0, 1, 0),
         Size = UDim2.new(1, 0, 0, 3),
         BackgroundColor3 = BLACK,
         BorderSizePixel = 0,
         ZIndex = 22,
-    }, head)
-    local ttl = make("TextLabel", {
+    }, header)
+    local titleLabel = create("TextLabel", {
         Position = UDim2.fromOffset(14, 0),
         Size = UDim2.fromOffset(160, 46),
         BackgroundTransparency = 1,
@@ -1552,9 +1675,9 @@ do
         TextColor3 = Color3.new(1, 1, 1),
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 22,
-    }, head)
-    stroke(ttl, 2.5).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-    local countL = make("TextLabel", {
+    }, header)
+    addStroke(titleLabel, 2.5).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+    local countLabel = create("TextLabel", {
         Position = UDim2.fromOffset(150, 0),
         Size = UDim2.fromOffset(40, 46),
         BackgroundTransparency = 1,
@@ -1563,25 +1686,25 @@ do
         TextSize = 16,
         TextColor3 = CREAM,
         ZIndex = 22,
-    }, head)
-    local tabBtns = {}
-    for i, n in { "All", "Eggs", "Characters" } do
-        local b = make("TextButton", {
+    }, header)
+    local tabButtons = {}
+    for i, tabName in { "All", "Eggs", "Characters" } do
+        local tabButton = create("TextButton", {
             Position = UDim2.fromOffset(196 + (i - 1) * 118, 8),
             Size = UDim2.fromOffset(110, 30),
             BackgroundColor3 = PLATE,
             BorderSizePixel = 0,
-            Text = string.upper(n),
+            Text = string.upper(tabName),
             FontFace = FONT,
             TextSize = 15,
             TextColor3 = CREAM,
             AutoButtonColor = false,
             ZIndex = 22,
-        }, head)
-        stroke(b, 2, BLACK)
-        tabBtns[n] = b
+        }, header)
+        addStroke(tabButton, 2, BLACK)
+        tabButtons[tabName] = tabButton
     end
-    local closeB = make("TextButton", {
+    local closeButton = create("TextButton", {
         AnchorPoint = Vector2.new(1, 0.5),
         Position = UDim2.new(1, -8, 0.5, 0),
         Size = UDim2.fromOffset(34, 34),
@@ -1591,15 +1714,15 @@ do
         TextSize = 20,
         TextColor3 = Color3.new(1, 1, 1),
         ZIndex = 22,
-    }, head)
-    stroke(closeB, 2.5, BLACK)
-    local row = make("Frame", {
+    }, header)
+    addStroke(closeButton, 2.5, BLACK)
+    local filterRow = create("Frame", {
         Position = UDim2.fromOffset(10, 56),
         Size = UDim2.new(1, -20, 0, 30),
         BackgroundTransparency = 1,
         ZIndex = 21,
-    }, inv)
-    local search = make("TextBox", {
+    }, inventoryFrame)
+    local searchBox = create("TextBox", {
         Size = UDim2.fromOffset(196, 30),
         BackgroundColor3 = Color3.fromRGB(26, 38, 46),
         BorderSizePixel = 0,
@@ -1612,13 +1735,13 @@ do
         PlaceholderColor3 = Color3.fromRGB(150, 160, 170),
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 22,
-    }, row)
-    stroke(search, 2, BLACK)
-    make("UIPadding", { PaddingLeft = UDim.new(0, 8) }, search)
-    local function chip(xo, w)
-        local b = make("TextButton", {
-            Position = UDim2.fromOffset(xo, 0),
-            Size = UDim2.fromOffset(w, 30),
+    }, filterRow)
+    addStroke(searchBox, 2, BLACK)
+    create("UIPadding", { PaddingLeft = UDim.new(0, 8) }, searchBox)
+    local function createChip(offsetX, width)
+        local chipButton = create("TextButton", {
+            Position = UDim2.fromOffset(offsetX, 0),
+            Size = UDim2.fromOffset(width, 30),
             BackgroundColor3 = Color3.fromRGB(26, 38, 46),
             BorderSizePixel = 0,
             FontFace = FONT,
@@ -1626,15 +1749,15 @@ do
             TextColor3 = CREAM,
             AutoButtonColor = false,
             ZIndex = 22,
-        }, row)
-        stroke(b, 2, BLACK)
-        return b
+        }, filterRow)
+        addStroke(chipButton, 2, BLACK)
+        return chipButton
     end
-    local rarB = chip(206, 150)
-    local mutB = chip(364, 130)
-    local sellB = chip(502, 138)
-    sellB.TextColor3 = Color3.new(1, 1, 1)
-    local grid = make("ScrollingFrame", {
+    local rarityButton = createChip(206, 150)
+    local mutationButton = createChip(364, 130)
+    local sellModeButton = createChip(502, 138)
+    sellModeButton.TextColor3 = Color3.new(1, 1, 1)
+    local itemGrid = create("ScrollingFrame", {
         Position = UDim2.fromOffset(10, 96),
         Size = UDim2.new(1, -20, 1, -106),
         BackgroundTransparency = 1,
@@ -1644,14 +1767,14 @@ do
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         CanvasSize = UDim2.new(),
         ZIndex = 21,
-    }, inv)
-    make("UIGridLayout", {
+    }, inventoryFrame)
+    create("UIGridLayout", {
         CellSize = UDim2.fromOffset(86, 98),
         CellPadding = UDim2.fromOffset(9, 12),
         SortOrder = Enum.SortOrder.LayoutOrder,
-    }, grid)
-    make("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 3) }, grid)
-    local emptyL = make("TextLabel", {
+    }, itemGrid)
+    create("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 3) }, itemGrid)
+    local emptyLabel = create("TextLabel", {
         Position = UDim2.fromOffset(10, 96),
         Size = UDim2.new(1, -20, 1, -106),
         BackgroundTransparency = 1,
@@ -1660,337 +1783,354 @@ do
         TextSize = 18,
         TextColor3 = Color3.fromRGB(200, 185, 205),
         ZIndex = 21,
-    }, inv)
-    local function matches(t)
-        local kind = category(t)
+    }, inventoryFrame)
+    -- tab + rarity + mutation ("Mutated" = any) + case-insensitive plain-text search on "<mutation> <name>"
+    local function matchesFilters(tool)
+        local kind = getCategory(tool)
         if not kind then
             return false
         end
-        if tab ~= "All" and kind ~= tab then
+        if activeTab ~= "All" and kind ~= activeTab then
             return false
         end
-        local name, rarity = info(t)
-        local r = RAR_ORDER[rIdx]
-        if r ~= "All" and rarity ~= r then
+        local name, rarity = describeTool(tool)
+        local rarityFilter = RARITY_FILTERS[rarityIndex]
+        if rarityFilter ~= "All" and rarity ~= rarityFilter then
             return false
         end
-        local m = MUT_ORDER[mIdx]
-        local mut = t:GetAttribute("Mutation")
-        if m == "Mutated" and not mut then
+        local mutationFilter = MUTATION_FILTERS[mutationIndex]
+        local mutation = tool:GetAttribute("Mutation")
+        if mutationFilter == "Mutated" and not mutation then
             return false
         end
-        if m ~= "Any" and m ~= "Mutated" and mut ~= m then
+        if mutationFilter ~= "Any" and mutationFilter ~= "Mutated" and mutation ~= mutationFilter then
             return false
         end
-        if query ~= "" then
-            local full = ((mut and (mut .. " ")) or "") .. name
-            if not full:lower():find(query:lower(), 1, true) then
+        if searchQuery ~= "" then
+            local searchText = ((mutation and (mutation .. " ")) or "") .. name
+            if not searchText:lower():find(searchQuery:lower(), 1, true) then
                 return false
             end
         end
         return true
     end
-    local render
-    render = function()
-        for _, c in grid:GetChildren() do
-            if c:IsA("GuiObject") then
-                c:Destroy()
-            end
+    -- tab highlight + rarity / mutation / SELL chip labels and colours
+    local function refreshControls()
+        for tabName, tabButton in tabButtons do
+            tabButton.BackgroundColor3 = tabName == activeTab and GOLD or PLATE
+            tabButton.TextColor3 = tabName == activeTab and INK or CREAM
         end
-        for n, b in tabBtns do
-            b.BackgroundColor3 = n == tab and GOLD or PLATE
-            b.TextColor3 = n == tab and INK or CREAM
-        end
-        rarB.Text = "RARITY: " .. string.upper(RAR_ORDER[rIdx])
-        mutB.Text = MUT_ORDER[mIdx] == "Any" and "MUTATION: ANY" or string.upper(MUT_ORDER[mIdx])
-        mutB.BackgroundColor3 = MC[MUT_ORDER[mIdx]] and MC[MUT_ORDER[mIdx]]:Lerp(Color3.new(0, 0, 0), 0.45)
+        rarityButton.Text = "RARITY: " .. string.upper(RARITY_FILTERS[rarityIndex])
+        mutationButton.Text = MUTATION_FILTERS[mutationIndex] == "Any" and "MUTATION: ANY"
+            or string.upper(MUTATION_FILTERS[mutationIndex])
+        mutationButton.BackgroundColor3 = INVENTORY_MUTATION_COLORS[MUTATION_FILTERS[mutationIndex]]
+                and INVENTORY_MUTATION_COLORS[MUTATION_FILTERS[mutationIndex]]:Lerp(Color3.new(0, 0, 0), 0.45)
             or Color3.fromRGB(26, 38, 46)
-        sellB.Text = sellMode and "SELLING: TAP x2" or "SELL ITEMS"
-        sellB.BackgroundColor3 = sellMode and Color3.fromRGB(226, 50, 44) or Color3.fromRGB(92, 192, 70)
-        local list = {}
-        for _, t in allTools() do
-            if matches(t) then
-                table.insert(list, t)
-            end
-        end
-        countL.Text = tostring(#list)
-        emptyL.Visible = #list == 0
-        emptyL.Text = tab == "Characters" and "No characters — hatch an egg!"
-            or tab == "Eggs" and "No eggs — grab some from the river!"
-            or "Nothing here yet"
-        for i, t in list do
-            local name, rarity = info(t)
-            local rc = RARITY[rarity] or Color3.fromRGB(150, 140, 160)
-            local mut = t:GetAttribute("Mutation")
-            local cell = make(
-                "Frame",
-                { LayoutOrder = i, BackgroundColor3 = Color3.fromRGB(26, 38, 46), BorderSizePixel = 0, ZIndex = 22 },
-                grid
-            )
-            local cs = stroke(cell, 2.5, BLACK)
-            make("Frame", {
-                AnchorPoint = Vector2.new(0, 1),
-                Position = UDim2.fromScale(0, 1),
-                Size = UDim2.new(1, 0, 0, 4),
-                BackgroundColor3 = rc,
-                BorderSizePixel = 0,
-                ZIndex = 24,
-            }, cell)
-            local ic = make("Frame", {
-                Position = UDim2.fromOffset(5, 5),
-                Size = UDim2.new(1, -10, 0, 66),
-                BackgroundTransparency = 1,
-                ZIndex = 23,
-            }, cell)
-            preview(t, ic)
-            local nl = make("TextLabel", {
-                Position = UDim2.fromOffset(3, 72),
-                Size = UDim2.new(1, -6, 0, 20),
-                BackgroundTransparency = 1,
-                Text = string.upper(name),
+        sellModeButton.Text = sellMode and "SELLING: TAP x2" or "SELL ITEMS"
+        sellModeButton.BackgroundColor3 = sellMode and Color3.fromRGB(226, 50, 44) or Color3.fromRGB(92, 192, 70)
+    end
+    local render
+    -- One inventory cell: rarity strip, icon, name, mutation tag + animated edge, held highlight, SELL-mode price
+    -- and the input handlers (drag / tap to hold, or tap twice within 3 s to sell in SELL mode).
+    local function buildCell(index, tool)
+        local name, rarity = describeTool(tool)
+        local rarityColor = RARITY_COLORS[rarity] or Color3.fromRGB(150, 140, 160)
+        local mutation = tool:GetAttribute("Mutation")
+        local cell = create(
+            "Frame",
+            { LayoutOrder = index, BackgroundColor3 = Color3.fromRGB(26, 38, 46), BorderSizePixel = 0, ZIndex = 22 },
+            itemGrid
+        )
+        local cellStroke = addStroke(cell, 2.5, BLACK)
+        create("Frame", {
+            AnchorPoint = Vector2.new(0, 1),
+            Position = UDim2.fromScale(0, 1),
+            Size = UDim2.new(1, 0, 0, 4),
+            BackgroundColor3 = rarityColor,
+            BorderSizePixel = 0,
+            ZIndex = 24,
+        }, cell)
+        local iconFrame = create("Frame", {
+            Position = UDim2.fromOffset(5, 5),
+            Size = UDim2.new(1, -10, 0, 66),
+            BackgroundTransparency = 1,
+            ZIndex = 23,
+        }, cell)
+        buildPreview(tool, iconFrame)
+        local nameLabel = create("TextLabel", {
+            Position = UDim2.fromOffset(3, 72),
+            Size = UDim2.new(1, -6, 0, 20),
+            BackgroundTransparency = 1,
+            Text = string.upper(name),
+            FontFace = FONT,
+            TextScaled = true,
+            TextColor3 = Color3.new(1, 1, 1),
+            ZIndex = 24,
+        }, cell)
+        create("UITextSizeConstraint", { MaxTextSize = 12 }, nameLabel)
+        addStroke(nameLabel, 1.5, BLACK)
+        if mutation then
+            local mutationTag = create("TextLabel", {
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.new(0.5, 0, 0, 0),
+                Size = UDim2.fromOffset(0, 14),
+                AutomaticSize = Enum.AutomaticSize.X,
+                BackgroundColor3 = INVENTORY_MUTATION_COLORS[mutation] or Color3.new(1, 1, 1),
+                Text = " " .. string.upper(mutation) .. " ",
                 FontFace = FONT,
-                TextScaled = true,
-                TextColor3 = Color3.new(1, 1, 1),
-                ZIndex = 24,
+                TextSize = 11,
+                TextColor3 = BLACK,
+                ZIndex = 26,
             }, cell)
-            make("UITextSizeConstraint", { MaxTextSize = 12 }, nl)
-            stroke(nl, 1.5, BLACK)
-            if mut then
-                local tag = make("TextLabel", {
-                    AnchorPoint = Vector2.new(0.5, 0.5),
-                    Position = UDim2.new(0.5, 0, 0, 0),
-                    Size = UDim2.fromOffset(0, 14),
-                    AutomaticSize = Enum.AutomaticSize.X,
-                    BackgroundColor3 = MC[mut] or Color3.new(1, 1, 1),
-                    Text = " " .. string.upper(mut) .. " ",
-                    FontFace = FONT,
-                    TextSize = 11,
-                    TextColor3 = BLACK,
-                    ZIndex = 26,
-                }, cell)
-                make("UIStroke", { Color = BLACK, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, tag)
-                if mut == "Rainbow" then
-                    make("UIGradient", { Color = RAINBOW }, tag)
-                end
-                cs.Color = Color3.new(1, 1, 1)
-                cs.Thickness = 3
-                local g = make("UIGradient", {
-                    Color = mut == "Rainbow" and RAINBOW
-                        or ColorSequence.new({
-                            ColorSequenceKeypoint.new(0, MC[mut] or Color3.new(1, 1, 1)),
-                            ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
-                            ColorSequenceKeypoint.new(1, MC[mut] or Color3.new(1, 1, 1)),
-                        }),
-                }, cs)
-                task.spawn(function()
-                    local t0 = os.clock()
-                    while cell.Parent do
-                        g.Rotation = ((os.clock() - t0) * 120) % 360
-                        task.wait(0.03)
-                    end
-                end)
-            end
-            if equipped() == t then
-                cs.Color = GOLD
-                cs.Thickness = 4
-            end
-            if sellMode then
-                local q = quote(t)
-                local pl = make("TextLabel", {
-                    AnchorPoint = Vector2.new(0.5, 0.5),
-                    Position = UDim2.fromScale(0.5, 0.4),
-                    Size = UDim2.fromOffset(80, 22),
-                    BackgroundColor3 = armed == t and Color3.fromRGB(226, 50, 44) or Color3.fromRGB(92, 192, 70),
-                    Text = (armed == t and "CONFIRM " or "")
-                        .. (type(q) == "number" and money(q) or (q == false and "CAN'T" or "…")),
-                    FontFace = FONT,
-                    TextSize = 13,
-                    TextColor3 = Color3.new(1, 1, 1),
-                    ZIndex = 27,
-                }, cell)
-                stroke(pl, 2, BLACK)
-            end
-            local btn = make(
-                "TextButton",
-                { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 28 },
-                cell
+            create(
+                "UIStroke",
+                { Color = BLACK, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+                mutationTag
             )
-            btn.MouseEnter:Connect(function()
-                tw(cell, 0.08, { Rotation = -3 })
+            if mutation == "Rainbow" then
+                create("UIGradient", { Color = RAINBOW_GRADIENT }, mutationTag)
+            end
+            cellStroke.Color = Color3.new(1, 1, 1)
+            cellStroke.Thickness = 3
+            local edgeGradient = create("UIGradient", {
+                Color = mutation == "Rainbow" and RAINBOW_GRADIENT
+                    or ColorSequence.new({
+                        ColorSequenceKeypoint.new(0, INVENTORY_MUTATION_COLORS[mutation] or Color3.new(1, 1, 1)),
+                        ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+                        ColorSequenceKeypoint.new(1, INVENTORY_MUTATION_COLORS[mutation] or Color3.new(1, 1, 1)),
+                    }),
+            }, cellStroke)
+            task.spawn(function()
+                local startTime = os.clock()
+                while cell.Parent do
+                    edgeGradient.Rotation = ((os.clock() - startTime) * 120) % 360
+                    task.wait(0.03)
+                end
             end)
-            btn.MouseLeave:Connect(function()
-                tw(cell, 0.08, { Rotation = 0 })
-            end)
-            btn.InputBegan:Connect(function(input)
-                if sellMode then
+        end
+        if getEquippedTool() == tool then
+            cellStroke.Color = GOLD
+            cellStroke.Thickness = 4
+        end
+        if sellMode then
+            local quoteValue = getSellQuote(tool)
+            local priceLabel = create("TextLabel", {
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.fromScale(0.5, 0.4),
+                Size = UDim2.fromOffset(80, 22),
+                BackgroundColor3 = armedItem == tool and Color3.fromRGB(226, 50, 44) or Color3.fromRGB(92, 192, 70),
+                Text = (armedItem == tool and "CONFIRM " or "") .. (type(quoteValue) == "number" and formatMoney(
+                    quoteValue
+                ) or (quoteValue == false and "CAN'T" or "…")),
+                FontFace = FONT,
+                TextSize = 13,
+                TextColor3 = Color3.new(1, 1, 1),
+                ZIndex = 27,
+            }, cell)
+            addStroke(priceLabel, 2, BLACK)
+        end
+        local cellButton = create(
+            "TextButton",
+            { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 28 },
+            cell
+        )
+        cellButton.MouseEnter:Connect(function()
+            tween(cell, 0.08, { Rotation = -3 })
+        end)
+        cellButton.MouseLeave:Connect(function()
+            tween(cell, 0.08, { Rotation = 0 })
+        end)
+        cellButton.InputBegan:Connect(function(input)
+            if sellMode then
+                return
+            end
+            if
+                input.UserInputType ~= Enum.UserInputType.MouseButton1
+                and input.UserInputType ~= Enum.UserInputType.Touch
+            then
+                return
+            end
+            startDrag(tool, input, function()
+                if not tool.Parent then
                     return
                 end
-                if
-                    input.UserInputType ~= Enum.UserInputType.MouseButton1
-                    and input.UserInputType ~= Enum.UserInputType.Touch
-                then
-                    return
+                local toolIndex = table.find(allTools(), tool)
+                if not toolIndex or toolIndex > visibleSlotCount() then
+                    placeInSlot(tool, 1)
                 end
-                startDrag(t, input, function()
-                    if not t.Parent then
-                        return
-                    end
-                    local idx = table.find(allTools(), t)
-                    if not idx or idx > visibleSlots() then
-                        placeInSlot(t, 1)
-                    end
-                    toggle(t)
-                    task.delay(0.1, function()
-                        if inv.Visible then
-                            render()
-                        end
-                    end)
-                end)
-            end)
-            btn.Activated:Connect(function()
-                if not sellMode or selling then
-                    return
-                end
-                local q = quote(t)
-                if type(q) ~= "number" then
-                    popup("Can't sell that", Color3.fromRGB(255, 120, 100))
-                    return
-                end
-                if armed ~= t then
-                    armed = t
-                    render()
-                    task.delay(3, function()
-                        if armed == t then
-                            armed = nil
-                            if inv.Visible then
-                                render()
-                            end
-                        end
-                    end)
-                    return
-                end
-                armed = nil
-                selling = true
-                if category(t) == "Characters" then
-                    sellCharacters("SellBackpack", { id = t:GetAttribute("ItemId") })
-                else
-                    local ok, res, got = pcall(SellRF.InvokeServer, SellRF, "Sell", t)
-                    if ok and res then
-                        popup("+" .. money(got))
-                        UISound.Play("CoinChing")
-                    else
-                        popup("Couldn't sell", Color3.fromRGB(255, 120, 100))
-                    end
-                end
-                selling = false
-                task.delay(0.15, function()
-                    if inv.Visible then
+                toggleEquip(tool)
+                task.delay(0.1, function()
+                    if inventoryFrame.Visible then
                         render()
                     end
                 end)
             end)
+        end)
+        cellButton.Activated:Connect(function()
+            if not sellMode or selling then
+                return
+            end
+            local quoteValue = getSellQuote(tool)
+            if type(quoteValue) ~= "number" then
+                showPopup("Can't sell that", Color3.fromRGB(255, 120, 100))
+                return
+            end
+            if armedItem ~= tool then
+                armedItem = tool
+                render()
+                task.delay(3, function()
+                    if armedItem == tool then
+                        armedItem = nil
+                        if inventoryFrame.Visible then
+                            render()
+                        end
+                    end
+                end)
+                return
+            end
+            armedItem = nil
+            selling = true
+            if getCategory(tool) == "Characters" then
+                sellCharacters("SellBackpack", { id = tool:GetAttribute("ItemId") })
+            else
+                local ok, sold, earned = pcall(sellEggRemote.InvokeServer, sellEggRemote, "Sell", tool)
+                if ok and sold then
+                    showPopup("+" .. formatMoney(earned))
+                    UISound.Play("CoinChing")
+                else
+                    showPopup("Couldn't sell", Color3.fromRGB(255, 120, 100))
+                end
+            end
+            selling = false
+            task.delay(0.15, function()
+                if inventoryFrame.Visible then
+                    render()
+                end
+            end)
+        end)
+    end
+    render = function()
+        for _, child in itemGrid:GetChildren() do
+            if child:IsA("GuiObject") then
+                child:Destroy()
+            end
+        end
+        refreshControls()
+        local items = {}
+        for _, tool in allTools() do
+            if matchesFilters(tool) then
+                table.insert(items, tool)
+            end
+        end
+        countLabel.Text = tostring(#items)
+        emptyLabel.Visible = #items == 0
+        emptyLabel.Text = activeTab == "Characters" and "No characters — hatch an egg!"
+            or activeTab == "Eggs" and "No eggs — grab some from the river!"
+            or "Nothing here yet"
+        for i, tool in items do
+            buildCell(i, tool)
         end
     end
-    for n, b in tabBtns do
-        b.Activated:Connect(function()
-            tab = n
-            armed = nil
-            if n == "Characters" then
+    for tabName, tabButton in tabButtons do
+        tabButton.Activated:Connect(function()
+            activeTab = tabName
+            armedItem = nil
+            if tabName == "Characters" then
                 fetchCharacters()
             end
             UISound.Play("Open")
             render()
         end)
     end
-    rarB.Activated:Connect(function()
-        rIdx = rIdx % #RAR_ORDER + 1
+    rarityButton.Activated:Connect(function()
+        rarityIndex = rarityIndex % #RARITY_FILTERS + 1
         render()
     end)
-    mutB.Activated:Connect(function()
-        mIdx = mIdx % #MUT_ORDER + 1
+    mutationButton.Activated:Connect(function()
+        mutationIndex = mutationIndex % #MUTATION_FILTERS + 1
         render()
     end)
-    sellB.Activated:Connect(function()
+    sellModeButton.Activated:Connect(function()
         sellMode = not sellMode
-        armed = nil
+        armedItem = nil
         fetchCharacters()
         render()
     end)
-    search:GetPropertyChangedSignal("Text"):Connect(function()
-        query = search.Text
+    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        searchQuery = searchBox.Text
         render()
     end)
     onQuote = function()
-        if inv.Visible then
+        if inventoryFrame.Visible then
             render()
         end
     end
-    local function open(v)
-        if v and inv.Visible then
-            v = false
+    local function setInventoryOpen(shouldOpen)
+        if shouldOpen and inventoryFrame.Visible then
+            shouldOpen = false
         end -- Backpack button toggles
-        if v == inv.Visible then
+        if shouldOpen == inventoryFrame.Visible then
             return
         end
-        UISound.Play(v and "Open" or "Close")
-        if v then
-            inv.Visible = true
+        UISound.Play(shouldOpen and "Open" or "Close")
+        if shouldOpen then
+            inventoryFrame.Visible = true
             fetchCharacters()
             render()
-            local s = fitScale()
-            sc.Scale = s * 0.85
-            inv.Position = UDim2.new(0.5, 0, 1, -90)
-            tw(sc, 0.25, { Scale = s }, Enum.EasingStyle.Back)
-            tw(inv, 0.25, { Position = UDim2.new(0.5, 0, 1, -122) }, Enum.EasingStyle.Back)
+            local targetScale = fitScale()
+            inventoryScale.Scale = targetScale * 0.85
+            inventoryFrame.Position = UDim2.new(0.5, 0, 1, -90)
+            tween(inventoryScale, 0.25, { Scale = targetScale }, Enum.EasingStyle.Back)
+            tween(inventoryFrame, 0.25, { Position = UDim2.new(0.5, 0, 1, -122) }, Enum.EasingStyle.Back)
         else
             sellMode = false
-            armed = nil
-            inv.Visible = false
+            armedItem = nil
+            inventoryFrame.Visible = false
         end
     end
-    Inv.setOpen = open
-    Inv.render = render
-    closeB.Activated:Connect(function()
-        open(false)
+    inventoryPanel.setOpen = setInventoryOpen
+    inventoryPanel.render = render
+    closeButton.Activated:Connect(function()
+        setInventoryOpen(false)
     end)
-    UIS.InputBegan:Connect(function(input, gp)
-        if not gp and input.KeyCode == Enum.KeyCode.Backquote then
-            open(not inv.Visible)
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if not gameProcessed and input.KeyCode == Enum.KeyCode.Backquote then
+            setInventoryOpen(not inventoryFrame.Visible)
         end
     end)
     -- live refresh while open
-    local pend = false
-    local function bump()
-        if not inv.Visible or pend then
+    local refreshPending = false
+    local function scheduleRefresh()
+        if not inventoryFrame.Visible or refreshPending then
             return
         end
-        pend = true
+        refreshPending = true
         task.delay(0.15, function()
-            pend = false
-            if inv.Visible then
+            refreshPending = false
+            if inventoryFrame.Visible then
                 render()
             end
         end)
     end
-    local function hookC(c)
-        if c then
-            c.ChildAdded:Connect(bump)
-            c.ChildRemoved:Connect(bump)
+    local function watchContainer(container)
+        if container then
+            container.ChildAdded:Connect(scheduleRefresh)
+            container.ChildRemoved:Connect(scheduleRefresh)
         end
     end
-    hookC(backpack())
-    player.ChildAdded:Connect(function(c)
-        if c:IsA("Backpack") then
-            hookC(c)
+    watchContainer(getBackpack())
+    player.ChildAdded:Connect(function(child)
+        if child:IsA("Backpack") then
+            watchContainer(child)
         end
     end)
-    player.CharacterAdded:Connect(hookC)
-    hookC(player.Character)
+    player.CharacterAdded:Connect(watchContainer)
+    watchContainer(player.Character)
 end
 
----------------------------------------------------------------- hotbar hover: full name, rarity and mutation above the slot
+-- ===== 7. Hotbar hover tooltip: full name, rarity and mutation above the slot =====
 do
-    local tip = make("TextLabel", {
+    local tooltip = create("TextLabel", {
         Name = "HotbarTip",
         AnchorPoint = Vector2.new(0.5, 1),
         Size = UDim2.fromOffset(0, 26),
@@ -2005,114 +2145,116 @@ do
         Visible = false,
         ZIndex = 40,
     }, gui)
-    stroke(tip, 2, BLACK)
-    make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, tip)
+    addStroke(tooltip, 2, BLACK)
+    create("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, tooltip)
     RunService.RenderStepped:Connect(function()
-        if not bar.Visible then
-            tip.Visible = false
+        if not hotbar.Visible then
+            tooltip.Visible = false
             return
         end
-        local m = UIS:GetMouseLocation() - game:GetService("GuiService"):GetGuiInset()
-        local k = slotAt(m)
-        local gg = k and barGroups[k]
-        local t = gg and gg.tools[1]
-        if not t then
-            tip.Visible = false
+        local mousePosition = UserInputService:GetMouseLocation() - game:GetService("GuiService"):GetGuiInset()
+        local slotIndex = slotIndexAt(mousePosition)
+        local group = slotIndex and barGroups[slotIndex]
+        local tool = group and group.tools[1]
+        if not tool then
+            tooltip.Visible = false
             return
         end
-        local name, rarity = info(t)
-        local mut = t:GetAttribute("Mutation")
-        local rc = (RARITY[rarity] or Color3.new(1, 1, 1)):ToHex()
-        tip.Text = (mut and ('<font color="#ffd84a">' .. string.upper(mut) .. "</font>  ") or "")
+        local name, rarity = describeTool(tool)
+        local mutation = tool:GetAttribute("Mutation")
+        local rarityHex = (RARITY_COLORS[rarity] or Color3.new(1, 1, 1)):ToHex()
+        tooltip.Text = (mutation and ('<font color="#ffd84a">' .. string.upper(mutation) .. "</font>  ") or "")
             .. name
             .. '  <font color="#'
-            .. rc
+            .. rarityHex
             .. '">'
             .. string.upper(rarity or "")
             .. "</font>"
-        local h = slots[k]
-        tip.Position = UDim2.fromOffset(
-            h.AbsolutePosition.X + h.AbsoluteSize.X / 2 - gui.AbsolutePosition.X,
-            h.AbsolutePosition.Y - gui.AbsolutePosition.Y - 14
+        local holder = slots[slotIndex]
+        tooltip.Position = UDim2.fromOffset(
+            holder.AbsolutePosition.X + holder.AbsoluteSize.X / 2 - gui.AbsolutePosition.X,
+            holder.AbsolutePosition.Y - gui.AbsolutePosition.Y - 14
         )
-        tip.Visible = true
+        tooltip.Visible = true
     end)
 end
 
--- refresh on backpack changes
-local dirty = true
-local function hook(c)
-    if c then
-        c.ChildAdded:Connect(function()
-            dirty = true
+-- ===== 8. Change watchers + hotbar refresh loop =====
+-- Backpack/character child changes only set a dirty flag; the loop below re-renders at most every 0.15 s.
+local hotbarDirty = true
+local function watchForChanges(container)
+    if container then
+        container.ChildAdded:Connect(function()
+            hotbarDirty = true
         end)
-        c.ChildRemoved:Connect(function()
-            dirty = true
+        container.ChildRemoved:Connect(function()
+            hotbarDirty = true
         end)
     end
 end
-hook(backpack())
-player.ChildAdded:Connect(function(c)
-    if c:IsA("Backpack") then
-        hook(c)
-        dirty = true
+watchForChanges(getBackpack())
+player.ChildAdded:Connect(function(child)
+    if child:IsA("Backpack") then
+        watchForChanges(child)
+        hotbarDirty = true
     end
 end)
-player.CharacterAdded:Connect(function(c)
-    hook(c)
-    dirty = true
+player.CharacterAdded:Connect(function(child)
+    watchForChanges(child)
+    hotbarDirty = true
 end)
-hook(player.Character)
+watchForChanges(player.Character)
 task.spawn(function()
     while true do
-        if dirty then
-            dirty = false
+        if hotbarDirty then
+            hotbarDirty = false
             renderBar()
-            if panel.Visible then
+            if bagPanel.Visible then
                 task.wait(0.25)
                 renderBag()
             else
-                local n = bagCount()
-                badge.Visible = n > 0
-                badge.Text = tostring(n)
+                local itemCount = bagCount()
+                bagBadge.Visible = itemCount > 0
+                bagBadge.Text = tostring(itemCount)
             end
         end
         task.wait(0.15)
     end
 end)
 
----------------------------------------------------------------- night timer (top centre)
-for _, n in { "NighttimeHUD", "NighttimeStatus" } do
-    local g = pg:FindFirstChild(n)
-    if g then
-        g.Enabled = false
+-- ===== 9. Night timer (top centre) =====
+-- Replaces the legacy NighttimeHUD / NighttimeStatus guis (disabled here, also when they get re-added).
+for _, guiName in { "NighttimeHUD", "NighttimeStatus" } do
+    local legacyGui = playerGui:FindFirstChild(guiName)
+    if legacyGui then
+        legacyGui.Enabled = false
     end
 end
-pg.ChildAdded:Connect(function(g)
-    if g.Name == "NighttimeHUD" or g.Name == "NighttimeStatus" then
+playerGui.ChildAdded:Connect(function(child)
+    if child.Name == "NighttimeHUD" or child.Name == "NighttimeStatus" then
         task.defer(function()
-            g.Enabled = false
+            child.Enabled = false
         end)
     end
 end)
-local nightGui = make("ScreenGui", {
+local nightGui = create("ScreenGui", {
     Name = "NightBar",
     ResetOnSpawn = false,
     DisplayOrder = 41,
     ScreenInsets = Enum.ScreenInsets.None,
     IgnoreGuiInset = true,
-}, pg)
-local hs = phoneScale()
-local tab = make("Frame", {
+}, playerGui)
+local hudScale = phoneScale()
+local nightBanner = create("Frame", {
     AnchorPoint = Vector2.new(0.5, 1),
-    Position = UDim2.new(0.5, 0, 0, 38 * hs),
+    Position = UDim2.new(0.5, 0, 0, 38 * hudScale),
     Size = UDim2.fromOffset(250, 110),
     BackgroundColor3 = Color3.fromRGB(28, 22, 62),
 }, nightGui)
-round(tab, UDim.new(0, 18))
-local tst = stroke(tab, 3, Color3.fromRGB(140, 120, 255))
+addCorner(nightBanner, UDim.new(0, 18))
+local nightBannerStroke = addStroke(nightBanner, 3, Color3.fromRGB(140, 120, 255))
 
-local small = make("TextLabel", {
+local nightCountdownLabel = create("TextLabel", {
     AnchorPoint = Vector2.new(0.5, 1),
     Position = UDim2.new(0.5, 0, 1, -8),
     Size = UDim2.new(1, -20, 0, 28),
@@ -2121,8 +2263,8 @@ local small = make("TextLabel", {
     FontFace = FONT,
     TextSize = 22,
     TextColor3 = Color3.fromRGB(220, 215, 255),
-}, tab)
-local big = make("TextLabel", {
+}, nightBanner)
+local nightTitleLabel = create("TextLabel", {
     AnchorPoint = Vector2.new(0.5, 0),
     Position = UDim2.new(0.5, 0, 0, 18),
     Size = UDim2.new(1, -20, 0, 40),
@@ -2132,9 +2274,9 @@ local big = make("TextLabel", {
     TextSize = 34,
     TextColor3 = Color3.fromRGB(255, 230, 120),
     TextTransparency = 1,
-}, tab)
-stroke(big, 3).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-local sub = make("TextLabel", {
+}, nightBanner)
+addStroke(nightTitleLabel, 3).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+local nightPerksLabel = create("TextLabel", {
     AnchorPoint = Vector2.new(0.5, 0),
     Position = UDim2.new(0.5, 0, 0, 58),
     Size = UDim2.new(1, -20, 0, 20),
@@ -2144,8 +2286,8 @@ local sub = make("TextLabel", {
     TextSize = 14,
     TextColor3 = Color3.fromRGB(150, 240, 255),
     TextTransparency = 1,
-}, tab)
-local cnt = make("TextLabel", {
+}, nightBanner)
+local bigCountdownLabel = create("TextLabel", {
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.fromScale(0.5, 0.32),
     Size = UDim2.fromOffset(300, 120),
@@ -2156,126 +2298,142 @@ local cnt = make("TextLabel", {
     TextColor3 = Color3.fromRGB(255, 60, 60),
     TextTransparency = 1,
 }, nightGui)
-stroke(cnt, 5).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-local tabScale = make("UIScale", { Scale = hs }, tab)
-local cntScale = make("UIScale", { Scale = hs }, cnt)
-local state
+addStroke(bigCountdownLabel, 5).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+local nightBannerScale = create("UIScale", { Scale = hudScale }, nightBanner)
+local bigCountdownScale = create("UIScale", { Scale = hudScale }, bigCountdownLabel)
+local nightState
+-- re-applies the phone scale to the hotbar and the night banner (tracks the start-up camera's ViewportSize)
 local function rescale()
-    hs = phoneScale()
-    barScale.Scale = hs
-    tabScale.Scale = hs
-    cntScale.Scale = hs
+    hudScale = phoneScale()
+    hotbarScale.Scale = hudScale
+    nightBannerScale.Scale = hudScale
+    bigCountdownScale.Scale = hudScale
     renderBar()
-    tab.Position = UDim2.new(0.5, 0, 0, (state == "night" and 128 or 38) * hs)
+    nightBanner.Position = UDim2.new(0.5, 0, 0, (nightState == "night" and 128 or 38) * hudScale)
 end
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale)
-local lastSec, cntTween = nil, nil
-local function hideCnt()
-    lastSec = nil
-    if cntTween then
-        cntTween:Cancel()
-        cntTween = nil
+local lastCountdownSecond, countdownTween = nil, nil
+local function hideBigCountdown()
+    lastCountdownSecond = nil
+    if countdownTween then
+        countdownTween:Cancel()
+        countdownTween = nil
     end
-    cnt.TextTransparency = 1
-    cnt.Text = ""
+    bigCountdownLabel.TextTransparency = 1
+    bigCountdownLabel.Text = ""
 end
-local function fmt(s)
-    s = math.max(0, math.ceil(s))
-    return string.format("%d:%02d", s // 60, s % 60)
+local function formatClock(seconds)
+    seconds = math.max(0, math.ceil(seconds))
+    return string.format("%d:%02d", seconds // 60, seconds % 60)
 end
+-- day -> night: grow the banner and drop it lower, then fade in the title and perks
+local function playNightTransition()
+    nightState = "night"
+    tween(
+        nightBanner,
+        1.6,
+        { Position = UDim2.new(0.5, 0, 0, 128 * hudScale), Size = UDim2.fromOffset(340, 136) },
+        Enum.EasingStyle.Quint
+    )
+    task.delay(0.9, function()
+        if nightState == "night" then
+            tween(nightTitleLabel, 0.5, { TextTransparency = 0 })
+            tween(nightPerksLabel, 0.5, { TextTransparency = 0 })
+        end
+    end)
+    nightBannerStroke.Color = Color3.fromRGB(255, 220, 120)
+end
+-- night -> day: shrink the banner back to the top and hide the title and perks
+local function playDayTransition()
+    nightState = "day"
+    tween(
+        nightBanner,
+        1,
+        { Position = UDim2.new(0.5, 0, 0, 38 * hudScale), Size = UDim2.fromOffset(250, 110) },
+        Enum.EasingStyle.Quad
+    )
+    tween(nightTitleLabel, 0.2, { TextTransparency = 1 })
+    tween(nightPerksLabel, 0.2, { TextTransparency = 1 })
+    nightBannerStroke.Color = Color3.fromRGB(140, 120, 255)
+end
+-- last 5 s before night: red label + a big number that pops in once per second; otherwise normal colour
+local function updateBigCountdown(secondsLeft)
+    local wholeSeconds = math.ceil(secondsLeft)
+    if secondsLeft <= 5 and secondsLeft > 0 then
+        nightCountdownLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+        if wholeSeconds ~= lastCountdownSecond then
+            lastCountdownSecond = wholeSeconds
+            if countdownTween then
+                countdownTween:Cancel()
+            end
+            bigCountdownLabel.Text = tostring(wholeSeconds)
+            bigCountdownLabel.TextTransparency = 0
+            bigCountdownLabel.TextSize = 150
+            countdownTween = tween(bigCountdownLabel, 0.9, { TextSize = 100, TextTransparency = 0.6 })
+        end
+    else
+        nightCountdownLabel.TextColor3 = Color3.fromRGB(220, 215, 255)
+        if lastCountdownSecond then
+            hideBigCountdown()
+        end
+    end
+end
+-- Every frame. Night: the banner grows, drops to y=128 and shows title + perks (hidden on compact screens).
+-- Day: the banner shrinks back and counts down to the next night, with a big 5..1 countdown in the last 5 s.
 RunService.RenderStepped:Connect(function()
     local now = workspace:GetServerTimeNow()
-    local active = workspace:GetAttribute("NighttimeActive")
-    local compact = math.min(gui.AbsoluteSize.X, gui.AbsoluteSize.Y) < 600
-    big.Visible = active == true and not compact
-    sub.Visible = active == true and not compact
-    if active then
-        local left = (workspace:GetAttribute("NighttimeEndsAt") or now) - now
-        if state ~= "night" then
-            state = "night"
-            tw(
-                tab,
-                1.6,
-                { Position = UDim2.new(0.5, 0, 0, 128 * hs), Size = UDim2.fromOffset(340, 136) },
-                Enum.EasingStyle.Quint
-            )
-            task.delay(0.9, function()
-                if state == "night" then
-                    tw(big, 0.5, { TextTransparency = 0 })
-                    tw(sub, 0.5, { TextTransparency = 0 })
-                end
-            end)
-            tst.Color = Color3.fromRGB(255, 220, 120)
+    local isNight = workspace:GetAttribute("NighttimeActive")
+    local isCompact = math.min(gui.AbsoluteSize.X, gui.AbsoluteSize.Y) < 600
+    nightTitleLabel.Visible = isNight == true and not isCompact
+    nightPerksLabel.Visible = isNight == true and not isCompact
+    if isNight then
+        local secondsLeft = (workspace:GetAttribute("NighttimeEndsAt") or now) - now
+        if nightState ~= "night" then
+            playNightTransition()
         end
-        if lastSec then
-            hideCnt()
+        if lastCountdownSecond then
+            hideBigCountdown()
         end
-        small.Text = (compact and "🌙 NIGHT • " or "ENDS IN ") .. fmt(left)
+        nightCountdownLabel.Text = (isCompact and "🌙 NIGHT • " or "ENDS IN ") .. formatClock(secondsLeft)
     else
-        local left = (workspace:GetAttribute("NighttimeNextAt") or now) - now
-        if state ~= "day" then
-            state = "day"
-            tw(
-                tab,
-                1,
-                { Position = UDim2.new(0.5, 0, 0, 38 * hs), Size = UDim2.fromOffset(250, 110) },
-                Enum.EasingStyle.Quad
-            )
-            tw(big, 0.2, { TextTransparency = 1 })
-            tw(sub, 0.2, { TextTransparency = 1 })
-            tst.Color = Color3.fromRGB(140, 120, 255)
+        local secondsLeft = (workspace:GetAttribute("NighttimeNextAt") or now) - now
+        if nightState ~= "day" then
+            playDayTransition()
         end
-        small.Text = "🌙  NIGHT IN " .. fmt(left)
-        local sec = math.ceil(left)
-        if left <= 5 and left > 0 then
-            small.TextColor3 = Color3.fromRGB(255, 90, 90)
-            if sec ~= lastSec then
-                lastSec = sec
-                if cntTween then
-                    cntTween:Cancel()
-                end
-                cnt.Text = tostring(sec)
-                cnt.TextTransparency = 0
-                cnt.TextSize = 150
-                cntTween = tw(cnt, 0.9, { TextSize = 100, TextTransparency = 0.6 })
-            end
-        else
-            small.TextColor3 = Color3.fromRGB(220, 215, 255)
-            if lastSec then
-                hideCnt()
-            end
-        end
+        nightCountdownLabel.Text = "🌙  NIGHT IN " .. formatClock(secondsLeft)
+        updateBigCountdown(secondsLeft)
     end
 end)
 
--- away earnings popup (PlayerDataService)
+-- ===== 10. Away-earnings popup (PlayerDataService) =====
+-- Disabled: `earnings` is hard-wired to nil since OfflineEarningsUI took over, so this never shows anything.
 do
-    local function show()
-        local v = nil -- replaced by OfflineEarningsUI
-        if v and v > 0 then
-            local h = math.floor((player:GetAttribute("OfflineSeconds") or 0) / 60)
-            popup("WHILE YOU WERE AWAY: +" .. money(v), Color3.fromRGB(255, 206, 60))
+    local function showAwayEarnings()
+        local earnings = nil -- replaced by OfflineEarningsUI
+        if earnings and earnings > 0 then
+            local _minutesAway = math.floor((player:GetAttribute("OfflineSeconds") or 0) / 60)
+            showPopup("WHILE YOU WERE AWAY: +" .. formatMoney(earnings), Color3.fromRGB(255, 206, 60))
         end
     end
-    player:GetAttributeChangedSignal("OfflineEarnings"):Connect(show)
-    task.delay(3, show)
+    player:GetAttributeChangedSignal("OfflineEarnings"):Connect(showAwayEarnings)
+    task.delay(3, showAwayEarnings)
 end
 
----------------------------------------------------------------- PLOT button (above the 4 side buttons; rounded by request; key H)
+-- ===== 11. PLOT button (above the 4 side buttons; rounded by request; key H) =====
 do
-    local GoHome = RS:WaitForChild("GoHome", 10)
+    local goHomeRemote = ReplicatedStorage:WaitForChild("GoHome", 10)
     local holder =
-        make("Frame", { Name = "HomeButton", Size = UDim2.fromOffset(212, 50), BackgroundTransparency = 1 }, gui)
-    local shadow = make("Frame", {
+        create("Frame", { Name = "HomeButton", Size = UDim2.fromOffset(212, 50), BackgroundTransparency = 1 }, gui)
+    local shadow = create("Frame", {
         Name = "Shadow",
         Position = UDim2.fromOffset(0, 5),
         Size = UDim2.new(1, 0, 1, -5),
         BackgroundColor3 = Color3.new(0, 0, 0),
         BorderSizePixel = 0,
     }, holder)
-    make("UICorner", { CornerRadius = UDim.new(0, 14) }, shadow)
+    create("UICorner", { CornerRadius = UDim.new(0, 14) }, shadow)
     shadow:SetAttribute("KeepRound", true)
-    local hb = make("TextButton", {
+    local plotButton = create("TextButton", {
         Name = "Button",
         Size = UDim2.new(1, 0, 1, -5),
         BackgroundColor3 = Color3.fromRGB(255, 176, 40),
@@ -2284,10 +2442,14 @@ do
         AutoButtonColor = false,
         ZIndex = 2,
     }, holder)
-    hb:SetAttribute("KeepRound", true)
-    make("UICorner", { CornerRadius = UDim.new(0, 14) }, hb)
-    make("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, hb)
-    local st = make("ImageLabel", {
+    plotButton:SetAttribute("KeepRound", true)
+    create("UICorner", { CornerRadius = UDim.new(0, 14) }, plotButton)
+    create(
+        "UIStroke",
+        { Color = Color3.new(0, 0, 0), Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+        plotButton
+    )
+    local studsImage = create("ImageLabel", {
         Name = "Studs",
         BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1),
@@ -2296,10 +2458,10 @@ do
         TileSize = UDim2.fromOffset(22, 22),
         ImageTransparency = 0.15,
         ZIndex = 2,
-    }, hb)
-    st:SetAttribute("KeepRound", true)
-    make("UICorner", { CornerRadius = UDim.new(0, 14) }, st)
-    local hl = make("TextLabel", {
+    }, plotButton)
+    studsImage:SetAttribute("KeepRound", true)
+    create("UICorner", { CornerRadius = UDim.new(0, 14) }, studsImage)
+    local plotLabel = create("TextLabel", {
         Size = UDim2.fromScale(1, 1),
         BackgroundTransparency = 1,
         Text = "PLOT",
@@ -2307,65 +2469,69 @@ do
         TextSize = 30,
         TextColor3 = Color3.new(1, 1, 1),
         ZIndex = 3,
-    }, hb)
-    make("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 3 }, hl)
+    }, plotButton)
+    create("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 3 }, plotLabel)
     -- sit right above the side buttons (GameMenus.SideButtons), same width, follows their responsive scale
-    local side
-    local function place()
-        side = side or (pg:FindFirstChild("GameMenus") and pg.GameMenus:FindFirstChild("SideButtons"))
-        if not side then
+    local sideButtons
+    local function placePlotButton()
+        sideButtons = sideButtons
+            or (playerGui:FindFirstChild("GameMenus") and playerGui.GameMenus:FindFirstChild("SideButtons"))
+        if not sideButtons then
             return
         end
-        local p, sz = side.AbsolutePosition, side.AbsoluteSize
-        local h = math.floor(sz.X * 112 / 372)
-        holder.Size = UDim2.fromOffset(sz.X, h)
-        local v = gui.AbsoluteSize
-        local compact = math.min(v.X, v.Y) < 600
-        if compact and v.X >= v.Y then
-            local night = pg:FindFirstChild("NightBar")
-            local banner = night and night:FindFirstChildWhichIsA("Frame")
+        local sidePosition, sideSize = sideButtons.AbsolutePosition, sideButtons.AbsoluteSize
+        local buttonHeight = math.floor(sideSize.X * 112 / 372)
+        holder.Size = UDim2.fromOffset(sideSize.X, buttonHeight)
+        local screenSize = gui.AbsoluteSize
+        local isCompact = math.min(screenSize.X, screenSize.Y) < 600
+        if isCompact and screenSize.X >= screenSize.Y then
+            local nightBar = playerGui:FindFirstChild("NightBar")
+            local banner = nightBar and nightBar:FindFirstChildWhichIsA("Frame")
             local bannerWidth = banner and banner.AbsoluteSize.X or 174
             holder.Position = UDim2.fromOffset(10 + bannerWidth + 10, 0)
         else
-            holder.Position = UDim2.fromOffset(p.X - gui.AbsolutePosition.X, p.Y - gui.AbsolutePosition.Y - h - 8)
+            holder.Position = UDim2.fromOffset(
+                sidePosition.X - gui.AbsolutePosition.X,
+                sidePosition.Y - gui.AbsolutePosition.Y - buttonHeight - 8
+            )
         end
-        hl.TextSize = math.floor(h * 0.6)
+        plotLabel.TextSize = math.floor(buttonHeight * 0.6)
     end
     task.spawn(function()
-        local gm = pg:WaitForChild("GameMenus", 30)
-        side = gm and gm:WaitForChild("SideButtons", 30)
-        if not side then
+        local gameMenus = playerGui:WaitForChild("GameMenus", 30)
+        sideButtons = gameMenus and gameMenus:WaitForChild("SideButtons", 30)
+        if not sideButtons then
             return
         end
-        side:GetPropertyChangedSignal("AbsolutePosition"):Connect(place)
-        side:GetPropertyChangedSignal("AbsoluteSize"):Connect(place)
-        place()
+        sideButtons:GetPropertyChangedSignal("AbsolutePosition"):Connect(placePlotButton)
+        sideButtons:GetPropertyChangedSignal("AbsoluteSize"):Connect(placePlotButton)
+        placePlotButton()
     end)
-    local function go()
-        if GoHome then
-            GoHome:FireServer()
+    local function goHome()
+        if goHomeRemote then
+            goHomeRemote:FireServer()
         end
-        hb.Position = UDim2.fromOffset(0, 4)
+        plotButton.Position = UDim2.fromOffset(0, 4)
         task.delay(0.1, function()
-            hb.Position = UDim2.fromOffset(0, 0)
+            plotButton.Position = UDim2.fromOffset(0, 0)
         end)
     end
-    hb.Activated:Connect(go)
-    hb.MouseEnter:Connect(function()
-        hb.Position = UDim2.fromOffset(0, -2)
+    plotButton.Activated:Connect(goHome)
+    plotButton.MouseEnter:Connect(function()
+        plotButton.Position = UDim2.fromOffset(0, -2)
     end)
-    hb.MouseLeave:Connect(function()
-        hb.Position = UDim2.fromOffset(0, 0)
+    plotButton.MouseLeave:Connect(function()
+        plotButton.Position = UDim2.fromOffset(0, 0)
     end)
-    UIS.InputBegan:Connect(function(input, gp)
-        if not gp and input.KeyCode == Enum.KeyCode.H then
-            go()
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if not gameProcessed and input.KeyCode == Enum.KeyCode.H then
+            goHome()
         end
     end)
-    if GoHome then
-        GoHome.OnClientEvent:Connect(function(msg)
-            if msg ~= "OK" and msg ~= "Wait a moment" then
-                popup(msg, Color3.fromRGB(255, 120, 100))
+    if goHomeRemote then
+        goHomeRemote.OnClientEvent:Connect(function(message)
+            if message ~= "OK" and message ~= "Wait a moment" then
+                showPopup(message, Color3.fromRGB(255, 120, 100))
             end
         end)
     end

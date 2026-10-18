@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 66 |
+| Pending | 65 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 118 |
+| Refactored | 119 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -206,7 +206,7 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/UI/Controllers/GameHUD.client.luau` | LocalScript | 741 | 2372 | Pending | — | — |
+| `client/UI/Controllers/GameHUD.client.luau` | LocalScript | 741 | 2538 | Refactored | CHANGED | Header (remotes/attrs/init order/TOC), 11 section banners, ~300 locals renamed (pass 1 SAME), 10 helpers extracted from 5 long functions (pass 2, op-identical bodies), strcheck OK |
 
 ## Batch 15 — Client UI — controllers and prompts
 
@@ -1426,12 +1426,12 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/UI/Controllers/GameHUD.client.luau`
 
-- **Type:** LocalScript · **Batch:** 14 · **Priority:** High · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 14 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** GameHUD: custom hotbar (replaces Roblox's), backpack with egg and character selling, and the top-centre night timer.
 - **Dependencies:** CharacterCatalog, PixelIcon, UISound
 - **Public functions:** —
 - **Events:** Connect×52, OnClientEvent×2, RunService×2
-- **Readability problems:** 127 dense one-line statements; 94 lines >160 chars; 21 one-letter locals
+- **Readability problems:** 2.4k-line HUD script; one-letter/abbreviated names (RS, UIS, TS, pg, make, tw, b, g, t, q, hs, cnt...), no header/TOC, 150-230-line mixed-concern functions (buildPreview, renderBar, renderBag, Inventory render, night RenderStepped), retired bag panel undocumented
 
 ### `client/Plot/PromptCards.client.luau`
 
