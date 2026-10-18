@@ -1,3 +1,21 @@
+--[[ HatchFXServer (ServerScriptService.HatchFX ModuleScript)
+Server half of the egg-opening effect. It does not animate anything itself: it publishes the
+hatch to clients through attributes / ObjectValues on the incubator and the "Hatching" tag,
+then times when the reward character appears, when the egg is removed and when the job ends.
+Timings come from ReplicatedStorage.HatchFX.HatchFXConfig.Timeline(roll, rarity).
+
+API:
+  Service.Play(options) -> (true, token) | (false, reason)
+    options: incubator, egg, character (required); owner, characterParent, displayCFrame,
+             rarity, roll, power, income, name, closeGlass, openGlass, onComplete(character, cancelled)
+  Service.Cancel(incubator)      ends a hatch now; the character still ends up in the world
+  Service.IsBusy(incubator) / Service.IsPlayerBusy(player)
+  Service.Hooks                  default glass / display placement, used when options omit them
+
+Replicated contract (read by the HatchFX client): attributes HatchToken (set last, "" when done),
+HatchStart, HatchRarity, HatchRoll, HatchPower, HatchIncome, HatchName, HatchOwner;
+ObjectValues HatchEgg / HatchCharacter; player attribute HatchOpeningBusy.
+--]]
 local CollectionService = game:GetService("CollectionService")
 local HttpService = game:GetService("HttpService")
 local ServerScriptService = game:GetService("ServerScriptService")
@@ -5,68 +23,70 @@ local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("HatchF
 
 local TAG = "Hatching"
 local Service = {}
-local active = {}
-local playerJobs = {} -- [incubator] = job
+local activeJobs = {} -- [incubator] = job
+local playerJobs = {} -- [player] = job (one opening per player at a time)
 
 -- Adapter: connect your glass doors here. Default tries the IncubatorController module from earlier.
-local Controller
+local IncubatorController
 pcall(function()
-    Controller = require(
+    IncubatorController = require(
         ServerScriptService:FindFirstChild("IncubatorController", true)
             or game.ReplicatedStorage:FindFirstChild("IncubatorController", true)
     )
 end)
-local controllers = setmetatable({}, { __mode = "k" })
-local function ctl(inc)
-    if not Controller then
+local controllers = setmetatable({}, { __mode = "k" }) -- [incubator] = controller, weak so removed models can be collected
+local function getController(incubator)
+    if not IncubatorController then
         return nil
     end
-    controllers[inc] = controllers[inc] or Controller.new(inc)
-    return controllers[inc]
+    controllers[incubator] = controllers[incubator] or IncubatorController.new(incubator)
+    return controllers[incubator]
 end
+
 Service.Hooks = {
-    CloseGlass = function(inc)
-        local c = ctl(inc)
-        if c then
-            task.spawn(c.Close, c, 0.5)
+    CloseGlass = function(incubator)
+        local controller = getController(incubator)
+        if controller then
+            task.spawn(controller.Close, controller, 0.5)
         end
     end,
-    OpenGlass = function(inc)
-        local c = ctl(inc)
-        if c then
-            task.spawn(c.Open, c, 0.7)
+    OpenGlass = function(incubator)
+        local controller = getController(incubator)
+        if controller then
+            task.spawn(controller.Open, controller, 0.7)
         end
     end,
     -- where the character stands: platform top, facing the walkway (incubator front = LookVector)
-    DisplayCFrame = function(inc, character)
-        local anchor = inc:FindFirstChild("EggAnchor", true)
-        local base = anchor and (anchor:IsA("BasePart") and anchor.CFrame or anchor:GetPivot()) or inc:GetPivot()
+    DisplayCFrame = function(incubator, character)
+        local anchor = incubator:FindFirstChild("EggAnchor", true)
+        local base = anchor and (anchor:IsA("BasePart") and anchor.CFrame or anchor:GetPivot()) or incubator:GetPivot()
         local _, size = character:GetBoundingBox()
-        local face = inc:GetPivot().Rotation
-        return CFrame.new(base.Position) * face * CFrame.new(0, size.Y / 2, 0)
+        local facing = incubator:GetPivot().Rotation
+        return CFrame.new(base.Position) * facing * CFrame.new(0, size.Y / 2, 0)
     end,
 }
 
+-- Anchors every part of `model` for the effect and remembers the original physics flags in `store`.
 local function lock(model, store)
-    for _, p in model:GetDescendants() do
-        if p:IsA("BasePart") then
-            store[p] = { p.Anchored, p.CanCollide, p.CanTouch, p.CanQuery }
-            p.Anchored, p.CanCollide, p.CanTouch = true, false, false
-            p.CanQuery = true -- enable surface raycasts
+    for _, part in model:GetDescendants() do
+        if part:IsA("BasePart") then
+            store[part] = { part.Anchored, part.CanCollide, part.CanTouch, part.CanQuery }
+            part.Anchored, part.CanCollide, part.CanTouch = true, false, false
+            part.CanQuery = true -- enable surface raycasts
         end
     end
 end
 local function unlock(store)
-    for p, v in store do
-        if p.Parent then
-            p.Anchored, p.CanCollide, p.CanTouch = v[1], v[2], v[3]
-            p.CanQuery = v[4]
+    for part, flags in store do
+        if part.Parent then
+            part.Anchored, part.CanCollide, part.CanTouch = flags[1], flags[2], flags[3]
+            part.CanQuery = flags[4]
         end
     end
 end
 
-local function clearAttrs(inc)
-    for _, n in
+local function clearAttrs(incubator)
+    for _, attributeName in
         {
             "HatchToken",
             "HatchStart",
@@ -78,17 +98,18 @@ local function clearAttrs(inc)
             "HatchOwner",
         }
     do
-        inc:SetAttribute(n, nil)
+        incubator:SetAttribute(attributeName, nil)
     end
-    for _, n in { "HatchEgg", "HatchCharacter" } do
-        local v = inc:FindFirstChild(n)
-        if v then
-            v:Destroy()
+    for _, childName in { "HatchEgg", "HatchCharacter" } do
+        local child = incubator:FindFirstChild(childName)
+        if child then
+            child:Destroy()
         end
     end
-    CollectionService:RemoveTag(inc, TAG)
+    CollectionService:RemoveTag(incubator, TAG)
 end
 
+-- Ends a job exactly once (normal end, Cancel, or incubator removed).
 local function finish(job, cancelled)
     if job.done then
         return
@@ -101,17 +122,18 @@ local function finish(job, cancelled)
     if job.ancestry then
         job.ancestry:Disconnect()
     end
-    for _, th in job.threads do
-        if th ~= coroutine.running() then
-            pcall(task.cancel, th)
+    -- finish() itself may run inside one of these delayed threads; never cancel the running one.
+    for _, thread in job.threads do
+        if thread ~= coroutine.running() then
+            pcall(task.cancel, thread)
         end
     end
-    local ch = job.o.character
-    if ch and not ch.Parent then
-        ch.Parent = job.o.characterParent or job.o.incubator
+    local character = job.o.character
+    if character and not character.Parent then
+        character.Parent = job.o.characterParent or job.o.incubator
     end -- reward always ends up in the world
-    if ch and ch.Parent then
-        ch:PivotTo(job.display)
+    if character and character.Parent then
+        character:PivotTo(job.display)
     end
     if job.o.egg and job.o.egg.Parent then
         job.o.egg:Destroy()
@@ -125,90 +147,92 @@ local function finish(job, cancelled)
             Service.Hooks.OpenGlass(job.o.incubator)
         end
     end
-    active[job.o.incubator] = nil
+    activeJobs[job.o.incubator] = nil
+    -- Keep the label attributes a moment for the client's result label, unless a new hatch started.
     task.delay(Config.LabelHold + 0.5, function()
         if
             job.o.incubator.Parent
-            and not active[job.o.incubator]
+            and not activeJobs[job.o.incubator]
             and job.o.incubator:GetAttribute("HatchToken") == ""
         then
             clearAttrs(job.o.incubator)
         end
     end)
     if job.o.onComplete then
-        task.spawn(job.o.onComplete, ch, cancelled)
+        task.spawn(job.o.onComplete, character, cancelled)
     end
 end
 
-function Service.Play(o)
-    local inc = o.incubator
-    if not (inc and inc.Parent and o.character and o.egg) then
+function Service.Play(options)
+    local incubator = options.incubator
+    if not (incubator and incubator.Parent and options.character and options.egg) then
         return false, "Missing incubator, egg or character"
     end
-    if active[inc] then
+    if activeJobs[incubator] then
         return false, "Already hatching"
     end
-    if o.owner and playerJobs[o.owner] then
+    if options.owner and playerJobs[options.owner] then
         return false, "Another egg is opening"
     end
-    local T = Config.Timeline(o.roll, o.rarity)
-    local job = { o = o, token = HttpService:GenerateGUID(false), threads = {}, locks = {} }
-    active[inc] = job
-    if o.owner then
-        playerJobs[o.owner] = job
-        o.owner:SetAttribute("HatchOpeningBusy", true)
+    local timeline = Config.Timeline(options.roll, options.rarity)
+    local job = { o = options, token = HttpService:GenerateGUID(false), threads = {}, locks = {} }
+    activeJobs[incubator] = job
+    if options.owner then
+        playerJobs[options.owner] = job
+        options.owner:SetAttribute("HatchOpeningBusy", true)
     end
-    job.display = o.displayCFrame or Service.Hooks.DisplayCFrame(inc, o.character)
-    lock(o.egg, job.locks)
-    lock(o.character, job.locks)
-    o.character.Parent = nil
-    o.character:PivotTo(job.display)
+    job.display = options.displayCFrame or Service.Hooks.DisplayCFrame(incubator, options.character)
+    lock(options.egg, job.locks)
+    lock(options.character, job.locks)
+    -- The character is held out of the world until just before the shell breaks.
+    options.character.Parent = nil
+    options.character:PivotTo(job.display)
 
-    inc:SetAttribute("HatchStart", workspace:GetServerTimeNow())
-    inc:SetAttribute("HatchRarity", o.rarity or "Common")
-    inc:SetAttribute("HatchRoll", o.roll or "Ordinary")
-    inc:SetAttribute("HatchPower", tonumber(o.power) or 0)
-    inc:SetAttribute("HatchIncome", tonumber(o.income) or 0)
-    inc:SetAttribute("HatchName", o.name or o.character.Name)
-    inc:SetAttribute("HatchOwner", o.owner and o.owner.UserId or 0)
-    local ev = Instance.new("ObjectValue")
-    ev.Name = "HatchEgg"
-    ev.Value = o.egg
-    ev.Parent = inc
-    local cv = Instance.new("ObjectValue")
-    cv.Name = "HatchCharacter"
-    cv.Parent = inc
-    inc:SetAttribute("HatchToken", job.token) -- set last: clients start when this changes
-    CollectionService:AddTag(inc, TAG)
-    if o.closeGlass then
-        o.closeGlass()
+    incubator:SetAttribute("HatchStart", workspace:GetServerTimeNow())
+    incubator:SetAttribute("HatchRarity", options.rarity or "Common")
+    incubator:SetAttribute("HatchRoll", options.roll or "Ordinary")
+    incubator:SetAttribute("HatchPower", tonumber(options.power) or 0)
+    incubator:SetAttribute("HatchIncome", tonumber(options.income) or 0)
+    incubator:SetAttribute("HatchName", options.name or options.character.Name)
+    incubator:SetAttribute("HatchOwner", options.owner and options.owner.UserId or 0)
+    local eggRef = Instance.new("ObjectValue")
+    eggRef.Name = "HatchEgg"
+    eggRef.Value = options.egg
+    eggRef.Parent = incubator
+    local characterRef = Instance.new("ObjectValue")
+    characterRef.Name = "HatchCharacter"
+    characterRef.Parent = incubator
+    incubator:SetAttribute("HatchToken", job.token) -- set last: clients start when this changes
+    CollectionService:AddTag(incubator, TAG)
+    if options.closeGlass then
+        options.closeGlass()
     else
-        Service.Hooks.CloseGlass(inc)
+        Service.Hooks.CloseGlass(incubator)
     end
 
     table.insert(
         job.threads,
-        task.delay(math.max(0, T.Break - 0.4), function()
-            o.character.Parent = o.characterParent or inc -- arrives slightly early; clients hide it until the break
-            cv.Value = o.character
+        task.delay(math.max(0, timeline.Break - 0.4), function()
+            options.character.Parent = options.characterParent or incubator -- arrives slightly early; clients hide it until the break
+            characterRef.Value = options.character
         end)
     )
     table.insert(
         job.threads,
-        task.delay(T.Break + 0.6, function()
-            if o.egg.Parent then
-                o.egg:Destroy()
+        task.delay(timeline.Break + 0.6, function()
+            if options.egg.Parent then
+                options.egg:Destroy()
             end
         end)
     )
     table.insert(
         job.threads,
-        task.delay(T.End, function()
+        task.delay(timeline.End, function()
             finish(job, false)
         end)
     )
-    job.ancestry = inc.AncestryChanged:Connect(function()
-        if not inc:IsDescendantOf(workspace) then
+    job.ancestry = incubator.AncestryChanged:Connect(function()
+        if not incubator:IsDescendantOf(workspace) then
             finish(job, true)
         end
     end)
@@ -216,14 +240,14 @@ function Service.Play(o)
 end
 
 -- Ends instantly but still leaves the awarded character in place (owner left, plot reset, etc.)
-function Service.Cancel(inc)
-    local job = active[inc]
+function Service.Cancel(incubator)
+    local job = activeJobs[incubator]
     if job then
         finish(job, true)
     end
 end
-function Service.IsBusy(inc)
-    return active[inc] ~= nil
+function Service.IsBusy(incubator)
+    return activeJobs[incubator] ~= nil
 end
 
 function Service.IsPlayerBusy(player)

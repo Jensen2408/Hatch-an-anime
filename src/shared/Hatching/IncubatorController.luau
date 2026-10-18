@@ -10,6 +10,11 @@ USAGE (Script in ServerScriptService):
   local inc = Incubator.new(workspace.Incubator_L1_Apprentice)
   inc:Hatch(game.ServerStorage.Characters.TideCaptain, workspace.MyEgg) -- egg model optional
   -- or: inc:Open()  inc:Close()  inc:Shake(1.5)
+
+Public methods (contract): Incubator.new(model), :Open(t), :Close(t), :Shake(duration),
+:PlaceEgg(egg), :Hatch(character, egg), :Destroy(). The live chambers (HatchGoo) use
+new / Open / Close / Destroy; HatchFXServer creates one lazily for its default glass hooks.
+Open/Close yield until the doors arrive and replicate the model attribute "DoorsOpen".
 --]]
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -17,43 +22,46 @@ local RunService = game:GetService("RunService")
 local Incubator = {}
 Incubator.__index = Incubator
 
-local SLIDE = 2.5 -- studs each door travels (matches the design)
-local JADE = Color3.fromRGB(95, 224, 176)
-local WARM = Color3.fromRGB(255, 184, 102)
+local SLIDE_DISTANCE = 2.5 -- studs each door travels (matches the design)
+local JADE_COLOR = Color3.fromRGB(95, 224, 176)
+local WARM_COLOR = Color3.fromRGB(255, 184, 102)
 local GLOW_WORDS = { "Jade", "Backlight", "Indicator_Cell", "Eave_Light", "Crown_Jewel", "Liquid" }
 local WARM_WORDS = { "Lantern_Glow" }
 
-local function has(name, words)
-    for _, w in words do
-        if string.find(name, w, 1, true) then
+-- Plain (non-pattern) substring match against any of `words`.
+local function nameHasAny(name, words)
+    for _, word in words do
+        if string.find(name, word, 1, true) then
             return true
         end
     end
     return false
 end
-local function find(root, name)
+local function findDescendant(root, name)
     return root:FindFirstChild(name, true)
 end
-local function partsOf(x)
-    local t = {}
-    if x:IsA("BasePart") then
-        t[1] = x
+-- `instance` itself (if it is a part) plus all descendant BaseParts.
+local function partsOf(instance)
+    local parts = {}
+    if instance:IsA("BasePart") then
+        parts[1] = instance
     end
-    for _, d in x:GetDescendants() do
-        if d:IsA("BasePart") then
-            table.insert(t, d)
+    for _, descendant in instance:GetDescendants() do
+        if descendant:IsA("BasePart") then
+            table.insert(parts, descendant)
         end
     end
-    return t
+    return parts
 end
-local function pivotOf(x)
-    return x:IsA("Model") and x:GetPivot() or x.CFrame
+-- Doors may be a single part or a Model.
+local function pivotOf(instance)
+    return instance:IsA("Model") and instance:GetPivot() or instance.CFrame
 end
-local function setPivot(x, cf)
-    if x:IsA("Model") then
-        x:PivotTo(cf)
+local function setPivot(instance, cframe)
+    if instance:IsA("Model") then
+        instance:PivotTo(cframe)
     else
-        x.CFrame = cf
+        instance.CFrame = cframe
     end
 end
 
@@ -64,99 +72,101 @@ function Incubator.new(model)
     self.right = origin.RightVector
 
     -- materials fixed for Roblox
-    for _, p in partsOf(model) do
-        p.Anchored = true
-        if p.Name:find("Pane", 1, true) or p.Name:match("Glass%d*$") then
-            p.Material = Enum.Material.Glass
-            p.Transparency = 0.82
-            p.CastShadow = false
-        elseif p.Name == "TankLiquid" and p.Parent.Name == "LiquidSystemAndTrim" then
-            p.Transparency = 1
-            p.CanCollide = false
-            p.CanTouch = false
-            p.CanQuery = false
-        elseif has(p.Name, GLOW_WORDS) then
-            p.Material = Enum.Material.Neon
-            p.Color = string.find(p.Name, "Dim", 1, true) and JADE:Lerp(Color3.new(0, 0, 0), 0.45) or JADE
-            if string.find(p.Name, "Liquid", 1, true) then
-                p.Transparency = 0.35
+    for _, part in partsOf(model) do
+        part.Anchored = true
+        if part.Name:find("Pane", 1, true) or part.Name:match("Glass%d*$") then
+            part.Material = Enum.Material.Glass
+            part.Transparency = 0.82
+            part.CastShadow = false
+        elseif part.Name == "TankLiquid" and part.Parent.Name == "LiquidSystemAndTrim" then
+            part.Transparency = 1
+            part.CanCollide = false
+            part.CanTouch = false
+            part.CanQuery = false
+        elseif nameHasAny(part.Name, GLOW_WORDS) then
+            part.Material = Enum.Material.Neon
+            part.Color = string.find(part.Name, "Dim", 1, true) and JADE_COLOR:Lerp(Color3.new(0, 0, 0), 0.45)
+                or JADE_COLOR
+            if string.find(part.Name, "Liquid", 1, true) then
+                part.Transparency = 0.35
             end
-        elseif has(p.Name, WARM_WORDS) then
-            p.Material = Enum.Material.Neon
-            p.Color = WARM
+        elseif nameHasAny(part.Name, WARM_WORDS) then
+            part.Material = Enum.Material.Neon
+            part.Color = WARM_COLOR
         end
     end
 
     -- doors: remember closed pivots; left slides toward -Right, right toward +Right (model space)
+    -- The closed pivots are captured once here, so the model must not be moved after new().
     self.doors = {}
-    for _, n in { "GlassLeft", "GlassRight" } do
-        local d = find(model, n)
-        if d then
-            local doorBox = d:IsA("Model") and d:GetBoundingBox() or d.CFrame
+    for _, doorName in { "GlassLeft", "GlassRight" } do
+        local door = findDescendant(model, doorName)
+        if door then
+            local doorBox = door:IsA("Model") and door:GetBoundingBox() or door.CFrame
             local side = (doorBox.Position - origin.Position):Dot(self.right)
-            table.insert(self.doors, { obj = d, closed = pivotOf(d), dir = side >= 0 and 1 or -1 })
+            table.insert(self.doors, { obj = door, closed = pivotOf(door), dir = side >= 0 and 1 or -1 })
         end
     end
 
     -- egg spot = top centre of the egg platform
-    local plat = find(model, "EggPlatform")
-    if plat then
-        local cf, size
-        if plat:IsA("Model") then
-            cf, size = plat:GetBoundingBox()
+    local platform = findDescendant(model, "EggPlatform")
+    if platform then
+        local platformCFrame, platformSize
+        if platform:IsA("Model") then
+            platformCFrame, platformSize = platform:GetBoundingBox()
         else
-            cf, size = plat.CFrame, plat.Size
+            platformCFrame, platformSize = platform.CFrame, platform.Size
         end
-        self.eggCF = CFrame.new(cf.Position + origin.UpVector * (size.Y / 2)) * origin.Rotation
+        self.eggCF = CFrame.new(platformCFrame.Position + origin.UpVector * (platformSize.Y / 2)) * origin.Rotation
     else
         self.eggCF = origin * CFrame.new(0, 2.25, 1.5)
     end
 
     -- lights (GLB lights don't import)
-    local holder = Instance.new("Part")
-    holder.Name = "IncubatorFX"
-    holder.Transparency = 1
-    holder.Anchored = true
-    holder.CanCollide = false
-    holder.CanQuery = false
-    holder.CanTouch = false
-    holder.Size = Vector3.new(0.2, 0.2, 0.2)
-    holder.CFrame = self.eggCF * CFrame.new(0, 3.3, 0)
-    holder.Parent = model
+    local fxHolder = Instance.new("Part")
+    fxHolder.Name = "IncubatorFX"
+    fxHolder.Transparency = 1
+    fxHolder.Anchored = true
+    fxHolder.CanCollide = false
+    fxHolder.CanQuery = false
+    fxHolder.CanTouch = false
+    fxHolder.Size = Vector3.new(0.2, 0.2, 0.2)
+    fxHolder.CFrame = self.eggCF * CFrame.new(0, 3.3, 0)
+    fxHolder.Parent = model
     self.light = Instance.new("PointLight")
-    self.light.Color = JADE
+    self.light.Color = JADE_COLOR
     self.light.Brightness = 1.6
     self.light.Range = 11
     self.light.Shadows = false
-    self.light.Parent = holder
-    for _, p in partsOf(model) do
-        if has(p.Name, WARM_WORDS) and not p:FindFirstChildOfClass("PointLight") then
-            local l = Instance.new("PointLight")
-            l.Color = WARM
-            l.Brightness = 0.9
-            l.Range = 7
-            l.Parent = p
+    self.light.Parent = fxHolder
+    for _, part in partsOf(model) do
+        if nameHasAny(part.Name, WARM_WORDS) and not part:FindFirstChildOfClass("PointLight") then
+            local lanternLight = Instance.new("PointLight")
+            lanternLight.Color = WARM_COLOR
+            lanternLight.Brightness = 0.9
+            lanternLight.Range = 7
+            lanternLight.Parent = part
         end
     end
     -- burst emitter for the hatch flash
-    local att = Instance.new("Attachment")
-    att.CFrame = holder.CFrame:ToObjectSpace(self.eggCF * CFrame.new(0, 1.5, 0))
-    att.Parent = holder
-    local e = Instance.new("ParticleEmitter")
-    e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-    e.Rate = 0
-    e.LightEmission = 1
-    e.LightInfluence = 0
-    e.Color = ColorSequence.new(JADE, Color3.fromRGB(255, 240, 200))
-    e.Speed = NumberRange.new(4, 9)
-    e.SpreadAngle = Vector2.new(180, 180)
-    e.Lifetime = NumberRange.new(0.5, 0.9)
-    e.Drag = 4
-    e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.6), NumberSequenceKeypoint.new(1, 0) })
-    e.Parent = att
-    self.burst = e
+    local burstAttachment = Instance.new("Attachment")
+    burstAttachment.CFrame = fxHolder.CFrame:ToObjectSpace(self.eggCF * CFrame.new(0, 1.5, 0))
+    burstAttachment.Parent = fxHolder
+    local burstEmitter = Instance.new("ParticleEmitter")
+    burstEmitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    burstEmitter.Rate = 0
+    burstEmitter.LightEmission = 1
+    burstEmitter.LightInfluence = 0
+    burstEmitter.Color = ColorSequence.new(JADE_COLOR, Color3.fromRGB(255, 240, 200))
+    burstEmitter.Speed = NumberRange.new(4, 9)
+    burstEmitter.SpreadAngle = Vector2.new(180, 180)
+    burstEmitter.Lifetime = NumberRange.new(0.5, 0.9)
+    burstEmitter.Drag = 4
+    burstEmitter.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.6), NumberSequenceKeypoint.new(1, 0) })
+    burstEmitter.Parent = burstAttachment
+    self.burst = burstEmitter
 
-    -- idle glow breathing
+    -- idle glow breathing (paused while Hatch() drives the light); stops itself once the model is removed
     self._pulse = RunService.Heartbeat:Connect(function()
         if not model.Parent then
             self:Destroy()
@@ -169,58 +179,61 @@ function Incubator.new(model)
     return self
 end
 
-local function tweenPivot(obj, from, to, t, style)
-    local v = Instance.new("NumberValue")
-    local con = v.Changed:Connect(function(a)
-        setPivot(obj, from:Lerp(to, a))
+-- Models cannot be tweened by pivot directly: tween a NumberValue 0 -> 1 and lerp. Yields until done.
+local function tweenPivot(target, fromCFrame, toCFrame, duration, easingStyle)
+    local driver = Instance.new("NumberValue")
+    local connection = driver.Changed:Connect(function(alpha)
+        setPivot(target, fromCFrame:Lerp(toCFrame, alpha))
     end)
-    local tw = TweenService:Create(
-        v,
-        TweenInfo.new(t, style or Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
+    local pivotTween = TweenService:Create(
+        driver,
+        TweenInfo.new(duration, easingStyle or Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
         { Value = 1 }
     )
-    tw:Play()
-    tw.Completed:Wait()
-    con:Disconnect()
-    v:Destroy()
+    pivotTween:Play()
+    pivotTween.Completed:Wait()
+    connection:Disconnect()
+    driver:Destroy()
 end
 
-function Incubator:_slide(open, t)
+-- Slides all doors to open/closed in parallel (with a slide sound) and yields until every door arrived.
+function Incubator:_slide(open, duration)
     local soundHost = self.model.PrimaryPart or self.model:FindFirstChildWhichIsA("BasePart") or self.model
     if soundHost then
-        local snd = Instance.new("Sound")
-        snd.Name = "DoorSlideSound"
-        snd.SoundId = "rbxassetid://9118297953" -- Robot Pneumatics Sweeping Piston Slides 6 (ProSoundEffects)
-        snd.Volume = 0.25
-        snd.PlaybackSpeed = 1.3
-        snd.RollOffMaxDistance = 45
-        snd.Parent = soundHost
-        snd:Play()
-        game:GetService("Debris"):AddItem(snd, 3)
+        local slideSound = Instance.new("Sound")
+        slideSound.Name = "DoorSlideSound"
+        slideSound.SoundId = "rbxassetid://9118297953" -- Robot Pneumatics Sweeping Piston Slides 6 (ProSoundEffects)
+        slideSound.Volume = 0.25
+        slideSound.PlaybackSpeed = 1.3
+        slideSound.RollOffMaxDistance = 45
+        slideSound.Parent = soundHost
+        slideSound:Play()
+        game:GetService("Debris"):AddItem(slideSound, 3)
     end
-    local jobs = 0
-    for _, d in self.doors do
-        jobs += 1
-        local target = open and (d.closed + self.right * (d.dir * SLIDE)) or d.closed
+    local pendingDoors = 0
+    for _, door in self.doors do
+        pendingDoors += 1
+        local target = open and (door.closed + self.right * (door.dir * SLIDE_DISTANCE)) or door.closed
         task.spawn(function()
-            tweenPivot(d.obj, pivotOf(d.obj), target, t or 0.7)
-            jobs -= 1
+            tweenPivot(door.obj, pivotOf(door.obj), target, duration or 0.7)
+            pendingDoors -= 1
         end)
     end
-    while jobs > 0 do
+    while pendingDoors > 0 do
         task.wait()
     end
+    -- `open` only flips after the slide finished, so overlapping Open/Close calls both slide.
     self.open = open
     self.model:SetAttribute("DoorsOpen", open)
 end
-function Incubator:Open(t)
+function Incubator:Open(duration)
     if not self.open then
-        self:_slide(true, t)
+        self:_slide(true, duration)
     end
 end
-function Incubator:Close(t)
+function Incubator:Close(duration)
     if self.open then
-        self:_slide(false, t)
+        self:_slide(false, duration)
     end
 end
 
@@ -233,6 +246,7 @@ function Incubator:PlaceEgg(egg)
     self.egg = egg
 end
 
+-- Wobbles the placed egg (and flickers the light) for `duration` seconds; yields. Without an egg it just waits.
 function Incubator:Shake(duration)
     duration = duration or 1.6
     local egg = self.egg
@@ -240,17 +254,21 @@ function Incubator:Shake(duration)
         task.wait(duration)
         return
     end
-    local base = egg:GetPivot()
-    local t0 = os.clock()
-    while os.clock() - t0 < duration do
-        local t = os.clock() - t0
-        local amp = math.min(1, t * 4) * (0.45 + 0.55 * t / duration) -- builds up toward the hatch
-        local rz, rx = math.sin(t * 38) * 0.16 * amp, math.sin(t * 29) * 0.07 * amp
-        egg:PivotTo(base * CFrame.new(0, math.abs(math.sin(t * 19)) * 0.1 * amp, 0) * CFrame.Angles(rx, 0, rz))
-        self.light.Brightness = 1.6 + 2.5 * amp * (0.5 + 0.5 * math.sin(t * 25))
+    local basePivot = egg:GetPivot()
+    local startClock = os.clock()
+    while os.clock() - startClock < duration do
+        local elapsed = os.clock() - startClock
+        local amplitude = math.min(1, elapsed * 4) * (0.45 + 0.55 * elapsed / duration) -- builds up toward the hatch
+        local roll, pitch = math.sin(elapsed * 38) * 0.16 * amplitude, math.sin(elapsed * 29) * 0.07 * amplitude
+        egg:PivotTo(
+            basePivot
+                * CFrame.new(0, math.abs(math.sin(elapsed * 19)) * 0.1 * amplitude, 0)
+                * CFrame.Angles(pitch, 0, roll)
+        )
+        self.light.Brightness = 1.6 + 2.5 * amplitude * (0.5 + 0.5 * math.sin(elapsed * 25))
         task.wait()
     end
-    egg:PivotTo(base)
+    egg:PivotTo(basePivot)
 end
 
 -- Full sequence. character: a Model to reveal (cloned). egg: optional egg Model already in the world.
@@ -275,8 +293,8 @@ function Incubator:Hatch(character, egg)
         revealed = character:Clone()
         local _, size = revealed:GetBoundingBox()
         revealed:PivotTo(self.eggCF * CFrame.new(0, size.Y / 2, 0) * CFrame.Angles(0, math.pi, 0)) -- face the walkway
-        for _, p in partsOf(revealed) do
-            p.Anchored = true
+        for _, part in partsOf(revealed) do
+            part.Anchored = true
         end
         revealed.Parent = self.model
     end
@@ -286,6 +304,7 @@ function Incubator:Hatch(character, egg)
     return revealed
 end
 
+-- Stops the idle pulse. The IncubatorFX part and lights stay in the model.
 function Incubator:Destroy()
     if self._pulse then
         self._pulse:Disconnect()

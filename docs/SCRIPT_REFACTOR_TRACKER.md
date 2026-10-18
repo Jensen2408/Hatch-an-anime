@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 134 |
+| Pending | 127 |
 | Reviewed — No Changes Needed | 4 |
-| Refactored | 51 |
+| Refactored | 58 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -98,13 +98,13 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Cinematics/HatchVideoClient.client.luau` | LocalScript | 61 | 132 | Pending | — | — |
-| `server/DevTools/DevWorkshop/BUILD WORKSHOP/HATCH - EDITABLE ORIGINAL/HatchGoo.server.luau` | Script | 215 | 398 | Pending | — | — |
-| `server/Hatching/HatchCameraGate.luau` | ModuleScript | 18 | 24 | Pending | — | — |
-| `server/Hatching/HatchFX/HatchFXServer.luau` | ModuleScript | 112 | 232 | Pending | — | — |
-| `server/Hatching/HatchVideoService.server.luau` | Script | 79 | 180 | Pending | — | — |
-| `server/Hatching/Templates/HatchGoo.server.luau` | Script | 292 | 561 | Pending | — | — |
-| `shared/Hatching/IncubatorController.luau` | ModuleScript | 185 | 296 | Pending | — | — |
+| `client/Cinematics/HatchVideoClient.client.luau` | LocalScript | 61 | 140 | Refactored | SAME | UserInputService, _TweenService, _arg2/_arg3; descriptive locals (hiddenGuis, connections, orbitAngle...); comments on camera orbit and owner check; selene 3->0. |
+| `server/DevTools/DevWorkshop/BUILD WORKSHOP/HATCH - EDITABLE ORIGINAL/HatchGoo.server.luau` | Script | 215 | 443 | Refactored | SAME | Header explains Disabled reference copy + how it differs + the (-22.75,-26,-92) pivot offset; same renames as the template (not merged); _bottom; selene 1->0. |
+| `server/Hatching/HatchCameraGate.luau` | ModuleScript | 18 | 47 | Refactored | SAME | Header with Focus API + CinematicHatchCue/HatchCameraReady payloads; ReplicatedStorage, pendingByPlayer, request; why the stale-request check exists. |
+| `server/Hatching/HatchFX/HatchFXServer.luau` | ModuleScript | 112 | 256 | Refactored | SAME | Header (API, options, replicated attrs/ObjectValues); activeJobs, options, timeline, eggRef/characterRef, getController; fixed playerJobs comment; job.o field kept. |
+| `server/Hatching/HatchVideoService.server.luau` | Script | 79 | 188 | Refactored | CHANGED | Remote payload + HatchGoo interface documented; full service names, DEFAULT_CHAIN, descriptive locals; the 2 identical reward-removal closures merged into destroyHatchedReward. |
+| `server/Hatching/Templates/HatchGoo.server.luau` | Script | 292 | 663 | Refactored | SAME | Header (mappings, flow, remotes/bindables/attributes); chamber/liquidSystem/cinematicCue/glassController/runCycle/canUseChamber; phase section comments; _doorRest/_bottom; selene 2->0. |
+| `shared/Hatching/IncubatorController.luau` | ModuleScript | 185 | 315 | Refactored | SAME | Public method contract in header; SLIDE_DISTANCE/JADE_COLOR/WARM_COLOR; nameHasAny/findDescendant; descriptive locals; self.* fields and method names unchanged. |
 
 ## Batch 07 — Hatching — client
 
@@ -814,66 +814,66 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Cinematics/HatchVideoClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 06 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 06 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Owners only. Press J (or /hatchvid) = RECORDING MODE + "hatching until GOD" run. Hides ALL UI, name labels and your own character; smooth camera on your incubator between hatches, the game's own hatch
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×5, OnClientEvent×1, RunService×2
-- **Readability problems:** 14 dense one-line statements; 4 lines >160 chars; 3 one-letter locals
+- **Readability problems:** UIS/TS aliases (TS unused); g/b/c/p/o/h/a/i/gp/m names; 2 unused handler params; owner list duplicated from server without note
 
 ### `server/DevTools/DevWorkshop/BUILD WORKSHOP/HATCH - EDITABLE ORIGINAL/HatchGoo.server.luau`
 
-- **Type:** Script · **Batch:** 06 · **Priority:** Medium · **Status:** Pending
+- **Type:** Script · **Batch:** 06 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** EggCharacterRewards
 - **Public functions:** —
 - **Events:** Connect×5
-- **Readability problems:** 51 dense one-line statements; 2 lines >160 chars; 4 one-letter locals
+- **Readability problems:** No header saying it is an older, disabled, out-of-sync copy; same cryptic names as the template; magic pivot offset undocumented; unused local
 
 ### `server/Hatching/HatchCameraGate.luau`
 
-- **Type:** ModuleScript · **Batch:** 06 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 06 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** Gate.Focus
 - **Events:** Connect×1, OnServerEvent×1
-- **Readability problems:** 2 dense one-line statements; 1 one-letter locals
+- **Readability problems:** No header; RS alias; p for the pending request; remote contract (token handshake, 8 s timeout) undocumented
 
 ### `server/Hatching/HatchFX/HatchFXServer.luau`
 
-- **Type:** ModuleScript · **Batch:** 06 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 06 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** HatchFXConfig
 - **Public functions:** Service.Cancel, Service.IsBusy, Service.IsPlayerBusy, Service.Play
 - **Events:** Connect×1
-- **Readability problems:** 25 dense one-line statements; 2 lines >160 chars; 3 one-letter locals
+- **Readability problems:** No header; wrong comment (playerJobs keyed by incubator, it is by player); cryptic inc, o, T, ev/cv, ch, th, n, c, ctl; replicated attribute contract undocumented
 
 ### `server/Hatching/HatchVideoService.server.luau`
 
-- **Type:** Script · **Batch:** 06 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 06 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** HatchVideoService (owners only): "hatching until I get a GOD" recording run. Client sends "Start" -> server hatches a chain of eggs in incubator 1 instantly (no waiting), each with the real hatch reve
 - **Dependencies:** CharacterCatalog
 - **Public functions:** —
 - **Events:** Connect×4, OnServerEvent×1, PlayerRemoving×1
-- **Readability problems:** 20 dense one-line statements; 2 lines >160 chars; 4 one-letter locals
+- **Readability problems:** RS/SS aliases; p/pl/ch/t/s/h/w/reward/cReward names; two identical ChildAdded handlers; remote payloads undocumented
 
 ### `server/Hatching/Templates/HatchGoo.server.luau`
 
-- **Type:** Script · **Batch:** 06 · **Priority:** Medium · **Status:** Pending
+- **Type:** Script · **Batch:** 06 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** CharacterCatalog, CharacterEconomy, EggCharacterRewards, EggHatchTiming, HatchCameraGate, HatchFXConfig, HatchFXServer, IncubatorController, Mutations
 - **Public functions:** —
 - **Events:** Connect×6
-- **Readability problems:** 73 dense one-line statements; 9 lines >160 chars; 3 one-letter locals
+- **Readability problems:** No header (4 Rojo mappings, inputs/outputs undocumented); cryptic locals h, m, v, p, r, mut, held, rest/doorRest, camera (actually a RemoteEvent); 300-line cycle with no sections; Collection alias; 2 unused locals
 
 ### `shared/Hatching/IncubatorController.luau`
 
-- **Type:** ModuleScript · **Batch:** 06 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 06 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.IncubatorController (ModuleScript)
 - **Dependencies:** IncubatorController
 - **Public functions:** Incubator.new, Incubator:Close, Incubator:Destroy, Incubator:Hatch, Incubator:Open, Incubator:PlaceEgg, Incubator:Shake, Incubator:_slide
 - **Events:** Connect×2, RunService×1
-- **Readability problems:** 25 dense one-line statements; 2 lines >160 chars; 5 one-letter locals
+- **Readability problems:** Cryptic helper/local names (has, find, x, t, d, n, plat, cf, att, e, l, v, con, tw, snd, jobs, rz/rx, amp); constants not UPPER_SNAKE_COLOR-clear; public contract not listed
 
 ### `client/Hatching/CinematicHatch.client.luau`
 

@@ -1,41 +1,53 @@
 -- HatchVideoService (owners only): "hatching until I get a GOD" recording run.
 -- Client sends "Start" -> server hatches a chain of eggs in incubator 1 instantly (no waiting),
 -- each with the real hatch reveal, ending on the chosen top egg. Rewards are removed again afterwards.
+--
+-- Remote: ReplicatedStorage.HatchVideo (RemoteEvent, created here if missing)
+--   client -> server: ("Start", optionalIdList) | ("Stop")
+--   server -> client: ("Begin", chamber) | ("Egg", index, count, id) | ("Error", message) | ("Done")
+-- Drives the chamber through its own HatchGoo interface: ResumeEgg (insert with 0.6 s left),
+-- RequestHatch (press hatch) and EggPickupAnchor.RequestPickup (collect), polling the Status attribute.
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
-local SS = game:GetService("ServerStorage")
-local OWNERS = { [168774222] = true, [353101613] = true }
-local CHAIN = { "Shinobi", "Hero", "Soul", "Devil", "God" }
-local Catalog = require(RS:WaitForChild("CharacterCatalog"))
-local remote = RS:FindFirstChild("HatchVideo") or Instance.new("RemoteEvent")
-remote.Name = "HatchVideo"
-remote.Parent = RS
-local running = {}
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
-local function plotOf(p)
-    for _, pl in workspace.Plots:GetChildren() do
-        if pl:GetAttribute("OwnerUserId") == p.UserId then
-            return pl
+local OWNERS = { [168774222] = true, [353101613] = true }
+local DEFAULT_CHAIN = { "Shinobi", "Hero", "Soul", "Devil", "God" }
+
+local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
+local remote = ReplicatedStorage:FindFirstChild("HatchVideo") or Instance.new("RemoteEvent")
+remote.Name = "HatchVideo"
+remote.Parent = ReplicatedStorage
+local running = {} -- [player] = true while a run is active; cleared by "Stop" to end it early
+
+local function plotOf(player)
+    for _, plot in workspace.Plots:GetChildren() do
+        if plot:GetAttribute("OwnerUserId") == player.UserId then
+            return plot
         end
     end
 end
-local function waitStatus(ch, want, timeout)
-    local t = os.clock()
-    while os.clock() - t < (timeout or 60) do
-        if not ch.Parent then
+
+-- Polls chamber.Status until it equals `want` (or is in the list `want`). False on timeout / chamber removed.
+local function waitStatus(chamber, want, timeout)
+    local startTime = os.clock()
+    while os.clock() - startTime < (timeout or 60) do
+        if not chamber.Parent then
             return false
         end
-        local s = ch:GetAttribute("Status")
-        if (type(want) == "table" and table.find(want, s)) or s == want then
+        local status = chamber:GetAttribute("Status")
+        if (type(want) == "table" and table.find(want, status)) or status == want then
             return true
         end
         task.wait(0.1)
     end
     return false
 end
+
+-- Builds a throwaway egg tool (tagged HatchVideo) shaped like a normal held egg.
 local function makeEgg(id)
     local entry = Catalog.ById[id]
-    local template = SS.AuxEggTemplates:FindFirstChild(id)
+    local template = ServerStorage.AuxEggTemplates:FindFirstChild(id)
     if not entry or not template then
         return
     end
@@ -51,72 +63,67 @@ local function makeEgg(id)
     visual:ScaleTo(template:GetScale() * 0.5)
     visual:PivotTo(CFrame.new())
     visual.Parent = tool
-    local h = Instance.new("Part")
-    h.Name = "Handle"
-    h.Size = Vector3.one
-    h.Transparency = 1
-    h.CanCollide = false
-    h.Massless = true
-    h.Parent = tool
-    for _, p in visual:GetDescendants() do
-        if p:IsA("BasePart") then
-            p.Anchored = false
-            p.CanCollide = false
-            p.Massless = true
-            local w = Instance.new("WeldConstraint")
-            w.Part0 = h
-            w.Part1 = p
-            w.Parent = h
-        elseif p:IsA("BaseScript") then
-            p:Destroy()
+    local handle = Instance.new("Part")
+    handle.Name = "Handle"
+    handle.Size = Vector3.one
+    handle.Transparency = 1
+    handle.CanCollide = false
+    handle.Massless = true
+    handle.Parent = tool
+    for _, descendant in visual:GetDescendants() do
+        if descendant:IsA("BasePart") then
+            descendant.Anchored = false
+            descendant.CanCollide = false
+            descendant.Massless = true
+            local weld = Instance.new("WeldConstraint")
+            weld.Part0 = handle
+            weld.Part1 = descendant
+            weld.Parent = handle
+        elseif descendant:IsA("BaseScript") then
+            descendant:Destroy()
         end
     end
     return tool
 end
 
-local function run(p, chain)
-    local plot = plotOf(p)
+-- Hatched reward tools from the recording run are removed again so the run awards nothing.
+local function destroyHatchedReward(child)
+    if child:IsA("Tool") and child:GetAttribute("Hatched") then
+        task.defer(function()
+            child:Destroy()
+        end)
+    end
+end
+
+local function run(player, chain)
+    local plot = plotOf(player)
     if not plot then
-        remote:FireClient(p, "Error", "No temple")
+        remote:FireClient(player, "Error", "No temple")
         return
     end
-    local ch = plot.Chambers:FindFirstChild("Chamber1")
-    if not ch then
+    local chamber = plot.Chambers:FindFirstChild("Chamber1")
+    if not chamber then
         return
     end
-    local button = ch:FindFirstChild("HatchButton", true)
-    local root = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-    if not root then
+    local button = chamber:FindFirstChild("HatchButton", true)
+    local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then
         return
     end
-    local bag = p:FindFirstChildOfClass("Backpack")
+    local backpack = player:FindFirstChildOfClass("Backpack")
     -- park the (locally hidden) character right by the hatch button so all range checks pass
-    local stand = (button and button:IsA("BasePart") and button.CFrame or ch:GetPivot()) * CFrame.new(0, 0, -6)
+    local stand = (button and button:IsA("BasePart") and button.CFrame or chamber:GetPivot()) * CFrame.new(0, 0, -6)
     local function park()
-        if p.Character then
-            p.Character:PivotTo(CFrame.new(stand.Position + Vector3.new(0, 3, 0)))
+        if player.Character then
+            player.Character:PivotTo(CFrame.new(stand.Position + Vector3.new(0, 3, 0)))
         end
     end
-    local reward = bag
-        and bag.ChildAdded:Connect(function(t)
-            if t:IsA("Tool") and t:GetAttribute("Hatched") then
-                task.defer(function()
-                    t:Destroy()
-                end)
-            end
-        end)
-    local cReward = p.Character
-        and p.Character.ChildAdded:Connect(function(t)
-            if t:IsA("Tool") and t:GetAttribute("Hatched") then
-                task.defer(function()
-                    t:Destroy()
-                end)
-            end
-        end)
-    remote:FireClient(p, "Begin", ch)
-    waitStatus(ch, "Ready", 30)
+    local backpackRewardConnection = backpack and backpack.ChildAdded:Connect(destroyHatchedReward)
+    local characterRewardConnection = player.Character and player.Character.ChildAdded:Connect(destroyHatchedReward)
+    remote:FireClient(player, "Begin", chamber)
+    waitStatus(chamber, "Ready", 30)
     for i, id in chain do
-        if not running[p] or not p.Parent then
+        if not running[player] or not player.Parent then
             break
         end
         park()
@@ -124,43 +131,44 @@ local function run(p, chain)
         if not egg then
             continue
         end
-        egg.Parent = bag
-        remote:FireClient(p, "Egg", i, #chain, id)
-        ch.ResumeEgg:Invoke(p, egg, 0.6)
-        if not waitStatus(ch, "Loaded", 20) then
+        egg.Parent = backpack
+        remote:FireClient(player, "Egg", i, #chain, id)
+        chamber.ResumeEgg:Invoke(player, egg, 0.6)
+        if not waitStatus(chamber, "Loaded", 20) then
             break
         end
         task.wait(0.8)
         park()
-        ch.RequestHatch:Fire(p)
-        if not waitStatus(ch, "AwaitingPickup", 40) then
+        chamber.RequestHatch:Fire(player)
+        if not waitStatus(chamber, "AwaitingPickup", 40) then
             break
         end
         task.wait(i == #chain and 5 or 1.6) -- hold longer on the final reveal
-        local anchor = ch:FindFirstChild("EggPickupAnchor", true)
+        local anchor = chamber:FindFirstChild("EggPickupAnchor", true)
         park()
         if anchor and anchor:FindFirstChild("RequestPickup") then
-            anchor.RequestPickup:Fire(p)
+            anchor.RequestPickup:Fire(player)
         end
-        waitStatus(ch, "Ready", 15)
+        waitStatus(chamber, "Ready", 15)
         task.wait(0.4)
     end
-    if reward then
-        reward:Disconnect()
+    if backpackRewardConnection then
+        backpackRewardConnection:Disconnect()
     end
-    if cReward then
-        cReward:Disconnect()
+    if characterRewardConnection then
+        characterRewardConnection:Disconnect()
     end
-    running[p] = nil
-    remote:FireClient(p, "Done")
+    running[player] = nil
+    remote:FireClient(player, "Done")
 end
 
-remote.OnServerEvent:Connect(function(p, action, list)
-    if not OWNERS[p.UserId] then
+remote.OnServerEvent:Connect(function(player, action, list)
+    if not OWNERS[player.UserId] then
         return
     end
-    if action == "Start" and not running[p] then
-        local chain = CHAIN
+    if action == "Start" and not running[player] then
+        -- Optional custom chain from the client: 1..10 ids, unknown ids are dropped.
+        local chain = DEFAULT_CHAIN
         if type(list) == "table" and #list > 0 and #list <= 10 then
             chain = {}
             for _, id in list do
@@ -169,12 +177,12 @@ remote.OnServerEvent:Connect(function(p, action, list)
                 end
             end
         end
-        running[p] = true
-        task.spawn(run, p, chain)
+        running[player] = true
+        task.spawn(run, player, chain)
     elseif action == "Stop" then
-        running[p] = nil
+        running[player] = nil
     end
 end)
-Players.PlayerRemoving:Connect(function(p)
-    running[p] = nil
+Players.PlayerRemoving:Connect(function(player)
+    running[player] = nil
 end)

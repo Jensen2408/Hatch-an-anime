@@ -1,49 +1,55 @@
 -- Owners only. Press J (or /hatchvid) = RECORDING MODE + "hatching until GOD" run.
 -- Hides ALL UI, name labels and your own character; smooth camera on your incubator between hatches,
 -- the game's own hatch-reveal camera for every reveal. Press J again to stop.
-local Players, RunService, UIS, TS =
+-- Remote: ReplicatedStorage.HatchVideo (see HatchVideoService). Also starts when the player
+-- attribute "StartHatchVideo" turns truthy.
+local Players, RunService, UserInputService, _TweenService =
     game:GetService("Players"),
     game:GetService("RunService"),
     game:GetService("UserInputService"),
     game:GetService("TweenService")
 local StarterGui = game:GetService("StarterGui")
 local player = Players.LocalPlayer
+-- Same owner ids as HatchVideoService.OWNERS (the server checks again).
 if not ({ [168774222] = true, [353101613] = true })[player.UserId] then
     return
 end
 local remote = game.ReplicatedStorage:WaitForChild("HatchVideo")
-local active, chamber, conns, hidden = false, nil, {}, {}
+-- hiddenGuis: GUIs this script disabled, re-enabled on stop()
+local active, chamber, connections, hiddenGuis = false, nil, {}, {}
 
+-- Runs every Heartbeat while recording, so newly created GUIs / characters are hidden too.
 local function hideStuff()
-    for _, g in player.PlayerGui:GetChildren() do
-        if (g:IsA("ScreenGui") or g:IsA("BillboardGui")) and g.Enabled and not hidden[g] then
-            hidden[g] = true
-            g.Enabled = false
+    for _, gui in player.PlayerGui:GetChildren() do
+        if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled and not hiddenGuis[gui] then
+            hiddenGuis[gui] = true
+            gui.Enabled = false
         end
     end
-    for _, b in workspace:GetDescendants() do
+    -- Billboards inside the recorded chamber (countdown, status) stay visible.
+    for _, billboard in workspace:GetDescendants() do
         if
-            b:IsA("BillboardGui")
-            and b.Enabled
-            and not hidden[b]
-            and not b:IsDescendantOf(chamber or workspace.Terrain)
+            billboard:IsA("BillboardGui")
+            and billboard.Enabled
+            and not hiddenGuis[billboard]
+            and not billboard:IsDescendantOf(chamber or workspace.Terrain)
         then
-            hidden[b] = true
-            b.Enabled = false
+            hiddenGuis[billboard] = true
+            billboard.Enabled = false
         end
     end
-    local c = player.Character
-    if c then
-        for _, p in c:GetDescendants() do
-            if p:IsA("BasePart") or p:IsA("Decal") then
-                p.LocalTransparencyModifier = 1
+    local character = player.Character
+    if character then
+        for _, part in character:GetDescendants() do
+            if part:IsA("BasePart") or part:IsA("Decal") then
+                part.LocalTransparencyModifier = 1
             end
         end
     end
-    for _, o in Players:GetPlayers() do
-        local h = o.Character and o.Character:FindFirstChildOfClass("Humanoid")
-        if h then
-            h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+    for _, otherPlayer in Players:GetPlayers() do
+        local humanoid = otherPlayer.Character and otherPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
         end
     end
 end
@@ -53,21 +59,21 @@ local function stop()
     end
     active = false
     RunService:UnbindFromRenderStep("HatchVideoCam")
-    for _, c in conns do
-        c:Disconnect()
+    for _, connection in connections do
+        connection:Disconnect()
     end
-    conns = {}
-    for g in hidden do
-        if g.Parent then
-            g.Enabled = true
+    connections = {}
+    for gui in hiddenGuis do
+        if gui.Parent then
+            gui.Enabled = true
         end
     end
-    hidden = {}
-    local c = player.Character
-    if c then
-        for _, p in c:GetDescendants() do
-            if p:IsA("BasePart") or p:IsA("Decal") then
-                p.LocalTransparencyModifier = 0
+    hiddenGuis = {}
+    local character = player.Character
+    if character then
+        for _, part in character:GetDescendants() do
+            if part:IsA("BasePart") or part:IsA("Decal") then
+                part.LocalTransparencyModifier = 0
             end
         end
     end
@@ -76,6 +82,7 @@ local function stop()
     workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
     remote:FireServer("Stop")
 end
+-- Toggles: a second press while recording stops the run.
 local function start()
     if active then
         stop()
@@ -86,12 +93,13 @@ local function start()
     remote:FireServer("Start")
 end
 
-remote.OnClientEvent:Connect(function(kind, a, b, c)
+remote.OnClientEvent:Connect(function(kind, payload, _arg2, _arg3)
     if kind == "Begin" then
-        chamber = a
-        local cam = workspace.CurrentCamera
-        local t0 = os.clock()
-        table.insert(conns, RunService.Heartbeat:Connect(hideStuff))
+        chamber = payload
+        local camera = workspace.CurrentCamera
+        local startClock = os.clock()
+        table.insert(connections, RunService.Heartbeat:Connect(hideStuff))
+        -- Slow orbit around the chamber that slowly dollies in, restarting every 15 s.
         RunService:BindToRenderStep("HatchVideoCam", Enum.RenderPriority.Camera.Value + 2, function()
             if not chamber or not chamber.Parent then
                 return
@@ -101,27 +109,27 @@ remote.OnClientEvent:Connect(function(kind, a, b, c)
                 return
             end -- the game's reveal camera takes over
             local pivot = chamber:GetPivot()
-            local t = os.clock() - t0
+            local elapsed = os.clock() - startClock
             local center = pivot.Position + Vector3.new(0, 3, 0)
-            local ang = math.sin(t * 0.35) * 0.5
-            local dist = 24 - math.min(6, (t % 15) * 0.4)
-            local look = pivot.LookVector
-            local dir = (CFrame.Angles(0, ang, 0) * CFrame.new(Vector3.zero, -look)).LookVector
-            cam.CameraType = Enum.CameraType.Scriptable
-            cam.FieldOfView = 55
-            cam.CFrame = CFrame.lookAt(center + dir * dist + Vector3.new(0, 6, 0), center)
+            local orbitAngle = math.sin(elapsed * 0.35) * 0.5
+            local distance = 24 - math.min(6, (elapsed % 15) * 0.4)
+            local lookVector = pivot.LookVector
+            local direction = (CFrame.Angles(0, orbitAngle, 0) * CFrame.new(Vector3.zero, -lookVector)).LookVector
+            camera.CameraType = Enum.CameraType.Scriptable
+            camera.FieldOfView = 55
+            camera.CFrame = CFrame.lookAt(center + direction * distance + Vector3.new(0, 6, 0), center)
         end)
     elseif kind == "Done" or kind == "Error" then
         task.delay(kind == "Done" and 4 or 0, stop)
     end
 end)
-UIS.InputBegan:Connect(function(i, gp)
-    if not gp and i.KeyCode == Enum.KeyCode.J then
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.J then
         start()
     end
 end)
-player.Chatted:Connect(function(m)
-    if m:lower() == "/hatchvid" then
+player.Chatted:Connect(function(message)
+    if message:lower() == "/hatchvid" then
         start()
     end
 end)
