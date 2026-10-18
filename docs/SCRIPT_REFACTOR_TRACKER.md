@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 139 |
+| Pending | 134 |
 | Reviewed — No Changes Needed | 4 |
-| Refactored | 46 |
+| Refactored | 51 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -88,11 +88,11 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Egg/EggPickupFeedback.client.luau` | LocalScript | 54 | 131 | Pending | — | — |
-| `client/Egg/EggStealClientStart.client.luau` | LocalScript | 2 | 2 | Pending | — | — |
-| `client/Egg/RiverEggCarryClient.client.luau` | LocalScript | 22 | 26 | Pending | — | — |
-| `client/Egg/StolenEggCarryPose.client.luau` | LocalScript | 105 | 136 | Pending | — | — |
-| `shared/Egg/EggSteal/EggStealClient.luau` | ModuleScript | 849 | 1184 | Pending | — | — |
+| `client/Egg/EggPickupFeedback.client.luau` | LocalScript | 54 | 149 | Refactored | SAME | Header documents EggCollected (eggId, eggCFrame, eggSize); RS->ReplicatedStorage, VOICE_ASSET_IDS, catalogById, pickupCard, cardSerial, progress/eased; section comments. |
+| `client/Egg/EggStealClientStart.client.luau` | LocalScript | 2 | 4 | Refactored | SAME | Header expanded (bootstraps EggStealClient.Start()). |
+| `client/Egg/RiverEggCarryClient.client.luau` | LocalScript | 22 | 36 | Refactored | SAME | Header with RiverEggCarryState payloads + attribute mirror; RS->ReplicatedStorage, currentCarryId, recoverFromAttributes, carryId/basePosition. |
+| `client/Egg/StolenEggCarryPose.client.luau` | LocalScript | 105 | 152 | Refactored | SAME | Header (pose for all characters, joints, reset); watchedCharacters, scanCharacter, setupPlayer, findJoint, record/arm/joint, *World, *BoneDir; unused -> _upperArm etc; selene 3->0. |
+| `shared/Egg/EggSteal/EggStealClient.luau` | ModuleScript | 849 | 1245 | Refactored | SAME | Header with remote contract + thief/banner split; COLORS/ALARM/SOUND_IDS, create/tween/playSound, activeSteals, fxLayer; descriptive locals; dead helpers prefixed _; selene 7->0. |
 
 ## Batch 06 — Hatching — server and incubators
 
@@ -769,48 +769,48 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Egg/EggPickupFeedback.client.luau`
 
-- **Type:** LocalScript · **Batch:** 05 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 05 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** EggCatalog, EggUIStyle
 - **Public functions:** —
 - **Events:** Connect×2, OnClientEvent×1, RunService×1
-- **Readability problems:** 15 dense one-line statements; 3 lines >160 chars; 3 one-letter locals
+- **Readability problems:** No header; RS alias; cryptic names (e, t, u, entries, holder, serial, from, size); EggCollected payload undocumented
 
 ### `client/Egg/EggStealClientStart.client.luau`
 
-- **Type:** LocalScript · **Batch:** 05 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 05 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** StarterPlayer.StarterPlayerScripts.EggStealClientStart  (LocalScript) ]]
 - **Dependencies:** EggStealClient
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** Header did not say what the script does
 
 ### `client/Egg/RiverEggCarryClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 05 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 05 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** StolenEggBanner
 - **Public functions:** —
 - **Events:** Connect×3, OnClientEvent×1
-- **Readability problems:** —
+- **Readability problems:** No header; RS alias; vague names (current, recover, id, base); RiverEggCarryState contract undocumented
 
 ### `client/Egg/StolenEggCarryPose.client.luau`
 
-- **Type:** LocalScript · **Batch:** 05 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 05 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×4, PlayerAdded×1
-- **Readability problems:** 6 dense one-line statements; 1 one-letter locals
+- **Readability problems:** No header; cryptic names (c, p, a, j, rec, sWorld, eWorld, wWorld, uBone, lBone, half, vFrom/vTo); 3 unused locals (upper/lower/hand)
 
 ### `shared/Egg/EggSteal/EggStealClient.luau`
 
-- **Type:** ModuleScript · **Batch:** 05 · **Priority:** High · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 05 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.EggSteal.EggStealClient  (ModuleScript, CLIENT ONLY)
 - **Dependencies:** EggStealConfig, StolenEggBanner
 - **Public functions:** Client.Start
 - **Events:** Connect×11, OnClientEvent×1, RunService×3
-- **Readability problems:** 41 dense one-line statements; 13 one-letter locals
+- **Readability problems:** Header stale (described thief card; thief UI now lives in StolenEggBanner); cryptic aliases K/A/S, new/tw/play helpers; many 1-letter locals (g, d, c, m, p, u, l/r/t/b, v3, rc, hw, hh, k); 5 dead local functions + 2 unused params (selene 7)
 
 ### `client/Cinematics/HatchVideoClient.client.luau`
 
