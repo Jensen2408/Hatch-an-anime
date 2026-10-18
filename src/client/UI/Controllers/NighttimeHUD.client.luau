@@ -1,12 +1,14 @@
---[[ StarterPlayerScripts.NighttimeHUD
-Top-centre Nighttime indicator + announcements. Reads the server's workspace attributes
-(NighttimeActive / NighttimeEndsAt / NighttimeNextAt) and server time, so every player is in sync.
+--[[ StarterPlayerScripts.NighttimeHUD (LocalScript)
+Top-right Nighttime indicator + announcements. Reads the server's workspace attributes
+(NighttimeActive / NighttimeEndsAt / NighttimeNextAt, written by NighttimeService) and server time,
+so every player is in sync. Purely visual: no remotes.
 States: countdown pill -> (last 10s) expanded "APPROACHING" -> big start card -> active bar -> "DAYLIGHT RETURNS" -> countdown.
+The bonus text (3x cash / 2x hatch / 3x luck) and DURATION mirror NighttimeService; keep them in sync by hand.
 ]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
-local GuiService = game:GetService("GuiService")
+local _GuiService = game:GetService("GuiService") -- unused; GetService kept (no behaviour change)
 local player = Players.LocalPlayer
 
 local INDIGO, VIOLET, CYAN, GOLD, MOON =
@@ -16,32 +18,39 @@ local INDIGO, VIOLET, CYAN, GOLD, MOON =
     Color3.fromRGB(242, 190, 85),
     Color3.fromRGB(235, 238, 255)
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local DURATION = 20
+local DURATION = 20 -- night length in seconds (NighttimeService)
+local CYCLE_SECONDS = 300 -- a night starts every 5 minutes (NighttimeService)
 
-local function make(c, p, parent)
-    local o = Instance.new(c)
-    for k, v in p do
-        o[k] = v
+-- create(className, props, parent?): new instance with `props` applied, parented last
+local function create(className, props, parent)
+    local instance = Instance.new(className)
+    for property, value in props do
+        instance[property] = value
     end
     if parent then
-        o.Parent = parent
+        instance.Parent = parent
     end
-    return o
+    return instance
 end
-local function tw(o, t, props, style)
-    local x = TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quart, Enum.EasingDirection.Out), props)
-    x:Play()
-    return x
+local function playTween(instance, duration, props, easingStyle)
+    local tween = TweenService:Create(
+        instance,
+        TweenInfo.new(duration, easingStyle or Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        props
+    )
+    tween:Play()
+    return tween
 end
 
-local gui = make(
+local gui = create(
     "ScreenGui",
     { Name = "NighttimeHUD", ResetOnSpawn = false, DisplayOrder = 40, ZIndexBehavior = Enum.ZIndexBehavior.Sibling },
     player:WaitForChild("PlayerGui")
 )
 
-local function panel(name, size)
-    local f = make("CanvasGroup", {
+-- Rounded indigo CanvasGroup (starts hidden); returns the frame and its UIStroke.
+local function makePanel(name, size)
+    local frame = create("CanvasGroup", {
         Name = name,
         AnchorPoint = Vector2.new(1, 0),
         Size = size,
@@ -50,71 +59,71 @@ local function panel(name, size)
         GroupTransparency = 1,
         Visible = false,
     }, gui)
-    make("UICorner", { CornerRadius = UDim.new(0, 14) }, f)
+    create("UICorner", { CornerRadius = UDim.new(0, 14) }, frame)
     -- soft top sheen as its own layer (a UIGradient on a CanvasGroup would tint the text too)
-    local sheen = make("Frame", {
+    local sheen = create("Frame", {
         Size = UDim2.fromScale(1, 0.5),
         BackgroundColor3 = Color3.fromRGB(70, 62, 140),
         BackgroundTransparency = 0.55,
         BorderSizePixel = 0,
         ZIndex = 0,
-    }, f)
-    make("UICorner", { CornerRadius = UDim.new(0, 14) }, sheen)
-    local st = make("UIStroke", { Color = VIOLET, Thickness = 1.5, Transparency = 0.15 }, f)
-    return f, st
+    }, frame)
+    create("UICorner", { CornerRadius = UDim.new(0, 14) }, sheen)
+    local stroke = create("UIStroke", { Color = VIOLET, Thickness = 1.5, Transparency = 0.15 }, frame)
+    return frame, stroke
 end
-local function label(parent, text, size, color, props)
-    local l = make(
+local function makeLabel(parent, text, textSize, color, props)
+    local label = create(
         "TextLabel",
-        { BackgroundTransparency = 1, FontFace = FONT, TextSize = size, TextColor3 = color, Text = text },
+        { BackgroundTransparency = 1, FontFace = FONT, TextSize = textSize, TextColor3 = color, Text = text },
         parent
     )
-    for k, v in props or {} do
-        l[k] = v
+    for property, value in props or {} do
+        label[property] = value
     end
-    return l
+    return label
 end
 
 -- compact pill (countdown / active)
-local pill = panel("Pill", UDim2.fromOffset(250, 40))
-local moon = make("Frame", {
+local pill = makePanel("Pill", UDim2.fromOffset(250, 40))
+local moon = create("Frame", {
     AnchorPoint = Vector2.new(0, 0.5),
     Position = UDim2.new(0, 12, 0.5, -2),
     Size = UDim2.fromOffset(20, 20),
     BackgroundColor3 = MOON,
 }, pill)
-make("UICorner", { CornerRadius = UDim.new(1, 0) }, moon)
-local bite = make("Frame", {
+create("UICorner", { CornerRadius = UDim.new(1, 0) }, moon)
+local bite = create("Frame", {
     Position = UDim2.fromOffset(7, -3),
     Size = UDim2.fromOffset(20, 20),
     BackgroundColor3 = Color3.fromRGB(40, 35, 92),
 }, moon) -- crescent
-make("UICorner", { CornerRadius = UDim.new(1, 0) }, bite)
-local pillText = label(
+create("UICorner", { CornerRadius = UDim.new(1, 0) }, bite)
+local pillText = makeLabel(
     pill,
     "",
     17,
     MOON,
     { Position = UDim2.new(0, 40, 0, 0), Size = UDim2.new(1, -52, 1, -6), TextXAlignment = Enum.TextXAlignment.Left }
 )
-local pillBonus = label(pill, "3× CASH • 2× HATCH • 3× LUCK", 11, CYAN, {
+local pillBonus = makeLabel(pill, "3× CASH • 2× HATCH • 3× LUCK", 11, CYAN, {
     Position = UDim2.new(0, 40, 0, 22),
     Size = UDim2.new(1, -52, 0, 12),
     TextXAlignment = Enum.TextXAlignment.Left,
     Visible = false,
 })
-local track = make("Frame", {
+local track = create("Frame", {
     AnchorPoint = Vector2.new(0.5, 1),
     Position = UDim2.new(0.5, 0, 1, -4),
     Size = UDim2.new(1, -24, 0, 3),
     BackgroundColor3 = Color3.fromRGB(60, 56, 120),
     BorderSizePixel = 0,
 }, pill)
-make("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-local bar = make("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = CYAN, BorderSizePixel = 0 }, track)
-make("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
-local barGrad = make("UIGradient", { Color = ColorSequence.new(CYAN, VIOLET) }, bar)
-local goldDot = make("Frame", {
+create("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
+local bar = create("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = CYAN, BorderSizePixel = 0 }, track)
+create("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
+local _barGradient = create("UIGradient", { Color = ColorSequence.new(CYAN, VIOLET) }, bar)
+local goldDot = create("Frame", {
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.new(1, -12, 0.5, -2),
     Size = UDim2.fromOffset(5, 5),
@@ -122,26 +131,26 @@ local goldDot = make("Frame", {
     BackgroundColor3 = GOLD,
     BorderSizePixel = 0,
 }, pill)
-local pillScale = make("UIScale", {}, pill)
-make("UIScale", {}, gui):Destroy()
+local pillScale = create("UIScale", {}, pill)
+create("UIScale", {}, gui):Destroy() -- no-op leftover; kept to preserve instance creation order
 
--- big announcement
-local big, bigStroke = panel("Announcement", UDim2.fromOffset(330, 104))
-local bigScale = make("UIScale", {}, big)
-local bigTitle = label(big, "", 26, MOON, { Position = UDim2.fromOffset(0, 14), Size = UDim2.new(1, 0, 0, 40) })
-local bigSub = label(big, "", 16, GOLD, { Position = UDim2.fromOffset(0, 56), Size = UDim2.new(1, 0, 0, 20) })
-local bigBonus = label(big, "", 12, CYAN, { Position = UDim2.fromOffset(0, 82), Size = UDim2.new(1, 0, 0, 18) })
-for _, x in { 0.08, 0.92 } do
-    make("Frame", {
+-- big announcement card (same top-right anchor as the pill)
+local big, bigStroke = makePanel("Announcement", UDim2.fromOffset(330, 104))
+local bigScale = create("UIScale", {}, big)
+local bigTitle = makeLabel(big, "", 26, MOON, { Position = UDim2.fromOffset(0, 14), Size = UDim2.new(1, 0, 0, 40) })
+local bigSub = makeLabel(big, "", 16, GOLD, { Position = UDim2.fromOffset(0, 56), Size = UDim2.new(1, 0, 0, 20) })
+local bigBonus = makeLabel(big, "", 12, CYAN, { Position = UDim2.fromOffset(0, 82), Size = UDim2.new(1, 0, 0, 18) })
+for _, xScale in { 0.08, 0.92 } do
+    create("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(x, 0.3),
+        Position = UDim2.fromScale(xScale, 0.3),
         Size = UDim2.fromOffset(6, 6),
         Rotation = 45,
         BackgroundColor3 = GOLD,
         BorderSizePixel = 0,
     }, big)
 end
-make("Frame", {
+create("Frame", {
     AnchorPoint = Vector2.new(0.5, 0),
     Position = UDim2.new(0.5, 0, 0, 52),
     Size = UDim2.fromOffset(120, 1),
@@ -152,51 +161,55 @@ make("Frame", {
 
 -- ScreenGui already excludes the top bar and hardware safe area.
 gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
+-- shrink both panels on small screens (never scale above 1)
 local function layout()
-    local v = gui.AbsoluteSize
-    if v.X <= 0 or v.Y <= 0 then
+    local screenSize = gui.AbsoluteSize
+    if screenSize.X <= 0 or screenSize.Y <= 0 then
         return
     end
-    local s = math.min(1, v.X / 600, v.Y / 560)
-    pillScale.Scale = s
-    bigScale.Scale = s
+    local uiScale = math.min(1, screenSize.X / 600, screenSize.Y / 560)
+    pillScale.Scale = uiScale
+    bigScale.Scale = uiScale
     pill.Position = UDim2.new(1, -10, 0, 10)
     big.Position = UDim2.new(1, -10, 0, 10)
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
 layout()
 
-local function show(f, on, t)
-    if on then
-        f.Visible = true
+-- Fades a panel in/out; hides it once fully transparent (unless it was faded back in meanwhile).
+local function show(frame, visible, duration)
+    if visible then
+        frame.Visible = true
     end
-    local x = tw(f, t or 0.35, { GroupTransparency = on and 0 or 1 })
-    if not on then
-        x.Completed:Once(function()
-            if f.GroupTransparency > 0.99 then
-                f.Visible = false
+    local fadeTween = playTween(frame, duration or 0.35, { GroupTransparency = visible and 0 or 1 })
+    if not visible then
+        fadeTween.Completed:Once(function()
+            if frame.GroupTransparency > 0.99 then
+                frame.Visible = false
             end
         end)
     end
 end
-local function setPill(w, h)
-    tw(pill, 0.35, { Size = UDim2.fromOffset(w, h) })
+local function resizePill(width, height)
+    playTween(pill, 0.35, { Size = UDim2.fromOffset(width, height) })
 end
 
-local function fmt(sec)
-    sec = math.max(0, math.ceil(sec))
-    return string.format("%02d:%02d", sec // 60, sec % 60)
+-- "MM:SS", rounded up, never negative
+local function formatClock(seconds)
+    seconds = math.max(0, math.ceil(seconds))
+    return string.format("%02d:%02d", seconds // 60, seconds % 60)
 end
 
 local mode -- "countdown" | "approach" | "active" | nil
-local function setMode(m)
-    if m == mode then
+-- Runs the one-shot transition into `newMode`. Delayed steps re-check `mode` so a newer state wins.
+local function setMode(newMode)
+    if newMode == mode then
         return
     end
-    local prev = mode
-    mode = m
-    if m == "countdown" then
-        if prev == "active" then -- daylight returns transition
+    local previousMode = mode
+    mode = newMode
+    if newMode == "countdown" then
+        if previousMode == "active" then -- daylight returns transition
             bigTitle.Text = "DAYLIGHT RETURNS"
             bigTitle.TextColor3 = Color3.fromRGB(255, 226, 160)
             bigSub.Text = "Bonuses have ended"
@@ -204,7 +217,7 @@ local function setMode(m)
             show(pill, false, 0.25)
             big.Position = big.Position - UDim2.fromOffset(0, 10)
             show(big, true, 0.35)
-            tw(big, 0.4, { Position = big.Position + UDim2.fromOffset(0, 10) })
+            playTween(big, 0.4, { Position = big.Position + UDim2.fromOffset(0, 10) })
             task.delay(2.2, function()
                 if mode == "countdown" then
                     show(big, false, 0.4)
@@ -220,32 +233,33 @@ local function setMode(m)
             show(pill, true)
         end
         pillBonus.Visible = false
-        setPill(250, 40)
+        resizePill(250, 40)
         goldDot.Visible = true
-    elseif m == "approach" then
+    elseif newMode == "approach" then
         show(pill, false, 0.25)
         bigTitle.Text = "NIGHTTIME APPROACHING"
         bigTitle.TextColor3 = MOON
         bigBonus.Text = "3× CASH  •  2× HATCH SPEED  •  3× RIVER LUCK"
         big.Position = big.Position - UDim2.fromOffset(0, 12)
         show(big, true, 0.4)
-        tw(big, 0.45, { Position = big.Position + UDim2.fromOffset(0, 12) })
-    elseif m == "active" then
+        playTween(big, 0.45, { Position = big.Position + UDim2.fromOffset(0, 12) })
+    elseif newMode == "active" then
         bigTitle.Text = "NIGHTTIME"
         bigTitle.TextColor3 = MOON
         bigSub.Text = DURATION .. " SECONDS OF BONUS REWARDS"
         bigBonus.Text = "3× CASH  •  2× HATCH SPEED  •  3× RIVER LUCK"
-        local fresh = prev == "approach" or prev == "countdown"
+        local fresh = previousMode == "approach" or previousMode == "countdown"
         local now = workspace:GetServerTimeNow()
-        local left = (workspace:GetAttribute("NighttimeEndsAt") or now) - now
+        local secondsLeft = (workspace:GetAttribute("NighttimeEndsAt") or now) - now
         pillBonus.Visible = true
         goldDot.Visible = false
-        setPill(270, 52)
-        if fresh and left > DURATION - 3 then
+        resizePill(270, 52)
+        -- big start card only if we saw night begin (not when joining / forced mid-event)
+        if fresh and secondsLeft > DURATION - 3 then
             show(pill, false, 0.2)
             show(big, true, 0.3)
             bigScale.Scale = bigScale.Scale * 1.06
-            tw(bigScale, 0.5, { Scale = bigScale.Scale / 1.06 }, Enum.EasingStyle.Back)
+            playTween(bigScale, 0.5, { Scale = bigScale.Scale / 1.06 }, Enum.EasingStyle.Back)
             task.delay(2.6, function()
                 if mode == "active" then
                     show(big, false, 0.45)
@@ -263,23 +277,25 @@ local function setMode(m)
     end
 end
 
-local acc = 0
+-- 20 Hz update
+local throttleTimer = 0
 RunService.RenderStepped:Connect(function(dt)
-    acc += dt
-    if acc < 0.05 then
+    throttleTimer += dt
+    if throttleTimer < 0.05 then
         return
     end
-    acc = 0
+    throttleTimer = 0
     local now = workspace:GetServerTimeNow()
     local active = workspace:GetAttribute("NighttimeActive") == true
-    local nextAt = workspace:GetAttribute("NighttimeNextAt") or (math.floor(now / 300) + 1) * 300
+    -- fallback mirrors NighttimeService's 300 s cycle
+    local nextAt = workspace:GetAttribute("NighttimeNextAt") or (math.floor(now / CYCLE_SECONDS) + 1) * CYCLE_SECONDS
     if active then
-        local left = math.max(0, (workspace:GetAttribute("NighttimeEndsAt") or now) - now)
+        local secondsLeft = math.max(0, (workspace:GetAttribute("NighttimeEndsAt") or now) - now)
         setMode("active")
-        pillText.Text = "NIGHTTIME • " .. fmt(left)
+        pillText.Text = "NIGHTTIME • " .. formatClock(secondsLeft)
         pillText.Size = UDim2.new(1, -52, 0, 24)
         pillText.Position = UDim2.fromOffset(40, 2)
-        bar.Size = UDim2.fromScale(math.clamp(left / DURATION, 0, 1), 1)
+        bar.Size = UDim2.fromScale(math.clamp(secondsLeft / DURATION, 0, 1), 1)
     else
         local untilNight = nextAt - now
         if untilNight <= 10 and untilNight > 0 then
@@ -291,10 +307,10 @@ RunService.RenderStepped:Connect(function(dt)
             end
         else
             setMode("countdown")
-            pillText.Text = "NIGHTTIME IN " .. fmt(untilNight)
+            pillText.Text = "NIGHTTIME IN " .. formatClock(untilNight)
             pillText.Size = UDim2.new(1, -52, 1, -6)
             pillText.Position = UDim2.fromOffset(40, 0)
-            bar.Size = UDim2.fromScale(math.clamp(1 - untilNight / (300 - DURATION), 0, 1), 1)
+            bar.Size = UDim2.fromScale(math.clamp(1 - untilNight / (CYCLE_SECONDS - DURATION), 0, 1), 1)
         end
     end
 end)

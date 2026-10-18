@@ -1,12 +1,16 @@
+-- AuraFlipbookPump (LocalScript, StarterPlayerScripts)
 -- Keeps flipbook auras alive: emits one crossfading particle every half lifetime (Rate is scaled to 0 on low graphics).
-local CS = game:GetService("CollectionService")
-local cam = workspace.CurrentCamera
+-- Targets every ParticleEmitter tagged "AuraFlipbook" whose part is within 160 studs of the camera.
+local CollectionService = game:GetService("CollectionService")
+
+local camera = workspace.CurrentCamera
+
 while true do
-    for _, e in CS:GetTagged("AuraFlipbook") do
-        if e:IsA("ParticleEmitter") and e.Enabled and e:IsDescendantOf(workspace) then
-            local p = e.Parent
-            if p:IsA("BasePart") and (p.Position - cam.CFrame.Position).Magnitude < 160 then
-                e:Emit(1)
+    for _, emitter in CollectionService:GetTagged("AuraFlipbook") do
+        if emitter:IsA("ParticleEmitter") and emitter.Enabled and emitter:IsDescendantOf(workspace) then
+            local part = emitter.Parent
+            if part:IsA("BasePart") and (part.Position - camera.CFrame.Position).Magnitude < 160 then
+                emitter:Emit(1)
             end
         end
     end

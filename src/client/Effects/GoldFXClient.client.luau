@@ -1,79 +1,92 @@
-local Collection = game:GetService("CollectionService")
-local Run = game:GetService("RunService")
-local config = game.ReplicatedStorage:WaitForChild("GoldShineConfig")
-local active = {}
-local function add(model)
-    if active[model] then
+-- GoldFXClient (LocalScript, StarterPlayerScripts)
+-- Animates the "GoldFX" rig that the server's GoldCharacterFX builds inside every model tagged "GoldCharacter":
+-- a periodic shine sweep across the ShineBoxes textures, a highlight / warm light pulse, and a ground ring burst at
+-- the middle of each sweep. Sweep timing comes from ReplicatedStorage.GoldShineConfig attributes
+-- (Duration, Period, OffsetSign) and is phased on server time (+ model attribute GoldFXPhase) so all clients agree.
+-- Everything is switched off beyond 120 studs from the camera; particle rates share a budget of 8 models.
+local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
+
+local shineConfig = game.ReplicatedStorage:WaitForChild("GoldShineConfig")
+
+local activeModels = {} -- [model] = per-model FX state (see trackModel)
+
+-- Waits (up to 10 s per child) for the GoldFX rig, then starts animating the model. Yields; run via spawn/defer.
+local function trackModel(model)
+    if activeModels[model] then
         return
     end
     local fx = model:WaitForChild("GoldFX", 10)
     if not fx then
         return
     end
-    local boxes = fx:WaitForChild("ShineBoxes", 10)
-    local emitter = fx:WaitForChild("GoldFX_Emitter", 10)
-    local ground = fx:WaitForChild("GroundRing", 10)
-    if not boxes or not emitter or not ground then
+    local shineBoxes = fx:WaitForChild("ShineBoxes", 10)
+    local emitterPart = fx:WaitForChild("GoldFX_Emitter", 10)
+    local groundPart = fx:WaitForChild("GroundRing", 10)
+    if not shineBoxes or not emitterPart or not groundPart then
         return
     end
-    local light = emitter:WaitForChild("WarmLight", 10)
-    local ring = ground:WaitForChild("RingBurst", 10)
+    local light = emitterPart:WaitForChild("WarmLight", 10)
+    local ring = groundPart:WaitForChild("RingBurst", 10)
     local highlight = fx:WaitForChild("GoldShine", 10)
     local textures = {}
-    for _, v in ipairs(boxes:GetDescendants()) do
-        if v:IsA("Texture") then
-            table.insert(textures, { texture = v, box = v.Parent, sideCycle = -1, sideStart = -1 })
+    for _, descendant in ipairs(shineBoxes:GetDescendants()) do
+        if descendant:IsA("Texture") then
+            table.insert(textures, { texture = descendant, box = descendant.Parent, sideCycle = -1, sideStart = -1 })
         end
     end
     local root = model:FindFirstChild("HumanoidRootPart", true) or model:FindFirstChild("Torso", true)
     if not root then
         return
     end
-    active[model] = {
+    activeModels[model] = {
         fx = fx,
         root = root,
-        boxes = boxes:GetChildren(),
+        boxes = shineBoxes:GetChildren(),
         textures = textures,
         light = light,
         ring = ring,
         highlight = highlight,
         start = workspace:GetServerTimeNow() - (model:GetAttribute("GoldFXPhase") or 0),
-        burstCycle = -1,
+        burstCycle = -1, -- last sweep cycle that already fired the ring burst
     }
 end
-Collection:GetInstanceAddedSignal("GoldCharacter"):Connect(function(m)
-    task.defer(add, m)
+
+CollectionService:GetInstanceAddedSignal("GoldCharacter"):Connect(function(model)
+    task.defer(trackModel, model)
 end)
-Collection:GetInstanceRemovedSignal("GoldCharacter"):Connect(function(m)
-    active[m] = nil
+CollectionService:GetInstanceRemovedSignal("GoldCharacter"):Connect(function(model)
+    activeModels[model] = nil
 end)
-for _, m in ipairs(Collection:GetTagged("GoldCharacter")) do
-    task.spawn(add, m)
+for _, model in ipairs(CollectionService:GetTagged("GoldCharacter")) do
+    task.spawn(trackModel, model)
 end
-Run.RenderStepped:Connect(function()
+
+RunService.RenderStepped:Connect(function()
     local camera = workspace.CurrentCamera
     if not camera then
         return
     end
     local now = workspace:GetServerTimeNow()
-    local duration = config:GetAttribute("Duration") or 0.9
-    local period = math.max(config:GetAttribute("Period") or 3.2, duration + 0.1)
-    local sign = config:GetAttribute("OffsetSign") or 1
-    local count = 0
-    for _ in pairs(active) do
-        count += 1
+    local duration = shineConfig:GetAttribute("Duration") or 0.9
+    local period = math.max(shineConfig:GetAttribute("Period") or 3.2, duration + 0.1)
+    local offsetSign = shineConfig:GetAttribute("OffsetSign") or 1
+    local modelCount = 0
+    for _ in pairs(activeModels) do
+        modelCount += 1
     end
-    local budget = math.min(1, 8 / math.max(1, count))
-    for model, data in pairs(active) do
+    local particleBudget = math.min(1, 8 / math.max(1, modelCount))
+    for model, data in pairs(activeModels) do
         if not model:IsDescendantOf(workspace) or not data.fx.Parent then
-            active[model] = nil
+            activeModels[model] = nil
         else
             local near = (camera.CFrame.Position - data.root.Position).Magnitude < 120
             local elapsed = math.max(0, now - data.start)
             local cycle = math.floor(elapsed / period)
             local phase = elapsed % period
             local sweeping = near and phase < duration
-            local k = math.clamp(phase / duration, 0, 1)
+            local progress = math.clamp(phase / duration, 0, 1)
+            -- triangle 0 -> 1 -> 0 over the sweep, peaking at mid-sweep
             local pulse = sweeping and math.max(0, 1 - math.abs(phase - duration * 0.5) / (duration * 0.5)) or 0
             if data.highlight then
                 data.highlight.Enabled = near
@@ -86,13 +99,13 @@ Run.RenderStepped:Connect(function()
             if sweeping and phase >= duration * 0.5 and data.burstCycle ~= cycle then
                 data.burstCycle = cycle
                 if data.ring then
-                    data.ring:Emit(math.floor(40 * budget))
+                    data.ring:Emit(math.floor(40 * particleBudget))
                 end
             end
-            for _, e in ipairs(data.fx.GoldFX_Emitter:GetChildren()) do
-                if e:IsA("ParticleEmitter") then
-                    e.Enabled = near
-                    e.Rate = (e:GetAttribute("BaseRate") or 10) * budget
+            for _, emitter in ipairs(data.fx.GoldFX_Emitter:GetChildren()) do
+                if emitter:IsA("ParticleEmitter") then
+                    emitter.Enabled = near
+                    emitter.Rate = (emitter:GetAttribute("BaseRate") or 10) * particleBudget
                 end
             end
             for _, shell in ipairs(data.fx.ShineShells:GetChildren()) do
@@ -101,72 +114,80 @@ Run.RenderStepped:Connect(function()
                 end
             end
             if sweeping then
-                local R = data.root.CFrame.RightVector
-                local minR, maxR, topY = math.huge, -math.huge, -math.huge
-                for _, b in ipairs(data.boxes) do
+                -- The sweep travels along the root's RightVector. Project every ShineBox corner on it to get the
+                -- sweep range (padded by 3 studs) and the top Y used to align the texture vertically.
+                local rightVector = data.root.CFrame.RightVector
+                local minRight, maxRight, topY = math.huge, -math.huge, -math.huge
+                for _, box in ipairs(data.boxes) do
                     for _, x in ipairs({ -0.5, 0.5 }) do
                         for _, y in ipairs({ -0.5, 0.5 }) do
                             for _, z in ipairs({ -0.5, 0.5 }) do
-                                local corner =
-                                    b.CFrame:PointToWorldSpace(Vector3.new(b.Size.X * x, b.Size.Y * y, b.Size.Z * z))
-                                local r = corner:Dot(R)
-                                minR = math.min(minR, r)
-                                maxR = math.max(maxR, r)
+                                local corner = box.CFrame:PointToWorldSpace(
+                                    Vector3.new(box.Size.X * x, box.Size.Y * y, box.Size.Z * z)
+                                )
+                                local projected = corner:Dot(rightVector)
+                                minRight = math.min(minRight, projected)
+                                maxRight = math.max(maxRight, projected)
                                 topY = math.max(topY, corner.Y)
                             end
                         end
                     end
                 end
-                minR -= 3
-                maxR += 3
-                local s = minR + (maxR - minR) * (k * k * (3 - 2 * k))
-                local fade = math.min(1, k / 0.1, (1 - k) / 0.1)
+                minRight -= 3
+                maxRight += 3
+                -- smoothstep position of the sweep line along rightVector
+                local sweepPosition = minRight + (maxRight - minRight) * (progress * progress * (3 - 2 * progress))
+                local fade = math.min(1, progress / 0.1, (1 - progress) / 0.1)
                 for _, entry in ipairs(data.textures) do
-                    local tex, b = entry.texture, entry.box
-                    local U, N, width
-                    if tex.Face == Enum.NormalId.Front then
-                        U = -b.CFrame.RightVector
-                        N = b.CFrame.LookVector
-                        width = b.Size.X
-                    elseif tex.Face == Enum.NormalId.Back then
-                        U = b.CFrame.RightVector
-                        N = -b.CFrame.LookVector
-                        width = b.Size.X
-                    elseif tex.Face == Enum.NormalId.Left then
-                        U = b.CFrame.LookVector
-                        N = -b.CFrame.RightVector
-                        width = b.Size.Z
+                    local texture, box = entry.texture, entry.box
+                    -- faceU: direction of increasing texture U on this face; faceNormal: outward normal
+                    local faceU, faceNormal, faceWidth
+                    if texture.Face == Enum.NormalId.Front then
+                        faceU = -box.CFrame.RightVector
+                        faceNormal = box.CFrame.LookVector
+                        faceWidth = box.Size.X
+                    elseif texture.Face == Enum.NormalId.Back then
+                        faceU = box.CFrame.RightVector
+                        faceNormal = -box.CFrame.LookVector
+                        faceWidth = box.Size.X
+                    elseif texture.Face == Enum.NormalId.Left then
+                        faceU = box.CFrame.LookVector
+                        faceNormal = -box.CFrame.RightVector
+                        faceWidth = box.Size.Z
                     else
-                        U = -b.CFrame.LookVector
-                        N = b.CFrame.RightVector
-                        width = b.Size.Z
+                        faceU = -box.CFrame.LookVector
+                        faceNormal = box.CFrame.RightVector
+                        faceWidth = box.Size.Z
                     end
-                    local depth = (tex.Face == Enum.NormalId.Front or tex.Face == Enum.NormalId.Back) and b.Size.Z
-                        or b.Size.X
-                    local faceCenter = b.Position + N * depth * 0.5
-                    local origin = faceCenter - U * width * 0.5 + b.CFrame.UpVector * b.Size.Y * 0.5
-                    local dot = U:Dot(R)
+                    local depth = (texture.Face == Enum.NormalId.Front or texture.Face == Enum.NormalId.Back)
+                            and box.Size.Z
+                        or box.Size.X
+                    local faceCenter = box.Position + faceNormal * depth * 0.5
+                    local origin = faceCenter - faceU * faceWidth * 0.5 + box.CFrame.UpVector * box.Size.Y * 0.5
+                    local alignment = faceU:Dot(rightVector)
                     local band
-                    if math.abs(dot) > 0.8 then
-                        band = (s - origin:Dot(R)) / dot
+                    if math.abs(alignment) > 0.8 then
+                        -- face runs along the sweep: place the band where the sweep line crosses it
+                        band = (sweepPosition - origin:Dot(rightVector)) / alignment
                     else
+                        -- side face: play a short 0.25 s wipe once the sweep line reaches the face centre
                         if entry.sideCycle ~= cycle then
                             entry.sideCycle = cycle
                             entry.sideStart = -1
                         end
-                        if entry.sideStart < 0 and math.abs(s - faceCenter:Dot(R)) <= 0.6 then
+                        if entry.sideStart < 0 and math.abs(sweepPosition - faceCenter:Dot(rightVector)) <= 0.6 then
                             entry.sideStart = phase
                         end
                         if entry.sideStart >= 0 and phase - entry.sideStart <= 0.25 then
-                            band = -1 + (width + 2) * math.clamp((phase - entry.sideStart) / 0.25, 0, 1)
+                            band = -1 + (faceWidth + 2) * math.clamp((phase - entry.sideStart) / 0.25, 0, 1)
                         end
                     end
                     if band then
-                        tex.OffsetStudsU = sign * (8 - band)
-                        tex.OffsetStudsV = topY - (b.Position.Y + b.Size.Y * 0.5)
-                        tex.Transparency = 1 - 0.9 * fade
+                        texture.OffsetStudsU = offsetSign * (8 - band)
+                        texture.OffsetStudsV = topY - (box.Position.Y + box.Size.Y * 0.5)
+                        texture.Transparency = 1 - 0.9 * fade
                     else
-                        tex.Transparency = 1
+                        texture.Transparency = 1
                     end
                 end
             else

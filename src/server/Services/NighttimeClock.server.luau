@@ -1,5 +1,8 @@
-local Night = require(script.Parent.NighttimeService)
+-- NighttimeClock (server Script, ServerScriptService)
+-- Drives NighttimeService: republishes the night-cycle workspace attributes every 0.1 s.
+local NighttimeService = require(script.Parent.NighttimeService)
+
 while true do
-    Night.Update(workspace:GetServerTimeNow())
+    NighttimeService.Update(workspace:GetServerTimeNow())
     task.wait(0.1)
 end

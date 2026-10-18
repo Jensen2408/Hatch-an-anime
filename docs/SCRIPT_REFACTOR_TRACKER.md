@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 78 |
+| Pending | 67 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 106 |
+| Refactored | 117 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -184,17 +184,17 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Effects/AuraFlipbookPump.client.luau` | LocalScript | 12 | 14 | Pending | — | — |
-| `client/Effects/GoldFXClient.client.luau` | LocalScript | 81 | 179 | Pending | — | — |
-| `client/Effects/MutationDropBoardClient.client.luau` | LocalScript | 17 | 24 | Pending | — | — |
-| `client/Effects/NighttimeSky.client.luau` | LocalScript | 135 | 315 | Pending | — | — |
-| `client/Effects/OwnerShowcaseFX.client.luau` | LocalScript | 89 | 260 | Pending | — | — |
-| `client/UI/Controllers/NighttimeHUD.client.luau` | LocalScript | 150 | 300 | Pending | — | — |
-| `server/Mutations/GoldFXServer.server.luau` | Script | 20 | 37 | Pending | — | — |
-| `server/Mutations/MutationDropService.server.luau` | Script | 19 | 33 | Pending | — | — |
-| `server/Mutations/Mutations.luau` | ModuleScript | 67 | 124 | Pending | — | — |
-| `server/Services/NighttimeClock.server.luau` | Script | 2 | 5 | Pending | — | — |
-| `server/Services/NighttimeService.luau` | ModuleScript | 17 | 20 | Pending | — | — |
+| `client/Effects/AuraFlipbookPump.client.luau` | LocalScript | 12 | 18 | Refactored | SAME | Header location/tag; CollectionService, camera, emitter, part |
+| `client/Effects/GoldFXClient.client.luau` | LocalScript | 81 | 200 | Refactored | SAME | Header (rig contract, config attrs, sync, distance/budget); full service names; trackModel/activeModels; descriptive sweep vars + comments |
+| `client/Effects/MutationDropBoardClient.client.luau` | LocalScript | 17 | 31 | Refactored | SAME | Header (board path, attributes); TIER_COLORS, screen/timerLabel/tiersLabel, lastTier/lastDropAt/secondsLeft |
+| `client/Effects/NighttimeSky.client.luau` | LocalScript | 135 | 347 | Refactored | SAME | Header (what is tweened, legacy disabled banner); section banners; NIGHT_LIGHTING, nightBlend, clockValue, onNighttimeChanged, playTween, descriptive locals |
+| `client/Effects/OwnerShowcaseFX.client.luau` | LocalScript | 89 | 281 | Refactored | SAME | Header notes Disabled in project; TweenService; WHITE/PURPLE/... + *_TEXTURE; colorSequence/numberSequence/makeEmitter/makeRing/rerouteBolt; comments |
+| `client/UI/Controllers/NighttimeHUD.client.luau` | LocalScript | 150 | 316 | Refactored | SAME | Header (sync, no remotes, mirrored constants); create/playTween/makePanel/makeLabel/formatClock/resizePill; CYCLE_SECONDS; _GuiService/_barGradient; comments |
+| `server/Mutations/GoldFXServer.server.luau` | Script | 20 | 48 | Refactored | SAME | Header (gold criteria, GoldFX contract); GoldCharacterFX, isGoldCharacter/applyIfGold/watchModel, watchedModels; defer comment |
+| `server/Mutations/MutationDropService.server.luau` | Script | 19 | 44 | Refactored | SAME | Header lists written workspace attributes + consumer; pickTier/nextDropAt, totalWeight/roll/tier locals |
+| `server/Mutations/Mutations.luau` | ModuleScript | 67 | 149 | Refactored | SAME | Header documents mutation model (Roll/Model/AddAura, odds, assets, consumers, Theme). Mutations/ServerStorage names, findPackModel, descriptive locals, why-comments |
+| `server/Services/NighttimeClock.server.luau` | Script | 2 | 8 | Refactored | SAME | Header; NighttimeService name |
+| `server/Services/NighttimeService.luau` | ModuleScript | 17 | 36 | Refactored | SAME | Header documents cycle + published attributes/multipliers; CYCLE_SECONDS/NIGHT_SECONDS (constant-folded), cycleStart/forcedUntil |
 
 ## Batch 13 — Client UI — MenuLogic
 
@@ -1318,102 +1318,102 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Effects/AuraFlipbookPump.client.luau`
 
-- **Type:** LocalScript · **Batch:** 12 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 12 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Keeps flipbook auras alive: emits one crossfading particle every half lifetime (Rate is scaled to 0 on low graphics).
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 1 dense one-line statements; 1 one-letter locals
+- **Readability problems:** CS/cam aliases; e/p locals
 
 ### `client/Effects/GoldFXClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 12 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 12 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 14 dense one-line statements; 3 lines >160 chars; 4 one-letter locals
+- **Readability problems:** No header; Collection/Run aliases; cryptic sweep math names (R, U, N, s, k, b, r, dot)
 
 ### `client/Effects/MutationDropBoardClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 12 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 12 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 1 lines >160 chars
+- **Readability problems:** No header; COL constant; last/left/board/timer names
 
 ### `client/Effects/NighttimeSky.client.luau`
 
-- **Type:** LocalScript · **Batch:** 12 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 12 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 30 dense one-line statements; 13 lines >160 chars; 6 one-letter locals
+- **Readability problems:** No header; Tween/Run aliases; vague names (day, night, strength, clock, fx, part, text, change, k, r, l)
 
 ### `client/Effects/OwnerShowcaseFX.client.luau`
 
-- **Type:** LocalScript · **Batch:** 12 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 12 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Client VFX around the owner's showcase statue: spinning ground sigil, lightning, pulsing light, and a power burst (shockwave + sky pillar + flash) every 7 s. Only runs while you're within 160 studs.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 6 dense one-line statements; 7 lines >160 chars; 8 one-letter locals
+- **Readability problems:** TS alias; W/P/D/C color + cs/ns/em/part/ring cryptic helpers; one-letter locals throughout
 
 ### `client/UI/Controllers/NighttimeHUD.client.luau`
 
-- **Type:** LocalScript · **Batch:** 12 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 12 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.NighttimeHUD
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×2, RunService×1
-- **Readability problems:** 13 dense one-line statements; 14 lines >160 chars; 6 one-letter locals
+- **Readability problems:** Cryptic helpers (make, tw, fmt, setPill) and locals (f, st, l, v, s, m, prev, acc); unused GuiService/barGrad; magic 300
 
 ### `server/Mutations/GoldFXServer.server.luau`
 
-- **Type:** Script · **Batch:** 12 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 12 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** GoldCharacterFX
 - **Public functions:** —
 - **Events:** Connect×5
-- **Readability problems:** 2 dense one-line statements; 1 lines >160 chars
+- **Readability problems:** No header; FX alias; one-letter m/v; generic names (eligible, apply, watch, watched)
 
 ### `server/Mutations/MutationDropService.server.luau`
 
-- **Type:** Script · **Batch:** 12 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 12 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Guaranteed mutation egg in the river every INTERVAL seconds. The board by the river counts down to it. Change the timer: set this script's attribute "IntervalSeconds" (default 600 = 10 min).
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 1 dense one-line statements; 1 one-letter locals
+- **Readability problems:** Header lacked attribute contract; vague names (pick, nextAt, r, t, w)
 
 ### `server/Mutations/Mutations.luau`
 
-- **Type:** ModuleScript · **Batch:** 12 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 12 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Mutations: rolled on every hatch. Model swap + rarity aura + income multiplier (multiplier lives in RS.CharacterEconomy). Models: ServerStorage.UpdatePack_Mutations (pack names via BrainrotModels.<id>
 - **Dependencies:** —
 - **Public functions:** M.AddAura, M.Model, M.Roll
 - **Events:** —
-- **Readability problems:** 14 dense one-line statements; 2 lines >160 chars; 4 one-letter locals
+- **Readability problems:** Module table named M; SS alias; one-letter locals (m, c, d, p, k, v, a, w, cf); mutation model undocumented
 
 ### `server/Services/NighttimeClock.server.luau`
 
-- **Type:** Script · **Batch:** 12 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 12 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** NighttimeService
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** No header; Night alias
 
 ### `server/Services/NighttimeService.luau`
 
-- **Type:** ModuleScript · **Batch:** 12 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 12 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Staff panel trigger: NightForcedUntil (server time) forces night on until then
 - **Dependencies:** —
 - **Public functions:** Service.Update
 - **Events:** —
-- **Readability problems:** 1 dense one-line statements
+- **Readability problems:** No header; magic 300/20; vague boundary/forced
 
 ### `client/UI/Screens/GameMenus/MenuLogic.client.luau`
 
