@@ -1,0 +1,13 @@
+# Rojo / Studio artefacts
+*.rbxl.lock
+*.rbxlx.lock
+sourcemap.json
+build-check.rbxlx
+check.rbxlx
+test.rbxl
+test.rbxlx
+
+# Editors / OS
+.vscode/settings.local.json
+.DS_Store
+Thumbs.db

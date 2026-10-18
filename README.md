@@ -1,34 +1,41 @@
-# StealAGhost — Rojo (client/server/shared)
+# Hatch an Anime: Rojo project
 
-Script-only export from `result.rbxl` with 798 original script files.
-
-## Structure
+Script sources for the Roblox game **Hatch an Anime**, exported from `result.rbxl` and organised by feature.
+(The folder name `StealAGhost_Rojo` is historical; this is not the Steal a Ghost game.)
 
 ```
-src/
-  client/  # ReplicatedFirst, StarterPlayer, StarterGui, Workspace
-  server/  # ServerScriptService, ServerStorage
-  shared/  # ReplicatedStorage
+src/client/   LocalScripts, grouped by feature (Bootstrap, UI, Egg, Hatching, …)
+src/server/   Scripts and server modules (PlayerData, Economy, Eggs, Plots, Admin, …)
+src/shared/   ReplicatedStorage modules: client-visible (Catalogs, Config, UI, …)
+archive/      historical backups, still mapped to ServerStorage._ARCHIVE and backup folders
+docs/         audit, architecture, dependencies, migration map, Rojo setup, refactor report
 ```
 
-**Important:** Service directory names are preserved inside `client`, `server` and `shared` so that the `default.project.json` mapping points at the **original Roblox Explorer positions**, including descendants. This is a *filesystem reorganization*, not a relocation of script instances into new Roblox services.
+The filesystem layout is **independent of the Roblox hierarchy**. Every script's runtime location is set by its node in `default.project.json`. Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-Current counts: client 64; server 684; shared 50.
+## Quick start
+
+```sh
+rokit install                               # Rojo 7.7.0 (rokit.toml)
+rojo build default.project.json -o check.rbxlx   # sanity check
+rojo serve default.project.json             # live sync; connect from a COPY of the place first
+```
+
+See [docs/ROJO_SETUP.md](docs/ROJO_SETUP.md) before the first sync.
 
 ## Safety
 
-- Exactly 798 exported sources; 739 mapped uniquely, 59 with ambiguous Explorer ancestry remain **not mapped** (but their source files are included).
-- Never connect this project to a live place without reviewing changes in a copy. Existing models, map, UI and non-script objects are intended to remain managed by Studio, but Rojo mapping mistakes can cause replacements.
-- All script source bytes are unchanged. Metadata such as `Disabled` and `RunContext` may need manual checking.
-- The original place is included as `result.rbxl`.
-- Check `script-manifest.json` for `originalPath`, `path`, `class`, and other original metadata.
+- `result.rbxl` is the original place backup. Do not overwrite it.
+- Models, GUIs, maps and Studio-created remotes are **not** in this repo. They stay managed in Studio (`$ignoreUnknownInstances`).
+- Do not rename DataStores (`PlayerData_v1`, `ShopData_v2`, …), remotes, or instances without updating every reference. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+- Scripts disabled in the original place are kept disabled via `$properties.Disabled`.
+- Known bugs and security issues (not yet fixed) are listed in [docs/PROJECT_AUDIT.md](docs/PROJECT_AUDIT.md).
 
-## Run
+## Metadata
 
-Open this folder in VS Code, install Rojo CLI + Studio plugin, then run:
+`script-manifest.json` has one entry per exported script:
 
-```sh
-rojo serve
-```
-
-Connect only to a *duplicate* of the Roblox place while verifying the mapping.
+- `fullpath`: the runtime path.
+- `path`: the current file.
+- `exportPath` / `originalPath`: earlier locations.
+- `class`, `disabled`, `runContext`.
