@@ -1,4 +1,13 @@
+-- ReplicatedStorage.FirstHatchGuide (ModuleScript, shared)
 -- Shared objective selection. The server remains responsible for rewards and completion.
+--
+-- Guide.Steps: ordered tutorial objectives (title/body/marker text shown to the player).
+-- Guide.Resolve(player) -> stepIndex, target?, note?, revealing?
+--   stepIndex  1..12 into Guide.Steps, or 13 once the tutorial is completed.
+--   target     Instance the arrows/marker should point at (may be nil).
+--   note       optional override for the step body text.
+--   revealing  true while a hatch reveal is playing (step 5).
+-- It is a pure read of attributes/instances; it never writes state.
 local Guide = {}
 Guide.Steps = {
     {
@@ -54,6 +63,7 @@ Guide.Steps = {
         marker = "",
     },
 }
+-- Returns the plot whose "OwnerUserId" attribute matches the player, or nil.
 function Guide.Plot(player)
     local plots = workspace:FindFirstChild("Plots")
     if plots then
@@ -64,7 +74,8 @@ function Guide.Plot(player)
         end
     end
 end
-local function tool(player, predicate)
+-- First Tool in the Backpack, then the Character, that satisfies predicate.
+local function findTool(player, predicate)
     for _, container in { player:FindFirstChildOfClass("Backpack"), player.Character } do
         if container then
             for _, item in container:GetChildren() do
@@ -76,6 +87,7 @@ local function tool(player, predicate)
     end
 end
 function Guide.Resolve(player)
+    -- Tutorial done / in the post-income plot tour (steps 9..12, server-driven via TutorialTourStage).
     if player:GetAttribute("TutorialCompleted") == true then
         return 13
     end
@@ -88,40 +100,48 @@ function Guide.Resolve(player)
     end
     local slots = plot:FindFirstChild("Slots")
     local ordered = slots and slots:GetChildren() or {}
-    table.sort(ordered, function(a, b)
-        return a.Name < b.Name
+    table.sort(ordered, function(slotA, slotB)
+        return slotA.Name < slotB.Name
     end)
-    local occupied, empty
+    -- Step 8 points at the occupied stand holding the most stored cash; step 7 at the first unlocked empty slot.
+    local richestStand, firstEmptySlot
     for _, slot in ordered do
         if slot:GetAttribute("Occupied") then
             local stand = slot:FindFirstChild("MoneyStand")
             if
-                stand and (not occupied or (stand:GetAttribute("Stored") or 0) > (occupied:GetAttribute("Stored") or 0))
+                stand
+                and (
+                    not richestStand
+                    or (stand:GetAttribute("Stored") or 0) > (richestStand:GetAttribute("Stored") or 0)
+                )
             then
-                occupied = stand
+                richestStand = stand
             end
-        elseif slot:GetAttribute("Unlocked") and not empty then
-            empty = slot
+        elseif slot:GetAttribute("Unlocked") and not firstEmptySlot then
+            firstEmptySlot = slot
         end
     end
-    if occupied then
-        return 8, occupied:FindFirstChild("Plate")
+    if richestStand then
+        return 8, richestStand:FindFirstChild("Plate")
     end
-    local character = tool(player, function(t)
-        return t:GetAttribute("BrainrotId") ~= nil or t:GetAttribute("Hatched") == true
+    local characterTool = findTool(player, function(item)
+        return item:GetAttribute("BrainrotId") ~= nil or item:GetAttribute("Hatched") == true
     end)
-    if character then
-        local stand = empty and empty:FindFirstChild("MoneyStand")
+    if characterTool then
+        local stand = firstEmptySlot and firstEmptySlot:FindFirstChild("MoneyStand")
         return 7,
-            (stand and stand:FindFirstChild("CharacterSlot")) or (empty and empty:FindFirstChild("Platform")),
-            not empty and "Unlock an empty podium to place your character." or nil
+            (stand and stand:FindFirstChild("CharacterSlot")) or (firstEmptySlot and firstEmptySlot:FindFirstChild(
+                "Platform"
+            )),
+            not firstEmptySlot and "Unlock an empty podium to place your character." or nil
     end
     local chambers = plot:FindFirstChild("Chambers")
-    local best, bestStep, ready
+    -- The chamber furthest along (highest step) wins; a "Ready" (empty) chamber is remembered for step 3.
+    local bestChamber, bestStep, readyChamber
     if chambers then
-        for _, ch in chambers:GetChildren() do
-            if not ch:GetAttribute("UnderConstruction") then
-                local status = ch:GetAttribute("Status")
+        for _, chamber in chambers:GetChildren() do
+            if not chamber:GetAttribute("UnderConstruction") then
+                local status = chamber:GetAttribute("Status")
                 local step = ({
                     AwaitingPickup = 6,
                     Loaded = 5,
@@ -131,67 +151,69 @@ function Guide.Resolve(player)
                     Loading = 4,
                 })[status]
                 if step and (not bestStep or step > bestStep) then
-                    best, bestStep = ch, step
+                    bestChamber, bestStep = chamber, step
                 end
-                if status == "Ready" and not ready then
-                    ready = ch
+                if status == "Ready" and not readyChamber then
+                    readyChamber = chamber
                 end
             end
         end
     end
-    if best then
-        local target = best:FindFirstChild("EggPickupAnchor", true) or best:FindFirstChild("HatchButton", true)
-        local status = best:GetAttribute("Status")
+    if bestChamber then
+        local target = bestChamber:FindFirstChild("EggPickupAnchor", true)
+            or bestChamber:FindFirstChild("HatchButton", true)
+        local status = bestChamber:GetAttribute("Status")
         if status == "HatchReveal" or status == "Revealing" then
             return 5, target, nil, true
         end
         local note
         if bestStep == 4 then
-            local ends = best:GetAttribute("CycleEnd")
-            if ends then
+            local cycleEnd = bestChamber:GetAttribute("CycleEnd")
+            if cycleEnd then
                 note = "Ready in "
-                    .. math.max(0, math.ceil(ends - workspace:GetServerTimeNow()))
+                    .. math.max(0, math.ceil(cycleEnd - workspace:GetServerTimeNow()))
                     .. "s. You can explore while you wait."
             end
         end
         return bestStep, target, note
     end
-    local egg = tool(player, function(t)
-        return t:GetAttribute("EggType") ~= nil
-            and not t:GetAttribute("CharacterId")
-            and not t:GetAttribute("BrainrotId")
-            and not t:GetAttribute("Incubating")
+    local eggTool = findTool(player, function(item)
+        return item:GetAttribute("EggType") ~= nil
+            and not item:GetAttribute("CharacterId")
+            and not item:GetAttribute("BrainrotId")
+            and not item:GetAttribute("Incubating")
     end)
-    if egg then
-        if egg:GetAttribute("ReturningToBase") then
+    if eggTool then
+        if eggTool:GetAttribute("ReturningToBase") then
             return 2, plot:FindFirstChild("PlotSpawn")
         end
         return 3,
-            ready and ready:FindFirstChild("HatchButton", true),
-            not ready and "Your incubator is preparing. It will be ready shortly." or nil
+            readyChamber and readyChamber:FindFirstChild("HatchButton", true),
+            not readyChamber and "Your incubator is preparing. It will be ready shortly." or nil
     end
-    local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    local eggs = workspace:FindFirstChild("LocalRiverEggs") or workspace:FindFirstChild("WaterfallEggs")
-    local nearest, distance = nil, math.huge
-    if eggs and root then
-        for _, e in eggs:GetChildren() do
+    -- Step 1: nearest free, still-collectible river egg; otherwise the pirate conveyor with a hint.
+    local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    local riverEggs = workspace:FindFirstChild("LocalRiverEggs") or workspace:FindFirstChild("WaterfallEggs")
+    local nearestAnchor, nearestDistance = nil, math.huge
+    if riverEggs and rootPart then
+        for _, riverEgg in riverEggs:GetChildren() do
             if
-                e:GetAttribute("Price") == 0
-                and not e:GetAttribute("Collected")
-                and (e:GetAttribute("Collectible") ~= false)
+                riverEgg:GetAttribute("Price") == 0
+                and not riverEgg:GetAttribute("Collected")
+                and (riverEgg:GetAttribute("Collectible") ~= false)
             then
-                local anchor = e:FindFirstChild("CollectAnchor", true)
+                local anchor = riverEgg:FindFirstChild("CollectAnchor", true)
                 if anchor then
-                    local d = (anchor.Position - root.Position).Magnitude
-                    if d < distance then
-                        nearest, distance = anchor, d
+                    local eggDistance = (anchor.Position - rootPart.Position).Magnitude
+                    if eggDistance < nearestDistance then
+                        nearestAnchor, nearestDistance = anchor, eggDistance
                     end
                 end
             end
         end
     end
-    if nearest then
-        return 1, nearest
+    if nearestAnchor then
+        return 1, nearestAnchor
     end
     local conveyor = workspace:FindFirstChild("PirateEggConveyor")
     return 1,

@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 161 |
+| Pending | 155 |
 | Reviewed — No Changes Needed | 4 |
-| Refactored | 24 |
+| Refactored | 30 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -51,12 +51,12 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Egg/EggLabelsClient.client.luau` | LocalScript | 1 | 1 | Pending | — | — |
-| `shared/Characters/CharacterInfo/Style.luau` | ModuleScript | 126 | 378 | Pending | — | — |
-| `shared/UI/EggLabel.luau` | ModuleScript | 425 | 812 | Pending | — | — |
-| `shared/UI/FirstHatchGuide.luau` | ModuleScript | 88 | 201 | Pending | — | — |
-| `shared/UI/StolenEggBanner.luau` | ModuleScript | 309 | 692 | Pending | — | — |
-| `shared/UI/UISound.luau` | ModuleScript | 523 | 573 | Pending | — | — |
+| `client/Egg/EggLabelsClient.client.luau` | LocalScript | 1 | 3 | Refactored | SAME | Added 2-line header comment only. |
+| `shared/Characters/CharacterInfo/Style.luau` | ModuleScript | 126 | 420 | Refactored | SAME | S->Style (fields unchanged), descriptive params/locals (dims, stripGradient, powerGradient, mutationBadge, sparkBar...), TS->TweenService; documented Card/Apply contracts; _outlined. |
+| `shared/UI/EggLabel.luau` | ModuleScript | 425 | 865 | Refactored | SAME | Renamed locals (textRow/makeLabel, plateColorsByRarity, rarityColor, hookPrompt, refreshCollectible...); documented fade cache, smoothstep scale, touch tap; unused -> _ prefix. |
+| `shared/UI/FirstHatchGuide.luau` | ModuleScript | 88 | 223 | Refactored | SAME | Header documents Resolve() return tuple; tool->findTool, richestStand/firstEmptySlot, bestChamber/readyChamber, nearestAnchor etc.; step comments. |
+| `shared/UI/StolenEggBanner.luau` | ModuleScript | 309 | 750 | Refactored | SAME | Header explains token generations; full-name locals (BANNER_WIDTH/HEIGHT, socketFrame, eggInfo, currentState, trackConnection...); unused -> _ prefix; section comments. |
+| `shared/UI/UISound.luau` | ModuleScript | 523 | 581 | Refactored | SAME | Header lists API, pooling, debounce and mute sources; cfg->config, s->preloadSound; _cashSuppressedUntil; comments on cash alias debounce and preload. |
 
 ## Batch 03 — Player data
 
@@ -571,57 +571,57 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Egg/EggLabelsClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 02 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 02 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** EggLabel
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** no header
 
 ### `shared/Characters/CharacterInfo/Style.luau`
 
-- **Type:** ModuleScript · **Batch:** 02 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 02 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.CharacterInfo.Style  (ModuleScript)  shared look + number formatting ]]
 - **Dependencies:** —
 - **Public functions:** S.Apply, S.Card, S.Celebrate, S.Full, S.Short, S.corner, S.label, S.make, S.stroke
 - **Events:** —
-- **Readability problems:** 11 dense one-line statements; 23 lines >160 chars; 9 one-letter locals
+- **Readability problems:** module local `S`; one-letter params (o/r/t/d/c/p/l/u/v/s); unused outlined(); Card dims/return contract undocumented
 
 ### `shared/UI/EggLabel.luau`
 
-- **Type:** ModuleScript · **Batch:** 02 · **Priority:** High · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 02 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.EggLabel  (ModuleScript, client-only)
 - **Dependencies:** EggLabel
 - **Public functions:** EggLabel.Attach, EggLabel.Detach, EggLabel.FormatPrice, EggLabel.Start, EggLabel:Destroy, EggLabel:Remove, EggLabel:SetNear, EggLabel:_appear, EggLabel:_setActive, EggLabel:_tick, EggLabel:_updatePrice
 - **Events:** Connect×11, RunService×1
-- **Readability problems:** 57 dense one-line statements; 20 lines >160 chars; 11 one-letter locals
+- **Readability problems:** cryptic locals (PL/sh/pl/rc/st/gs/lbl/str/t0/l/acc); _bt/_tt/_st cache and tick scaling math undocumented; 3 unused locals
 
 ### `shared/UI/FirstHatchGuide.luau`
 
-- **Type:** ModuleScript · **Batch:** 02 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 02 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Shared objective selection. The server remains responsible for rewards and completion.
 - **Dependencies:** —
 - **Public functions:** Guide.Plot, Guide.Resolve
 - **Events:** —
-- **Readability problems:** 14 dense one-line statements; 2 lines >160 chars; 1 one-letter locals
+- **Readability problems:** no header; return tuple/step numbers undocumented; cryptic locals (tool/t/ch/e/d/a/b/ends/best/ready/occupied/empty)
 
 ### `shared/UI/StolenEggBanner.luau`
 
-- **Type:** ModuleScript · **Batch:** 02 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 02 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.StolenEggBanner  (ModuleScript, client)
 - **Dependencies:** —
 - **Public functions:** Banner.Hide, Banner.Resolve, Banner.Show, Banner.Start
 - **Events:** Connect×4, RunService×2
-- **Readability problems:** 41 dense one-line statements; 27 lines >160 chars; 8 one-letter locals
+- **Readability problems:** single-letter locals throughout (c/p/o/t/s/d/W/H/src/mdl/x/cf/r); token protocol undocumented; 5 unused locals
 
 ### `shared/UI/UISound.luau`
 
-- **Type:** ModuleScript · **Batch:** 02 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 02 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** !strict Central UI feedback. UI and plate samples come from Creator Store; existing coin, purchase, and hatch cues retain their previous assets.
 - **Dependencies:** —
 - **Public functions:** UISound.AttachButton, UISound.AttachDescendants, UISound.IsCashFeedbackSuppressed, UISound.Play, UISound.PlayAt, UISound.PlayCoinPickup, UISound.SuppressCashFeedback
 - **Events:** Connect×6
-- **Readability problems:** 1 one-letter locals
+- **Readability problems:** cfg/s abbreviations; unused cashSuppressedUntil; header lacked API/mute summary; hard-coded Kaching id undocumented
 
 ### `server/Economy/NoEarnAccounts.server.luau`
 

@@ -1,6 +1,12 @@
 --!strict
+-- ReplicatedStorage.UISound (ModuleScript, client)
 -- Central UI feedback. UI and plate samples come from Creator Store;
 -- existing coin, purchase, and hatch cues retain their previous assets.
+--
+-- API: Play(name, pitch?, volume?), PlayAt(name, part, pitch?, volume?), PlayCoinPickup(),
+-- AttachButton(button, click?, hover?, selectionHover?), AttachDescendants(gui, ...), Configs.
+-- Sounds are pooled per name (MAX_VOICES) and debounced both per name and per shared asset/alias group.
+-- Mute is read from the LocalPlayer "SFXMuted"/"SFXVolume" attributes and the SoundService "SFX" group volume.
 
 local SoundService = game:GetService("SoundService")
 local ContentProvider = game:GetService("ContentProvider")
@@ -207,7 +213,7 @@ local CASH_ALIAS_DEBOUNCE = 0.35
 local LOAD_TIMEOUT = 15
 local random = Random.new()
 local folder: Folder? = nil
-local cashSuppressedUntil = 0
+local _cashSuppressedUntil = 0 -- Unused: cash suppression was retired (see SuppressCashFeedback).
 local uiState: PlaybackState = { pools = {}, lastName = {}, lastId = {} }
 local emitterStates: { [BasePart]: PlaybackState } = setmetatable({}, { __mode = "k" })
 local managedSounds: { [Sound]: boolean } = setmetatable({}, { __mode = "k" })
@@ -259,11 +265,11 @@ SoundService.ChildAdded:Connect(function(child)
     end
 end)
 
-local function createVoice(soundName: string, cfg: SoundConfig, parent: Instance, spatial: boolean): Voice
+local function createVoice(soundName: string, config: SoundConfig, parent: Instance, spatial: boolean): Voice
     local sound = Instance.new("Sound")
     sound.Name = "UI_" .. soundName
-    sound.SoundId = cfg.id
-    sound.Volume = cfg.volume
+    sound.SoundId = config.id
+    sound.Volume = config.volume
     sound.Looped = false
     sound.SoundGroup = getSfxGroup()
     if spatial then
@@ -271,7 +277,7 @@ local function createVoice(soundName: string, cfg: SoundConfig, parent: Instance
         sound.RollOffMinDistance = 10
         sound.RollOffMaxDistance = 50
     end
-    if cfg.warm then
+    if config.warm then
         local equalizer = Instance.new("EqualizerSoundEffect")
         equalizer.Name = "WarmKeyTone"
         equalizer.LowGain = 1.5
@@ -296,7 +302,7 @@ end
 local function acquireVoice(
     state: PlaybackState,
     soundName: string,
-    cfg: SoundConfig,
+    config: SoundConfig,
     parent: Instance,
     spatial: boolean
 ): Voice
@@ -316,7 +322,7 @@ local function acquireVoice(
         end
     end
     if #pool < MAX_VOICES then
-        local voice = createVoice(soundName, cfg, parent, spatial)
+        local voice = createVoice(soundName, config, parent, spatial)
         table.insert(pool, voice)
         return voice
     end
@@ -371,8 +377,8 @@ local function play(
     customPitch: number?,
     customVol: number?
 ): Sound?
-    local cfg = SOUND_CONFIGS[soundName]
-    if not cfg then
+    local config = SOUND_CONFIGS[soundName]
+    if not config then
         warn("[UISound] Unknown sound:", soundName)
         return nil
     end
@@ -381,34 +387,35 @@ local function play(
     end
     local now = os.clock()
     local previousName = state.lastName[soundName]
-    local aliasKey = cfg.aliasGroup or cfg.id
+    local aliasKey = config.aliasGroup or config.id
     local previousId = state.lastId[aliasKey]
-    if previousName and now - previousName < (cfg.debounce or 0.04) then
+    if previousName and now - previousName < (config.debounce or 0.04) then
         return nil
     end
-    local aliasDebounce = if cfg.id == "rbxassetid://90531793028786" then CASH_ALIAS_DEBOUNCE else ALIAS_DEBOUNCE
+    -- The Kaching asset backs several cues (CoinPickup, CoinChing, Claim, RewardRustle), so it gets a longer shared gap.
+    local aliasDebounce = if config.id == "rbxassetid://90531793028786" then CASH_ALIAS_DEBOUNCE else ALIAS_DEBOUNCE
     if previousId and now - previousId < aliasDebounce then
         return nil
     end
     state.lastName[soundName] = now
     state.lastId[aliasKey] = now
-    local voice = acquireVoice(state, soundName, cfg, parent, spatial)
+    local voice = acquireVoice(state, soundName, config, parent, spatial)
     local sound = voice.sound
     voice.generation += 1
     voice.started = now
     local pitch = customPitch or 1
-    local range = cfg.pitchRange
+    local range = config.pitchRange
     if range then
         pitch *= random:NextNumber(range[1], range[2])
     end
-    sound.SoundId = cfg.id
+    sound.SoundId = config.id
     sound.SoundGroup = getSfxGroup()
     sound.PlaybackSpeed = math.clamp(pitch, 0.1, 4)
-    sound.Volume = math.clamp(if customVol ~= nil then customVol else cfg.volume, 0, 10)
+    sound.Volume = math.clamp(if customVol ~= nil then customVol else config.volume, 0, 10)
     sound.Looped = false
     sound.TimePosition = 0
     sound:Play()
-    scheduleCleanup(voice, spatial, cfg.maxDuration)
+    scheduleCleanup(voice, spatial, config.maxDuration)
     return sound
 end
 
@@ -548,23 +555,24 @@ function UISound.AttachDescendants(
     end
 end
 
+-- Preload each distinct asset once in the background; temporary Sounds are destroyed afterwards.
 -- Preload audio properly as Sound instances to avoid asset type warnings
 task.spawn(function()
     local toPreload: { Instance } = {}
     local seen: { [string]: boolean } = {}
-    for _, cfg in pairs(SOUND_CONFIGS) do
-        if not seen[cfg.id] then
-            seen[cfg.id] = true
-            local s = Instance.new("Sound")
-            s.SoundId = cfg.id
-            table.insert(toPreload, s)
+    for _, config in pairs(SOUND_CONFIGS) do
+        if not seen[config.id] then
+            seen[config.id] = true
+            local preloadSound = Instance.new("Sound")
+            preloadSound.SoundId = config.id
+            table.insert(toPreload, preloadSound)
         end
     end
     pcall(function()
         ContentProvider:PreloadAsync(toPreload)
     end)
-    for _, s in ipairs(toPreload) do
-        s:Destroy()
+    for _, preloadSound in ipairs(toPreload) do
+        preloadSound:Destroy()
     end
 end)
 
