@@ -5,6 +5,14 @@ selection), sends action requests, and drives the HUD button, the inventory pane
 Presentation only. The snapshot is replaced wholesale by whatever the server sends; the client never
 edits an item's Power, income or state itself. While a request is in flight every action button is
 disabled, so one press = one request.
+
+Network (ReplicatedStorage.CharacterInventory, contract in InventoryService's header):
+  RemoteFunction Config.RemoteName: ("Fetch") on start (retried with backoff), (action, { id }) per press.
+  RemoteEvent Config.EventName: "Snapshot" pushes are applied unless a request is in flight; "Reveal" is
+  currently ignored.
+Current state of the UI: the panel, its HUD button and the toggle key are retired (Client.Open returns
+immediately and buildHud is never called); Start still creates both ScreenGuis, fetches the snapshot and
+keeps `state` up to date. Entry point: StarterPlayerScripts.CharacterInventoryStart calls Client.Start().
 ]]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -22,13 +30,14 @@ local Style = require(Shared:WaitForChild("InventoryStyle"))
 local View = require(Shared:WaitForChild("InventoryView"))
 local HatchReveal = require(Shared:WaitForChild("HatchReveal"))
 
-local T = Config.Theme
-local F = Config.Fonts
+local Theme = Config.Theme
+local Fonts = Config.Fonts
 local make, text = Style.Make, Style.Text
 local player = Players.LocalPlayer
 
 local Client = {}
 
+-- Latest server snapshot + local view choices. Exposed as Client.State and handed to View:Render.
 local state = {
     status = "loading", -- loading | ready | error
     items = {},
@@ -48,22 +57,23 @@ local state = {
 }
 Client.State = state
 
-local remote, gui, revealGui, hud, view, reveal
+local remote, gui, revealGui, hud, view, _reveal
 local isOpen = false
-local stepConn
-local layoutKey
+local stepConnection -- RenderStepped while the panel is open
+local layoutKey -- mode .. density of the current view; a change rebuilds it
 
 ---------------------------------------------------------------- helpers
 local function reducedMotion()
     return player:GetAttribute("ReducedMotion") == true
 end
 
+-- "Gamepad" | "Touch" | "Keyboard" (mouse counts as keyboard).
 local function lastInputKind()
-    local t = UserInputService:GetLastInputType()
-    if t.Name:find("Gamepad") then
+    local inputType = UserInputService:GetLastInputType()
+    if inputType.Name:find("Gamepad") then
         return "Gamepad"
     end
-    if t == Enum.UserInputType.Touch then
+    if inputType == Enum.UserInputType.Touch then
         return "Touch"
     end
     return "Keyboard"
@@ -75,19 +85,20 @@ local function viewportSize()
     if gui and gui.AbsoluteSize.X > 0 then
         return gui.AbsoluteSize
     end
-    local cam = workspace.CurrentCamera
-    return (cam and cam.ViewportSize or Vector2.new(1280, 720)) - GuiService:GetGuiInset()
+    local camera = workspace.CurrentCamera
+    return (camera and camera.ViewportSize or Vector2.new(1280, 720)) - GuiService:GetGuiInset()
 end
 
+-- Returns (mode, density) for View.new: "Compact"/"Wide" and "Full"/"Roomy"/"Dense".
 local function chooseLayout()
-    local v = viewportSize()
-    local L = Config.Layout
-    if v.X < L.CompactBelowWidth or v.Y < L.CompactBelowHeight then
+    local viewport = viewportSize()
+    local layout = Config.Layout
+    if viewport.X < layout.CompactBelowWidth or viewport.Y < layout.CompactBelowHeight then
         return "Compact", "Dense"
     end
     -- toolbar width inside the shell and page: full rarity names + sort buttons, full names, or short names
-    local inner = math.min(L.PanelMaxWidth, v.X - L.Margin * 2) - 40
-    return "Wide", inner >= 1060 and "Full" or (inner >= 900 and "Roomy" or "Dense")
+    local innerWidth = math.min(layout.PanelMaxWidth, viewport.X - layout.Margin * 2) - 40
+    return "Wide", innerWidth >= 1060 and "Full" or (innerWidth >= 900 and "Roomy" or "Dense")
 end
 
 local function hintText()
@@ -101,21 +112,22 @@ local function hintText()
     return ""
 end
 
-local render -- forward
+local render -- forward declaration (assigned below, after ensureView)
 
 ---------------------------------------------------------------- snapshot
-local function apply(snap)
-    if type(snap) ~= "table" or type(snap.items) ~= "table" then
+-- Replaces the client's copy with a server snapshot; drops a selection / pin whose item is gone.
+local function apply(snapshot)
+    if type(snapshot) ~= "table" or type(snapshot.items) ~= "table" then
         return
     end
-    state.items = snap.items
+    state.items = snapshot.items
     state.byId = {}
-    for _, item in snap.items do
+    for _, item in snapshot.items do
         state.byId[item.id] = item
     end
-    state.capacity = snap.capacity
-    state.multiplier = tonumber(snap.multiplier) or 1
-    state.allowStore = snap.allowStore == true
+    state.capacity = snapshot.capacity
+    state.multiplier = tonumber(snapshot.multiplier) or 1
+    state.allowStore = snapshot.allowStore == true
     state.status = "ready"
     if state.selectedId and not state.byId[state.selectedId] then
         state.selectedId = nil
@@ -126,11 +138,12 @@ local function apply(snap)
     render()
 end
 
+-- Retries forever (2 s, 4 s, ... capped at 10 s) until the first snapshot arrives.
 local function fetch()
     for attempt = 1, math.huge do
-        local ok, res = pcall(remote.InvokeServer, remote, "Fetch")
-        if ok and type(res) == "table" and res.ok and res.snapshot then
-            apply(res.snapshot)
+        local ok, response = pcall(remote.InvokeServer, remote, "Fetch")
+        if ok and type(response) == "table" and response.ok and response.snapshot then
+            apply(response.snapshot)
             return
         end
         if #state.items == 0 then
@@ -142,8 +155,11 @@ local function fetch()
 end
 
 ---------------------------------------------------------------- actions
-local DONE = { Place = "Placed", Store = "Stored in backpack", Hold = "Holding", PutAway = "Put away" }
+-- Fallback success toasts when the server reply has no message.
+local DONE_MESSAGES = { Place = "Placed", Store = "Stored in backpack", Hold = "Holding", PutAway = "Put away" }
 
+-- One request at a time: ignored while another is pending. The reply's snapshot (if any) is applied
+-- and a toast shows the outcome.
 local function request(action, id)
     if state.pending then
         return
@@ -151,19 +167,22 @@ local function request(action, id)
     state.pending = { action = action, id = id }
     render()
     task.spawn(function()
-        local ok, res = pcall(remote.InvokeServer, remote, action, { id = id })
+        local ok, response = pcall(remote.InvokeServer, remote, action, { id = id })
         state.pending = nil
-        if ok and type(res) == "table" then
-            if res.snapshot then
-                apply(res.snapshot)
+        if ok and type(response) == "table" then
+            if response.snapshot then
+                apply(response.snapshot)
             else
                 render()
             end
             if view then
-                if res.ok then
-                    view:Toast(res.message or DONE[action] or "Done", res.code == "NoChange" and nil or "ok")
+                if response.ok then
+                    view:Toast(
+                        response.message or DONE_MESSAGES[action] or "Done",
+                        response.code == "NoChange" and nil or "ok"
+                    )
                 else
-                    view:Toast(res.message or "That didn't work. Try again.", "error")
+                    view:Toast(response.message or "That didn't work. Try again.", "error")
                 end
             end
         else
@@ -176,8 +195,9 @@ local function request(action, id)
 end
 
 ---------------------------------------------------------------- HUD button
-local function buildHud()
-    local b = make("TextButton", {
+-- Retired (never called): "BEST POWER" button at the left edge that toggled the panel.
+local function _buildHud()
+    local hudButton = make("TextButton", {
         Name = "InventoryButton",
         AutoButtonColor = false,
         Text = "",
@@ -187,7 +207,7 @@ local function buildHud()
         Size = UDim2.fromOffset(138, 58),
         Selectable = true,
     }, gui)
-    local shell = Style.Shell(b, { Size = UDim2.fromScale(1, 1) }, 10)
+    local shell = Style.Shell(hudButton, { Size = UDim2.fromScale(1, 1) }, 10)
     shell.Active = false
     local face = Style.Page(shell, 4, 6, 4, 4, 7)
     local icon = make(
@@ -195,55 +215,56 @@ local function buildHud()
         { BackgroundTransparency = 1, Position = UDim2.fromOffset(8, 10), Size = UDim2.fromOffset(28, 28) },
         face
     )
-    local brick = make("Frame", { BorderSizePixel = 0, BackgroundColor3 = T.Gold, Size = UDim2.fromScale(1, 1) }, icon)
+    local brick =
+        make("Frame", { BorderSizePixel = 0, BackgroundColor3 = Theme.Gold, Size = UDim2.fromScale(1, 1) }, icon)
     Style.Corner(brick, 4)
-    Style.Stroke(brick, T.GoldLo, 1)
-    for i = 0, 3 do
-        local s = make("Frame", {
+    Style.Stroke(brick, Theme.GoldLo, 1)
+    for i = 0, 3 do -- 2x2 studs on the brick icon
+        local stud = make("Frame", {
             BorderSizePixel = 0,
-            BackgroundColor3 = T.GoldHi,
+            BackgroundColor3 = Theme.GoldHi,
             Size = UDim2.fromOffset(8, 8),
             Position = UDim2.fromOffset(4 + (i % 2) * 12, 4 + (i // 2) * 12),
         }, brick)
-        Style.Corner(s, 2)
-        Style.Stroke(s, T.GoldLo, 1, 0.3)
+        Style.Corner(stud, 2)
+        Style.Stroke(stud, Theme.GoldLo, 1, 0.3)
     end
     text(face, {
         Text = "BEST POWER",
-        FontFace = F.Bold,
+        FontFace = Fonts.Bold,
         TextSize = 9,
-        TextColor3 = T.PageMuted,
+        TextColor3 = Theme.PageMuted,
         Position = UDim2.fromOffset(44, 7),
         Size = UDim2.new(1, -52, 0, 11),
     })
     local value = text(face, {
         Name = "Value",
         Text = "—",
-        FontFace = F.Heavy,
+        FontFace = Fonts.Heavy,
         TextSize = 20,
-        TextColor3 = T.PageText,
+        TextColor3 = Theme.PageText,
         Position = UDim2.fromOffset(44, 18),
         Size = UDim2.new(1, -52, 0, 24),
         TextTruncate = Enum.TextTruncate.None,
     })
-    local key = Style.Chip(face, Config.Input.ToggleKey.Name, T.Chip, {
+    local key = Style.Chip(face, Config.Input.ToggleKey.Name, Theme.Chip, {
         AnchorPoint = Vector2.new(1, 0),
         Position = UDim2.new(1, -5, 0, 5),
-        TextColor3 = T.ButtonText,
+        TextColor3 = Theme.ButtonText,
         TextSize = 9,
         Size = UDim2.fromOffset(0, 14),
     })
-    local scale = make("UIScale", { Scale = 1 }, b)
-    b.MouseEnter:Connect(function()
+    local scale = make("UIScale", { Scale = 1 }, hudButton)
+    hudButton.MouseEnter:Connect(function()
         TweenService:Create(scale, TweenInfo.new(0.12), { Scale = 1.03 }):Play()
     end)
-    b.MouseLeave:Connect(function()
+    hudButton.MouseLeave:Connect(function()
         TweenService:Create(scale, TweenInfo.new(0.12), { Scale = 1 }):Play()
     end)
-    b.Activated:Connect(function()
+    hudButton.Activated:Connect(function()
         Client.Toggle()
     end)
-    hud = { button = b, value = value, key = key }
+    hud = { button = hudButton, value = value, key = key }
 end
 
 local function renderHud()
@@ -252,12 +273,13 @@ local function renderHud()
     end
     local best = Model.Strongest(state.items)
     hud.value.Text = state.status ~= "ready" and "…" or (best and Format.Short(best.power) or "—")
-    hud.value.TextColor3 = (best and best.qualityRank >= Config.NotableRank) and best.qualityColor or T.PageText
+    hud.value.TextColor3 = (best and best.qualityRank >= Config.NotableRank) and best.qualityColor or Theme.PageText
     hud.key.Visible = lastInputKind() == "Keyboard"
     hud.button.Visible = not isOpen -- the panel covers that spot while it is open
 end
 
 ---------------------------------------------------------------- view
+-- Intents from InventoryView (contract: View.new(..., callbacks)). Each one updates `state` and re-renders.
 local callbacks = {}
 function callbacks.onSelect(id)
     state.selectedId = id
@@ -269,29 +291,31 @@ end
 function callbacks.onAction(action, id)
     request(action, id)
 end
-function callbacks.onSearch(s)
-    state.search = s
+function callbacks.onSearch(searchText)
+    state.search = searchText
     render()
 end
-function callbacks.onRarity(r)
-    if r == nil then
+-- nil = "ALL" (clear the filter); otherwise toggles that rarity.
+function callbacks.onRarity(rarity)
+    if rarity == nil then
         state.rarities = {}
-    elseif state.rarities[r] then
-        state.rarities[r] = nil
+    elseif state.rarities[rarity] then
+        state.rarities[rarity] = nil
     else
-        state.rarities[r] = true
+        state.rarities[rarity] = true
     end
     render()
 end
+-- nil = cycle to the next sort (descending); the active sort id flips the direction; another id selects it.
 function callbacks.onSort(id)
     if id == nil then
-        local i = 1
-        for k, s in Config.Sorts do
-            if s.Id == state.sort then
-                i = k
+        local currentIndex = 1
+        for index, sort in Config.Sorts do
+            if sort.Id == state.sort then
+                currentIndex = index
             end
         end
-        state.sort = Config.Sorts[i % #Config.Sorts + 1].Id
+        state.sort = Config.Sorts[currentIndex % #Config.Sorts + 1].Id
         state.ascending = false
     elseif state.sort == id then
         state.ascending = not state.ascending
@@ -313,6 +337,7 @@ function callbacks.onClose()
     Client.Close()
 end
 
+-- Creates the view, or rebuilds it when the layout (mode + density) changed, then sizes it.
 local function ensureView()
     local mode, density = chooseLayout()
     local key = mode .. density
@@ -338,30 +363,32 @@ render = function()
 end
 
 ---------------------------------------------------------------- open / close / input
-local function sink(fn)
+-- ContextActionService handler that runs `callback` on press and always sinks the input.
+local function sink(callback)
     return function(_, inputState)
         if inputState == Enum.UserInputState.Begin then
-            fn()
+            callback()
         end
         return Enum.ContextActionResult.Sink
     end
 end
 
-local function cycleRarity(dir)
-    local list = { false }
-    for _, r in Config.Rarities do
-        table.insert(list, r)
+-- Gamepad LB / RB: steps through ALL -> each single rarity -> ALL. A multi-rarity filter counts as ALL.
+local function cycleRarity(direction)
+    local list = { false } -- false = ALL
+    for _, rarity in Config.Rarities do
+        table.insert(list, rarity)
     end
     local current = 1
     local only = next(state.rarities)
     if only and next(state.rarities, only) == nil then
-        for i, r in list do
-            if r == only then
+        for i, rarity in list do
+            if rarity == only then
                 current = i
             end
         end
     end
-    local nextIndex = (current - 1 + dir) % #list + 1
+    local nextIndex = (current - 1 + direction) % #list + 1
     state.rarities = list[nextIndex] and { [list[nextIndex]] = true } or {}
     render()
 end
@@ -369,7 +396,7 @@ end
 function Client.Open()
     if true then
         return
-    end -- Retired UI; the new GUI owns inventory presentation.
+    end -- Retired UI; the new GUI owns inventory presentation. Everything below is unreachable.
     if isOpen then
         return
     end
@@ -427,7 +454,7 @@ function Client.Open()
         end)
     end
     local pulse = 0
-    stepConn = RunService.RenderStepped:Connect(function(dt)
+    stepConnection = RunService.RenderStepped:Connect(function(dt)
         if not view then
             return
         end
@@ -447,9 +474,9 @@ function Client.Close()
     for _, name in { "InventoryClose", "InventoryBest", "InventorySort", "InventoryPrevRarity", "InventoryNextRarity" } do
         ContextActionService:UnbindAction(name)
     end
-    if stepConn then
-        stepConn:Disconnect()
-        stepConn = nil
+    if stepConnection then
+        stepConnection:Disconnect()
+        stepConnection = nil
     end
     local selected = GuiService.SelectedObject
     if selected and view and selected:IsDescendantOf(view.root) then
@@ -500,7 +527,7 @@ function Client.Start()
         DisplayOrder = 170,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     }, playerGui)
-    reveal = HatchReveal.new(revealGui)
+    _reveal = HatchReveal.new(revealGui)
     -- Old inventory HUD retired; hatch reveals remain active.
     render()
 
@@ -514,12 +541,13 @@ function Client.Start()
         end
     end)
 
-    local function track(char)
-        local hum = char:WaitForChild("Humanoid", 10)
-        state.alive = hum ~= nil and hum.Health > 0
+    -- state.alive gates every action (Model.Actions / PLACE BEST).
+    local function track(character)
+        local humanoid = character:WaitForChild("Humanoid", 10)
+        state.alive = humanoid ~= nil and humanoid.Health > 0
         render()
-        if hum then
-            hum.Died:Connect(function()
+        if humanoid then
+            humanoid.Died:Connect(function()
                 state.alive = false
                 render()
             end)

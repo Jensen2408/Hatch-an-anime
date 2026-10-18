@@ -8,10 +8,14 @@ local Config = require(script.Parent.InventoryConfig)
 
 local Model = {}
 
+-- Rarity name -> position in Config.Rarities (higher = rarer).
 local RARITY_RANK = {}
-for i, r in Config.Rarities do
-    RARITY_RANK[r] = i
+for rank, rarity in Config.Rarities do
+    RARITY_RANK[rarity] = rank
 end
+
+-- Comparators below return true when `a` should come first (strongest first). Ties always fall
+-- back to the ItemId so the order is stable between snapshots.
 
 local function byIncome(a, b)
     if a.income ~= b.income then
@@ -24,26 +28,29 @@ local function byIncome(a, b)
 end
 Model.ByIncome = byIncome
 
+-- Case-insensitive substring search over name, characterId, quality and rarity, plus an optional
+-- rarity set ({ [rarity] = true }; empty = all rarities).
 function Model.Filter(items, search, rarities)
-    local q = string.lower(search or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local query = string.lower(search or ""):gsub("^%s+", ""):gsub("%s+$", "")
     local anyRarity = next(rarities or {}) == nil
-    local out = {}
+    local matches = {}
     for _, item in items do
         if anyRarity or rarities[item.rarity] then
             if
-                q == ""
-                or string.find(string.lower(item.name), q, 1, true)
-                or string.find(string.lower(item.characterId), q, 1, true)
-                or string.find(string.lower(item.quality), q, 1, true)
-                or string.find(string.lower(item.rarity), q, 1, true)
+                query == ""
+                or string.find(string.lower(item.name), query, 1, true)
+                or string.find(string.lower(item.characterId), query, 1, true)
+                or string.find(string.lower(item.quality), query, 1, true)
+                or string.find(string.lower(item.rarity), query, 1, true)
             then
-                table.insert(out, item)
+                table.insert(matches, item)
             end
         end
     end
-    return out
+    return matches
 end
 
+-- Sort id (Config.Sorts[].Id) -> comparator. Unknown ids fall back to Power.
 local SORTS = {
     Power = function(a, b)
         if a.power ~= b.power then
@@ -53,9 +60,9 @@ local SORTS = {
     end,
     Income = byIncome,
     Rarity = function(a, b)
-        local ra, rb = RARITY_RANK[a.rarity] or 0, RARITY_RANK[b.rarity] or 0
-        if ra ~= rb then
-            return ra > rb
+        local rankA, rankB = RARITY_RANK[a.rarity] or 0, RARITY_RANK[b.rarity] or 0
+        if rankA ~= rankB then
+            return rankA > rankB
         end
         if a.power ~= b.power then
             return a.power > b.power
@@ -63,26 +70,28 @@ local SORTS = {
         return a.id < b.id
     end,
     Newest = function(a, b)
-        local ta, tb = a.acquired or 0, b.acquired or 0
-        if ta ~= tb then
-            return ta > tb
+        local acquiredA, acquiredB = a.acquired or 0, b.acquired or 0
+        if acquiredA ~= acquiredB then
+            return acquiredA > acquiredB
         end
         return a.id < b.id
     end,
 }
 
+-- Sorts `list` in place (and returns it). `ascending` flips the comparator's natural strongest-first order.
 function Model.Sort(list, sortId, ascending)
-    local cmp = SORTS[sortId] or SORTS.Power
+    local compare = SORTS[sortId] or SORTS.Power
     if ascending then
         table.sort(list, function(a, b)
-            return cmp(b, a)
+            return compare(b, a)
         end)
     else
-        table.sort(list, cmp)
+        table.sort(list, compare)
     end
     return list
 end
 
+-- Highest Power (ties: higher income); nil for an empty list. Drives the HUD "BEST POWER" value.
 function Model.Strongest(items)
     local best
     for _, item in items do
@@ -93,10 +102,14 @@ function Model.Strongest(items)
     return best
 end
 
--- Mirrors InventoryService PlaceBest. Returns { gain, place, swap, current, after }.
-function Model.BestPlan(items, cap, allowStore)
+-- Mirrors InventoryService PlaceBest. Returns { gain, place, swap, current, after }:
+--   current/after = plot income before/after (item.income, before the event multiplier), gain = after - current,
+--   place = characters that would be placed, swap = placed characters that would be stored for them.
+-- allowStore: the best `unlocked` characters end up placed (swapping weaker ones out);
+-- otherwise only free unlocked slots are filled, best unplaced first.
+function Model.BestPlan(items, capacity, allowStore)
     local plan = { gain = 0, place = 0, swap = 0, current = 0, after = 0 }
-    if not cap or not cap.hasPlot or cap.unlocked == 0 then
+    if not capacity or not capacity.hasPlot or capacity.unlocked == 0 then
         return plan
     end
     local sorted = table.clone(items)
@@ -107,11 +120,11 @@ function Model.BestPlan(items, cap, allowStore)
         end
     end
     if allowStore then
-        local n = math.min(cap.unlocked, #sorted)
+        local slotsToFill = math.min(capacity.unlocked, #sorted)
         local storeable = 0
         for i = 1, #sorted do
             local item = sorted[i]
-            if i <= n then
+            if i <= slotsToFill then
                 plan.after += item.income
                 if item.state ~= "Placed" then
                     plan.place += 1
@@ -120,19 +133,19 @@ function Model.BestPlan(items, cap, allowStore)
                 storeable += 1
             end
         end
-        local free = cap.unlocked - cap.placed
-        plan.swap = math.min(storeable, math.max(0, plan.place - free))
+        local freeSlots = capacity.unlocked - capacity.placed
+        plan.swap = math.min(storeable, math.max(0, plan.place - freeSlots))
     else
         plan.after = plan.current
-        local free = cap.unlocked - cap.placed
+        local freeSlots = capacity.unlocked - capacity.placed
         for _, item in sorted do
-            if free <= 0 then
+            if freeSlots <= 0 then
                 break
             end
             if item.state ~= "Placed" then
                 plan.after += item.income
                 plan.place += 1
-                free -= 1
+                freeSlots -= 1
             end
         end
     end
@@ -140,7 +153,9 @@ function Model.BestPlan(items, cap, allowStore)
     return plan
 end
 
--- What the selected character is compared against, and why.
+-- What the selected character is compared against, and why. Returns (item, reason) or nil.
+-- Priority: the pinned item; for an unplaced selection the held item, else the weakest placed one;
+-- for a placed selection the best unplaced one.
 function Model.CompareTarget(items, selected, pinnedId)
     if not selected then
         return nil
@@ -182,7 +197,8 @@ function Model.CompareTarget(items, selected, pinnedId)
 end
 
 -- { { action, label, kind, enabled, reason } } for the details panel, in display order.
-function Model.Actions(item, cap, allowStore, alive)
+-- `reason` is the player-facing explanation shown when an action is disabled.
+function Model.Actions(item, capacity, allowStore, alive)
     local list = {}
     if not item then
         return list
@@ -199,11 +215,11 @@ function Model.Actions(item, cap, allowStore, alive)
         return list
     end
     local reason
-    if not cap or not cap.hasPlot then
+    if not capacity or not capacity.hasPlot then
         reason = "Claim a plot to place characters."
-    elseif cap.unlocked == 0 then
+    elseif capacity.unlocked == 0 then
         reason = "Unlock a slot at your temple first."
-    elseif cap.placed >= cap.unlocked then
+    elseif capacity.placed >= capacity.unlocked then
         reason = allowStore and "All unlocked slots are full. Store one, or use PLACE BEST to swap."
             or "All unlocked slots are full."
     elseif not alive then

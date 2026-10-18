@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 113 |
-| Reviewed — No Changes Needed | 4 |
-| Refactored | 72 |
+| Pending | 106 |
+| Reviewed — No Changes Needed | 5 |
+| Refactored | 78 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -134,13 +134,13 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Bootstrap/CustomInventoryBootstrap.client.luau` | LocalScript | 13 | 13 | Pending | — | — |
-| `client/Inventory/CharacterInventoryStart.client.luau` | LocalScript | 2 | 2 | Pending | — | — |
-| `shared/Inventory/CharacterInventory/HatchReveal.luau` | ModuleScript | 243 | 355 | Pending | — | — |
-| `shared/Inventory/CharacterInventory/InventoryClient.luau` | ModuleScript | 377 | 576 | Pending | — | — |
-| `shared/Inventory/CharacterInventory/InventoryModel.luau` | ModuleScript | 162 | 230 | Pending | — | — |
-| `shared/Inventory/CharacterInventory/InventoryStyle.luau` | ModuleScript | 257 | 362 | Pending | — | — |
-| `shared/Inventory/CharacterInventory/InventoryView.luau` | ModuleScript | 982 | 1529 | Pending | — | — |
+| `client/Bootstrap/CustomInventoryBootstrap.client.luau` | LocalScript | 13 | 16 | Refactored | SAME | Header (ReplicatedFirst LocalScript, purpose, pcall reason); clearer render-step comment |
+| `client/Inventory/CharacterInventoryStart.client.luau` | LocalScript | 2 | 2 | Reviewed — No Changes Needed | SAME | No changes |
+| `shared/Inventory/CharacterInventory/HatchReveal.luau` | ModuleScript | 243 | 372 | Refactored | SAME | Header: API + payload + note that Push is no longer called; Theme/Fonts/RevealConfig; reducedMotion; descriptive renames; comments on queue, burst, log-scale count |
+| `shared/Inventory/CharacterInventory/InventoryClient.luau` | ModuleScript | 377 | 604 | Refactored | SAME | Header: network use + retired-UI status; Theme/Fonts, DONE_MESSAGES; descriptive renames; unused buildHud/reveal -> _buildHud/_reveal (selene 3->1); why-comments |
+| `shared/Inventory/CharacterInventory/InventoryModel.luau` | ModuleScript | 162 | 246 | Refactored | SAME | Descriptive renames (cap -> capacity param, query, compare, slotsToFill, freeSlots...); doc comments for Filter/Sort/Strongest/BestPlan fields/CompareTarget priority/Actions |
+| `shared/Inventory/CharacterInventory/InventoryStyle.luau` | ModuleScript | 257 | 370 | Refactored | SAME | Theme/Fonts, QUICK_TWEEN; descriptive renames (params of Pad/StudBand too); comments for Make, Pad, Text, Chip, Button attributes, FrameModel distance |
+| `shared/Inventory/CharacterInventory/InventoryView.luau` | ModuleScript | 982 | 1588 | Refactored | CHANGED | Header with View API + callbacks contract; Theme/Fonts, SHEET_TWEEN, SHORT_RARITY_LABELS; descriptive renames; extracted buildNote, buildSkeletonCards, clearPips; doc comments per method |
 
 ## Batch 10 — Plots, temples and portals
 
@@ -1003,66 +1003,66 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Bootstrap/CustomInventoryBootstrap.client.luau`
 
-- **Type:** LocalScript · **Batch:** 09 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 09 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Disable Roblox's tool slots: the game uses its own hotbar + Inventory (GameHUD).
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** RunService×1
-- **Readability problems:** —
+- **Readability problems:** No location header; why the RenderStep re-check exists was terse
 
 ### `client/Inventory/CharacterInventoryStart.client.luau`
 
-- **Type:** LocalScript · **Batch:** 09 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 09 · **Priority:** Low · **Status:** Reviewed — No Changes Needed
 - **Responsibility:** StarterPlayer.StarterPlayerScripts.CharacterInventoryStart  (LocalScript)
 - **Dependencies:** InventoryClient
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** None (one-line entry point with location header)
 
 ### `shared/Inventory/CharacterInventory/HatchReveal.luau`
 
-- **Type:** ModuleScript · **Batch:** 09 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 09 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.CharacterInventory.HatchReveal  (ModuleScript)
 - **Dependencies:** InventoryConfig, InventoryFormat, InventoryStyle, UISound
 - **Public functions:** Reveal.new, Reveal:Push, Reveal:_build, Reveal:_play
 - **Events:** Connect×2, RunService×1
-- **Readability problems:** 4 dense one-line statements; 7 one-letter locals
+- **Readability problems:** T/F/R aliases; cryptic locals (W/H, p, tw, u, e, abs, held, out, cam, v); API and current (unused) status not documented
 
 ### `shared/Inventory/CharacterInventory/InventoryClient.luau`
 
-- **Type:** ModuleScript · **Batch:** 09 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 09 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.CharacterInventory.InventoryClient  (ModuleScript)
 - **Dependencies:** HatchReveal, InventoryConfig, InventoryFormat, InventoryModel, InventoryStyle, InventoryView
 - **Public functions:** Client.Close, Client.Open, Client.Show, Client.Start, Client.Toggle, callbacks.onAction, callbacks.onClearFilters, callbacks.onClose, callbacks.onPin, callbacks.onRarity, callbacks.onSearch, callbacks.onSelect, callbacks.onSort
 - **Events:** Connect×10, OnClientEvent×1, RunService×1
-- **Readability problems:** 35 dense one-line statements; 8 one-letter locals
+- **Readability problems:** T/F aliases; cryptic locals (t, v, L, snap, res, b, s, r, k, fn, dir, hum, char, cam); retired UI (Open early-return, buildHud unused, reveal unused) undocumented; network use not in header
 
 ### `shared/Inventory/CharacterInventory/InventoryModel.luau`
 
-- **Type:** ModuleScript · **Batch:** 09 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 09 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.CharacterInventory.InventoryModel  (ModuleScript)
 - **Dependencies:** InventoryConfig
 - **Public functions:** Model.Actions, Model.BestPlan, Model.CompareTarget, Model.Filter, Model.Sort, Model.Strongest
 - **Events:** —
-- **Readability problems:** 21 dense one-line statements; 2 one-letter locals
+- **Readability problems:** Cryptic locals (q, out, ra/rb, ta/tb, cmp, n, free, cap); BestPlan / CompareTarget rules only partly documented
 
 ### `shared/Inventory/CharacterInventory/InventoryStyle.luau`
 
-- **Type:** ModuleScript · **Batch:** 09 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 09 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.CharacterInventory.InventoryStyle  (ModuleScript)
 - **Dependencies:** InventoryConfig
 - **Public functions:** Style.Button, Style.Chip, Style.Corner, Style.Deep, Style.Enabled, Style.FrameModel, Style.GoldText, Style.Inset, Style.Make, Style.Pad, Style.Page, Style.Roof, Style.SetOn, Style.Shell, Style.Stroke, Style.Stud, Style.StudBand, Style.Text
 - **Events:** Connect×10
-- **Readability problems:** 5 dense one-line statements; 8 one-letter locals
+- **Readability problems:** T/F aliases; cryptic locals (inst, k/v, f, l/t/r/b, z, s, w, c, b, cam, cf, dist); Button attribute contract (Fill/BaseText) undocumented
 
 ### `shared/Inventory/CharacterInventory/InventoryView.luau`
 
-- **Type:** ModuleScript · **Batch:** 09 · **Priority:** High · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 09 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.CharacterInventory.InventoryView  (ModuleScript)
 - **Dependencies:** InventoryConfig, InventoryFormat, InventoryModel, InventoryStyle, UISound
 - **Public functions:** View.new, View:Destroy, View:FirstSelectable, View:Render, View:SetLoadingPulse, View:SetSize, View:Step, View:Toast, View:_assignCard, View:_build, View:_buildDetails, View:_connect, View:_layoutGrid, View:_newCard, View:_paintCard, View:_renderDetails, View:_showNote
 - **Events:** Connect×7, RunService×1
-- **Readability problems:** 26 dense one-line statements; 5 lines >160 chars; 16 one-letter locals
+- **Readability problems:** 1529-line builder; T/F aliases; cryptic locals (vp, c, f, b, s, p, sw, d, M, n, x0, dp, di, tw, a, mult, cap, toolH, searchW); 490-line _build; duplicated pip-clearing loop; API/callback contract undocumented
 
 ### `client/Plot/ConstructionClientStart.client.luau`
 
