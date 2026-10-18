@@ -2,9 +2,9 @@
 All tuning lives here. The server and clients compute the SAME timeline from these values,
 so nothing timing-related has to be replicated except a start time and a batch count.
 ]]
-local C = {}
+local Config = {}
 
-C.Kinds = {
+Config.Kinds = {
     Temple = {
         Retire = 0.6, -- replacement mode only: old structure sinks away first
         Anticipation = 0.25,
@@ -35,12 +35,12 @@ C.Kinds = {
     },
 }
 
-C.WaveBand = 2.0 -- studs: parts within the same height band (and stage) move together
-C.MaxBatches = 22 -- batches are merged down to this many (performance + readability)
-C.MinSpacing = 0.06 -- seconds between batch starts, at minimum
-C.ReplaceBelowOverlap = 0.35 -- "auto" mode: if fewer than 35% of parts match, do a full replacement
+Config.WaveBand = 2.0 -- studs: parts within the same height band (and stage) move together
+Config.MaxBatches = 22 -- batches are merged down to this many (performance + readability)
+Config.MinSpacing = 0.06 -- seconds between batch starts, at minimum
+Config.ReplaceBelowOverlap = 0.35 -- "auto" mode: if fewer than 35% of parts match, do a full replacement
 
-C.Effects = {
+Config.Effects = {
     DustDensity = 1.0, -- 0..2 multiplier on every dust emit count
     MaxDustPerConstruction = 3, -- emitters per construction (reused for every puff)
     CameraShake = 1.0, -- 0 disables. Only the purchasing player is shaken.
@@ -52,18 +52,18 @@ C.Effects = {
 }
 
 -- Sound slots. Leave "" to stay silent; paste your own verified rbxassetid:// IDs.
-C.Sounds = {
+Config.Sounds = {
     Rumble = "", -- low rumble at anticipation
     Place = "", -- soft stone/block placement (throttled)
     Click = "", -- mechanical click (incubators)
     Impact = "", -- final grounded thud
 }
-C.PlaceSoundGap = 0.12 -- min seconds between placement sounds per construction
+Config.PlaceSoundGap = 0.12 -- min seconds between placement sounds per construction
 
 -- Name keywords → stage (1 = first). Checked against the part name and its ancestors' names.
 -- Put attribute BuildRole = "Foundation" | "Support" | "Wall" | "Upper" | "Roof" | "Detail" (or a number 1-6) to override.
-C.RoleStage = { Foundation = 1, Support = 2, Wall = 3, Mechanism = 3, Upper = 4, Frame = 4, Roof = 5, Detail = 6 }
-C.Keywords = {
+Config.RoleStage = { Foundation = 1, Support = 2, Wall = 3, Mechanism = 3, Upper = 4, Frame = 4, Roof = 5, Detail = 6 }
+Config.Keywords = {
     Temple = {
         { 1, { "foundation", "stair", "step", "base", "floor", "plinth", "deck", "ground", "platform" } },
         { 2, { "pillar", "column", "post", "support", "leg", "pier" } },
@@ -85,25 +85,27 @@ C.Keywords = {
     },
 }
 
--- Shared timeline. phaseOffset = Retire time (replacement only).
-function C.Timeline(kind, batchCount, replace)
-    local k = C.Kinds[kind] or C.Kinds.Temple
-    local n = math.max(1, batchCount)
-    local t0 = (replace and k.Retire or 0) + k.Anticipation
-    local budget = k.Foundation + k.Assembly - k.BatchMove
-    local spacing = math.max(C.MinSpacing, budget / math.max(1, n - 1))
-    local landed = t0 + (n - 1) * spacing + k.BatchMove
+-- Shared timeline (seconds from the construction start time). With `replace`, the old structure's
+-- Retire phase comes first and everything else shifts by it. Batch starts are evenly spaced so the
+-- last batch lands at Foundation + Assembly (but never closer together than MinSpacing).
+function Config.Timeline(kind, batchCount, replace)
+    local timing = Config.Kinds[kind] or Config.Kinds.Temple
+    local count = math.max(1, batchCount)
+    local buildStart = (replace and timing.Retire or 0) + timing.Anticipation
+    local budget = timing.Foundation + timing.Assembly - timing.BatchMove
+    local spacing = math.max(Config.MinSpacing, budget / math.max(1, count - 1))
+    local landed = buildStart + (count - 1) * spacing + timing.BatchMove
     return {
-        retireEnd = replace and k.Retire or 0,
-        buildStart = t0,
+        retireEnd = replace and timing.Retire or 0,
+        buildStart = buildStart,
         spacing = spacing,
         batchStart = function(i)
-            return t0 + (i - 1) * spacing
+            return buildStart + (i - 1) * spacing
         end, -- i is 1-based
         landed = landed,
-        lockInEnd = landed + k.LockIn,
-        total = landed + k.LockIn + k.Clear,
+        lockInEnd = landed + timing.LockIn,
+        total = landed + timing.LockIn + timing.Clear,
     }
 end
 
-return C
+return Config

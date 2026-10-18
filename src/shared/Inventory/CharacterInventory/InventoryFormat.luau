@@ -32,10 +32,11 @@ function Format.Short(n)
         tier += 1
         value = n / 1000 ^ tier
     end
+    -- below 100: one truncated decimal, dropped when it is .0 ("12.5K", "4M"); otherwise whole units
     if value < 100 then
-        local t = math.floor(value * 10 + 1e-9) / 10
-        local s = t % 1 == 0 and string.format("%d", t) or string.format("%.1f", t)
-        return sign .. s .. SUFFIX[tier]
+        local truncated = math.floor(value * 10 + 1e-9) / 10
+        local text = truncated % 1 == 0 and string.format("%d", truncated) or string.format("%.1f", truncated)
+        return sign .. text .. SUFFIX[tier]
     end
     return sign .. string.format("%.0f", math.floor(value + 1e-9)) .. SUFFIX[tier]
 end
@@ -46,9 +47,9 @@ function Format.Exact(n)
     if n ~= n or n == math.huge then
         return Format.Short(n)
     end
-    local s = string.format("%.0f", math.floor(math.abs(n)))
-    s = s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
-    return (n < 0 and "-" or "") .. (math.abs(n) >= EXACT_LIMIT and "≈" or "") .. s
+    local digits = string.format("%.0f", math.floor(math.abs(n)))
+    digits = digits:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+    return (n < 0 and "-" or "") .. (math.abs(n) >= EXACT_LIMIT and "≈" or "") .. digits
 end
 
 function Format.Money(n)
@@ -59,11 +60,11 @@ function Format.Rate(n)
 end
 
 -- Signed difference, e.g. "+3.2B" / "-850" / "±0"
-function Format.Delta(d, money)
-    if d == 0 then
+function Format.Delta(difference, money)
+    if difference == 0 then
         return "±0"
     end
-    return (d > 0 and "+" or "-") .. (money and "$" or "") .. Format.Short(math.abs(d))
+    return (difference > 0 and "+" or "-") .. (money and "$" or "") .. Format.Short(math.abs(difference))
 end
 
 -- Relative difference: "+41%", "-12%", "×24" for very large gaps.
@@ -75,11 +76,12 @@ function Format.Relative(new, old)
     if ratio >= 10 then
         return "×" .. Format.Short(ratio)
     end
-    local pct = (ratio - 1) * 100
-    if math.abs(pct) < 0.5 then
+    local percent = (ratio - 1) * 100
+    if math.abs(percent) < 0.5 then
         return "same"
     end
-    return string.format("%+d%%", pct > 0 and math.floor(pct + 0.5) or math.ceil(pct - 0.5))
+    -- rounded half away from zero
+    return string.format("%+d%%", percent > 0 and math.floor(percent + 0.5) or math.ceil(percent - 0.5))
 end
 
 -- "×2.4 base" style multiplier, one decimal below 100.
@@ -87,13 +89,14 @@ function Format.Multiplier(power, base)
     if not base or base <= 0 then
         return ""
     end
-    local m = power / base
-    if m < 100 then
-        return string.format("×%.1f", math.floor(m * 10) / 10)
+    local multiplier = power / base
+    if multiplier < 100 then
+        return string.format("×%.1f", math.floor(multiplier * 10) / 10)
     end
-    return "×" .. Format.Short(m)
+    return "×" .. Format.Short(multiplier)
 end
 
+-- "just now" under 45 s, then rounded minutes, then whole hours / days.
 function Format.Ago(seconds)
     seconds = math.max(0, seconds or 0)
     if seconds < 45 then

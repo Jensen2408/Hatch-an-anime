@@ -2,28 +2,28 @@
 -- Edit values here, then rebuild with:  require(game.ServerStorage.WaterfallRiverBuilder:Clone())()
 -- NOTE: fitted to the Hatch A Anime arena (cliff backs onto the west wall, river ends at the east wall).
 -- After a rebuild, also run the ground recolor step (see ServerStorage.WaterfallRiverBuilder notes) or keep BuildGround colors.
-local C = {}
+local Config = {}
 
-C.Origin = Vector3.new(-283, 25.96, 20) -- ground level at the foot of the waterfall (cliff face is at Origin.X)
-C.Seed = 7 -- change for a different natural arrangement
+Config.Origin = Vector3.new(-283, 25.96, 20) -- ground level at the foot of the waterfall (cliff face is at Origin.X)
+Config.Seed = 7 -- change for a different natural arrangement
 
-C.Length = 527 -- river length (runs along +X)
-C.RiverWidth = 14 -- narrow river
-C.RiverDepth = 1.6 -- water surface sits this far below the ground
-C.WaterDepth = 2.4 -- bed sits this far below the water surface (shallow look)
-C.Meander = 9 -- gentle sideways sway of the river
-C.PoolLength = 26 -- wider plunge pool at the base
-C.PoolExtraWidth = 10
+Config.Length = 527 -- river length (runs along +X)
+Config.RiverWidth = 14 -- narrow river
+Config.RiverDepth = 1.6 -- water surface sits this far below the ground
+Config.WaterDepth = 2.4 -- bed sits this far below the water surface (shallow look)
+Config.Meander = 9 -- gentle sideways sway of the river
+Config.PoolLength = 26 -- wider plunge pool at the base
+Config.PoolExtraWidth = 10
 
-C.FallHeight = 32
-C.FallWidth = 16
-C.CliffHalfWidth = 48
-C.CliffDepth = 30
+Config.FallHeight = 32
+Config.FallWidth = 16
+Config.CliffHalfWidth = 48
+Config.CliffDepth = 30
 
-C.BuildGround = true -- grass ground on both banks
-C.PlayWidth = 182 -- open playable ground on each side (reaches the arena walls)
+Config.BuildGround = true -- grass ground on both banks
+Config.PlayWidth = 182 -- open playable ground on each side (reaches the arena walls)
 
-C.Colors = {
+Config.Colors = {
     Water = Color3.fromRGB(70, 214, 214),
     WaterDeep = Color3.fromRGB(34, 168, 184),
     WaterLight = Color3.fromRGB(150, 238, 230),
@@ -49,7 +49,7 @@ C.Colors = {
     Paper = Color3.fromRGB(255, 232, 178),
 }
 
-C.Terrain = {
+Config.Terrain = {
     WaterColor = Color3.fromRGB(58, 206, 210),
     WaterTransparency = 0.55,
     WaterReflectance = 0.2,
@@ -57,7 +57,7 @@ C.Terrain = {
     WaterWaveSpeed = 6,
 }
 
-C.Egg = {
+Config.Egg = {
     SpawnInterval = 5,
     MaxEggs = 14,
     FallTime = 2.4, -- slide over the lip + fall
@@ -73,4 +73,4 @@ C.Egg = {
     Types = {},
 }
 
-return C
+return Config

@@ -4,7 +4,8 @@ Values are always rounded DOWN, so a score never reads higher than it is.
 ]]
 local Format = {}
 
-local UNITS = {
+-- Unused since Compact delegates to InventoryFormat; kept as-is.
+local _UNITS = {
     { 1e18, "Qi" },
     { 1e15, "Qa" },
     { 1e12, "T" },
@@ -13,16 +14,19 @@ local UNITS = {
     { 1e3, "K" },
 }
 
+-- 1234567 -> "1,234,567" (floored).
 function Format.Commas(n)
-    local s = string.format("%d", math.floor(n))
-    local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
-    return (out:gsub("^,", ""))
+    local digits = string.format("%d", math.floor(n))
+    local grouped = digits:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    return (grouped:gsub("^,", ""))
 end
 
+-- Same number style as the inventory; InventoryFormat is required on first call, not at module load.
 function Format.Compact(n)
     return require(game:GetService("ReplicatedStorage").CharacterInventory.InventoryFormat).Short(n)
 end
 
+-- kind = Stats[i].Kind in LeaderboardConfig: "money" | "rate" | anything else (plain count).
 function Format.Value(kind, n)
     if kind == "money" then
         return "$" .. Format.Compact(n)

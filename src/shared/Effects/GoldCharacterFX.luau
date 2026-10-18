@@ -1,14 +1,26 @@
-local Collection = game:GetService("CollectionService")
+--[[ ReplicatedStorage.GoldCharacterFX  (ModuleScript, shared)
+"Golden" character look. FX.apply(model, opts) turns every visible part into gold metal (via
+RichGoldFinish), adds ForceField shine shells on MeshParts, and builds a "GoldFX" folder with a
+sparkle emitter, warm light, ground ring burst, highlight and stripe-textured shine boxes on R6 limbs.
+Effects start invisible / at rest (Transparency 1, RingBurst Rate 0): GoldFXClient (client) animates them,
+using attributes Gold, GoldFXPhase, BaseRate and tag "GoldCharacter".
+  opts: Reflectance (0.45), Sparkles (16), Specks (10), Phase (random 0..3.2)
+]]
+local CollectionService = game:GetService("CollectionService")
 local FX = {}
 local GOLD = Color3.fromRGB(255, 203, 35)
+
+-- Re-applies the plain gold finish and strips the animated extras (folder + tag).
 function FX.remove(model)
     require(game.ReplicatedStorage.RichGoldFinish).Apply(model)
-    Collection:RemoveTag(model, "GoldCharacter")
-    local old = model:FindFirstChild("GoldFX")
-    if old then
-        old:Destroy()
+    CollectionService:RemoveTag(model, "GoldCharacter")
+    local existingFx = model:FindFirstChild("GoldFX")
+    if existingFx then
+        existingFx:Destroy()
     end
 end
+
+-- Returns the GoldFX folder, or nil if `model` is not a Model or has no BasePart.
 function FX.apply(model, opts)
     opts = opts or {}
     if not model:IsA("Model") then
@@ -21,11 +33,12 @@ function FX.apply(model, opts)
     if not core then
         return nil
     end
-    local cf, size = model:GetBoundingBox()
-    local original = {}
-    for _, v in ipairs(model:GetDescendants()) do
-        if v:IsA("BasePart") then
-            table.insert(original, v)
+    local boxCFrame, boxSize = model:GetBoundingBox()
+    -- Snapshot the original parts before any FX parts are added to the model.
+    local originalParts = {}
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            table.insert(originalParts, descendant)
         end
     end
     local folder = Instance.new("Folder")
@@ -34,17 +47,18 @@ function FX.apply(model, opts)
     local shells = Instance.new("Folder")
     shells.Name = "ShineShells"
     shells.Parent = folder
-    for _, p in ipairs(original) do
-        if p.Name ~= "HumanoidRootPart" and p.Transparency < 1 then
-            local sa = p:FindFirstChildWhichIsA("SurfaceAppearance")
+    for _, part in ipairs(originalParts) do
+        if part.Name ~= "HumanoidRootPart" and part.Transparency < 1 then
+            local _surfaceAppearance = part:FindFirstChildWhichIsA("SurfaceAppearance") -- unused
             -- Keep original SurfaceAppearance albedo and cavity normals intact.
-            p.Material = Enum.Material.Metal
-            p.Reflectance = opts.Reflectance or 0.45
-            if p:IsA("MeshPart") then
-                local shell = p:Clone()
+            part.Material = Enum.Material.Metal
+            part.Reflectance = opts.Reflectance or 0.45
+            if part:IsA("MeshPart") then
+                -- Slightly larger ForceField copy welded on top: gives the moving shine.
+                local shell = part:Clone()
                 shell:ClearAllChildren()
-                shell.Name = "Shine_" .. p.Name
-                shell.Size = p.Size * 1.015
+                shell.Name = "Shine_" .. part.Name
+                shell.Size = part.Size * 1.015
                 shell.TextureID = ""
                 shell.Material = Enum.Material.ForceField
                 shell.Color = Color3.fromRGB(255, 221, 90)
@@ -56,17 +70,18 @@ function FX.apply(model, opts)
                 shell.CanQuery = false
                 shell.CastShadow = false
                 shell.Parent = shells
-                local w = Instance.new("WeldConstraint")
-                w.Part0 = p
-                w.Part1 = shell
-                w.Parent = shell
+                local weld = Instance.new("WeldConstraint")
+                weld.Part0 = part
+                weld.Part1 = shell
+                weld.Parent = shell
             end
         end
     end
+    -- Invisible box around the body that hosts the particles and light.
     local emitter = Instance.new("Part")
     emitter.Name = "GoldFX_Emitter"
-    emitter.Size = size * Vector3.new(0.9, 0.95, 0.9)
-    emitter.CFrame = cf
+    emitter.Size = boxSize * Vector3.new(0.9, 0.95, 0.9)
+    emitter.CFrame = boxCFrame
     emitter.Transparency = 1
     emitter.Anchored = false
     emitter.Massless = true
@@ -79,21 +94,21 @@ function FX.apply(model, opts)
     weld.Part0 = core
     weld.Part1 = emitter
     weld.Parent = emitter
-    local function particle(name, rate)
-        local e = Instance.new("ParticleEmitter")
-        e.Name = name
-        e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-        e.Color = ColorSequence.new(GOLD)
-        e.Shape = Enum.ParticleEmitterShape.Box
-        e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
-        e.LightEmission = 1
-        e.LightInfluence = 0
-        e.Brightness = 3
-        e.Rate = rate
-        e.Parent = emitter
-        return e
+    local function addSparkleEmitter(name, rate)
+        local particles = Instance.new("ParticleEmitter")
+        particles.Name = name
+        particles.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+        particles.Color = ColorSequence.new(GOLD)
+        particles.Shape = Enum.ParticleEmitterShape.Box
+        particles.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+        particles.LightEmission = 1
+        particles.LightInfluence = 0
+        particles.Brightness = 3
+        particles.Rate = rate
+        particles.Parent = emitter
+        return particles
     end
-    local stars = particle("Sparkles", opts.Sparkles or 16)
+    local stars = addSparkleEmitter("Sparkles", opts.Sparkles or 16)
     stars:SetAttribute("BaseRate", stars.Rate)
     stars.Lifetime = NumberRange.new(0.5, 0.9)
     stars.Speed = NumberRange.new(0)
@@ -104,7 +119,7 @@ function FX.apply(model, opts)
         NumberSequenceKeypoint.new(0.35, 0.45),
         NumberSequenceKeypoint.new(1, 0),
     })
-    local dust = particle("GoldSpecks", opts.Specks or 10)
+    local dust = addSparkleEmitter("GoldSpecks", opts.Specks or 10)
     dust:SetAttribute("BaseRate", dust.Rate)
     dust.Brightness = 2
     dust.Lifetime = NumberRange.new(2, 3)
@@ -123,11 +138,13 @@ function FX.apply(model, opts)
     light.Range = 9
     light.Shadows = false
     light.Parent = emitter
+    -- Flat invisible disc at the feet; its RingBurst emitter is fired by GoldFXClient (Rate stays 0).
     local ring = Instance.new("Part")
     ring.Name = "GroundRing"
     ring.Shape = Enum.PartType.Cylinder
-    ring.Size = Vector3.new(0.05, size.X * 1.25, size.X * 1.25)
-    ring.CFrame = CFrame.new(cf.Position - Vector3.new(0, size.Y * 0.5 - 0.025, 0)) * CFrame.Angles(0, 0, math.pi * 0.5)
+    ring.Size = Vector3.new(0.05, boxSize.X * 1.25, boxSize.X * 1.25)
+    ring.CFrame = CFrame.new(boxCFrame.Position - Vector3.new(0, boxSize.Y * 0.5 - 0.025, 0))
+        * CFrame.Angles(0, 0, math.pi * 0.5)
     ring.Transparency = 1
     ring.Anchored = false
     ring.Massless = true
@@ -136,15 +153,16 @@ function FX.apply(model, opts)
     ring.CanQuery = false
     ring.CastShadow = false
     ring.Parent = folder
-    local rw = Instance.new("WeldConstraint")
-    rw.Part0 = core
-    rw.Part1 = ring
-    rw.Parent = ring
+    local ringWeld = Instance.new("WeldConstraint")
+    ringWeld.Part0 = core
+    ringWeld.Part1 = ring
+    ringWeld.Parent = ring
     local ripple = Instance.new("ParticleEmitter")
     ripple.Name = "RingBurst"
     ripple.Texture = "rbxasset://textures/particles/sparkles_main.dds"
     ripple.Shape = Enum.ParticleEmitterShape.Disc
     ripple.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+    -- pcall: guards against ShapeInOut being unavailable (assignment errors are swallowed).
     pcall(function()
         ripple.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
     end)
@@ -170,16 +188,17 @@ function FX.apply(model, opts)
     highlight.OutlineTransparency = 1
     highlight.DepthMode = Enum.HighlightDepthMode.Occluded
     highlight.Parent = folder
+    -- R6 limbs: a slightly larger invisible box carrying a shine-stripe Texture on its four sides.
     local shineFolder = Instance.new("Folder")
     shineFolder.Name = "ShineBoxes"
     shineFolder.Parent = folder
     for _, name in ipairs({ "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }) do
-        local p = model:FindFirstChild(name, true)
-        if p and p:IsA("BasePart") then
+        local limb = model:FindFirstChild(name, true)
+        if limb and limb:IsA("BasePart") then
             local box = Instance.new("Part")
             box.Name = name .. "_Shine"
-            box.Size = p.Size + Vector3.new(0.03, 0.03, 0.03)
-            box.CFrame = p.CFrame
+            box.Size = limb.Size + Vector3.new(0.03, 0.03, 0.03)
+            box.CFrame = limb.CFrame
             box.Transparency = 1
             box.CanCollide = false
             box.CanTouch = false
@@ -188,10 +207,10 @@ function FX.apply(model, opts)
             box.CastShadow = false
             box.Anchored = false
             box.Parent = shineFolder
-            local w = Instance.new("WeldConstraint")
-            w.Part0 = p
-            w.Part1 = box
-            w.Parent = box
+            local boxWeld = Instance.new("WeldConstraint")
+            boxWeld.Part0 = limb
+            boxWeld.Part1 = box
+            boxWeld.Parent = box
             for _, face in ipairs({ Enum.NormalId.Front, Enum.NormalId.Back, Enum.NormalId.Left, Enum.NormalId.Right }) do
                 local texture = Instance.new("Texture")
                 texture.Name = "ShineStripe"
@@ -207,8 +226,9 @@ function FX.apply(model, opts)
         end
     end
     model:SetAttribute("Gold", true)
+    -- Phase offset so several gold characters don't shine in sync.
     model:SetAttribute("GoldFXPhase", opts.Phase or math.random() * 3.2)
-    Collection:AddTag(model, "GoldCharacter")
+    CollectionService:AddTag(model, "GoldCharacter")
     return folder
 end
 return FX

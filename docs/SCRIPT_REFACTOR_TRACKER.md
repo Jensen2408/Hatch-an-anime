@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 189 |
-| Reviewed — No Changes Needed | 0 |
-| Refactored | 0 |
+| Pending | 161 |
+| Reviewed — No Changes Needed | 4 |
+| Refactored | 24 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -18,34 +18,34 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `shared/Catalogs/CharacterCatalog.luau` | ModuleScript | 96 | 220 | Pending | — | — |
-| `shared/Catalogs/CharacterEconomy.luau` | ModuleScript | 104 | 212 | Pending | — | — |
-| `shared/Catalogs/EggCatalog.luau` | ModuleScript | 1 | 47 | Pending | — | — |
-| `shared/Characters/CharacterInfo/Adapter.luau` | ModuleScript | 74 | 82 | Pending | — | — |
-| `shared/Config/EggHatchTiming.luau` | ModuleScript | 15 | 36 | Pending | — | — |
-| `shared/Config/GameMenu/Config.luau` | ModuleScript | 62 | 143 | Pending | — | — |
-| `shared/Config/JoinArrival/Config.luau` | ModuleScript | 42 | 42 | Pending | — | — |
-| `shared/Config/ShopSystem/ShopConfig.luau` | ModuleScript | 62 | 81 | Pending | — | — |
-| `shared/Config/TempleAppearanceThemes.luau` | ModuleScript | 39 | 71 | Pending | — | — |
-| `shared/Config/TrailerConfig.luau` | ModuleScript | 52 | 81 | Pending | — | — |
-| `shared/Config/UpdateConfig.luau` | ModuleScript | 16 | 16 | Pending | — | — |
-| `shared/Config/UpgradePrices.luau` | ModuleScript | 17 | 23 | Pending | — | — |
-| `shared/Effects/GoldCharacterFX.luau` | ModuleScript | 73 | 214 | Pending | — | — |
-| `shared/Effects/RichGoldFinish.luau` | ModuleScript | 14 | 16 | Pending | — | — |
-| `shared/Egg/EggSteal/EggStealConfig.luau` | ModuleScript | 111 | 111 | Pending | — | — |
-| `shared/Hatching/HatchFX/HatchFXConfig.luau` | ModuleScript | 85 | 102 | Pending | — | — |
-| `shared/Inventory/CharacterInventory/InventoryConfig.luau` | ModuleScript | 144 | 144 | Pending | — | — |
-| `shared/Inventory/CharacterInventory/InventoryFormat.luau` | ModuleScript | 78 | 111 | Pending | — | — |
-| `shared/Temple/Construction/ConstructionConfig.luau` | ModuleScript | 104 | 109 | Pending | — | — |
-| `shared/UI/EggUIStyle.luau` | ModuleScript | 19 | 57 | Pending | — | — |
-| `shared/UI/Leaderboard/LeaderboardConfig.luau` | ModuleScript | 115 | 144 | Pending | — | — |
-| `shared/UI/Leaderboard/LeaderboardFormat.luau` | ModuleScript | 33 | 50 | Pending | — | — |
-| `shared/UI/PixelIcon.luau` | ModuleScript | 72 | 106 | Pending | — | — |
-| `shared/World/PirateEggConveyor/RollingMotion.luau` | ModuleScript | 113 | 164 | Pending | — | — |
-| `shared/World/Portal/PortalBuilder.luau` | ModuleScript | 107 | 197 | Pending | — | — |
-| `shared/World/Portal/PortalConfig.luau` | ModuleScript | 52 | 67 | Pending | — | — |
-| `shared/World/WaterfallRiver/RiverConfig.luau` | ModuleScript | 70 | 76 | Pending | — | — |
-| `shared/World/WaterfallRiver/RiverPath.luau` | ModuleScript | 72 | 83 | Pending | — | — |
+| `shared/Catalogs/CharacterCatalog.luau` | ModuleScript | 96 | 253 | Refactored | SAME | Header documents entry shape; renamed CHARACTER_IDS/ASSET_NAMES/PRICES/RARITY_NAMES/RARITY_COLORS/MENU_IMAGES, unknownEntry, addLine/label; comments on spawn roll and parallel arrays. |
+| `shared/Catalogs/CharacterEconomy.luau` | ModuleScript | 104 | 256 | Refactored | SAME | Header lists attributes; renamed defaultRandom, mutationMultiplier, power, anchorPart, boxCFrame, skew, addLine, unit/text; documented RollWeights, Roll, legacy PowerVersion conversion, Format. |
+| `shared/Catalogs/EggCatalog.luau` | ModuleScript | 1 | 52 | Refactored | SAME | Comment-only header: consumers, field meanings, array order is a contract. |
+| `shared/Characters/CharacterInfo/Adapter.luau` | ModuleScript | 74 | 88 | Refactored | SAME | Renamed instance, attr, attributeNames/attributeName; comments on Read, Watched, BrainrotId precedence, client-only ReducedMotion. |
+| `shared/Config/EggHatchTiming.luau` | ModuleScript | 15 | 43 | Refactored | SAME | Header; M->Timing, hours/minutes/secs; unused locals prefixed with _ (require kept). Selene 2->0. |
+| `shared/Config/GameMenu/Config.luau` | ModuleScript | 62 | 149 | Refactored | SAME | C->Config, U->_LEGACY_UNITS (still created), timestamp/date/year/month/weekIndex/digits; documented Monday week offset, PeriodKey/PeriodEnds. |
+| `shared/Config/JoinArrival/Config.luau` | ModuleScript | 42 | 42 | Reviewed — No Changes Needed | SAME | Untouched. |
+| `shared/Config/ShopSystem/ShopConfig.luau` | ModuleScript | 62 | 81 | Refactored | SAME | C->Config; data untouched. |
+| `shared/Config/TempleAppearanceThemes.luau` | ModuleScript | 39 | 82 | Refactored | SAME | Header per theme; T->Themes, candidate, part, surfaceAppearance, baseColor/tint; notes on fallback and Neon/Glass skip. |
+| `shared/Config/TrailerConfig.luau` | ModuleScript | 52 | 81 | Refactored | SAME | C->Config. |
+| `shared/Config/UpdateConfig.luau` | ModuleScript | 16 | 16 | Reviewed — No Changes Needed | SAME | Untouched. |
+| `shared/Config/UpgradePrices.luau` | ModuleScript | 17 | 27 | Refactored | SAME | P->Prices, ls->leaderstats; header gives runtime path, table keying and Charge contract. |
+| `shared/Effects/GoldCharacterFX.luau` | ModuleScript | 73 | 234 | Refactored | SAME | Header; CollectionService, boxCFrame/boxSize, originalParts, part/limb, weld names, addSparkleEmitter; Selene 1->0. |
+| `shared/Effects/RichGoldFinish.luau` | ModuleScript | 14 | 20 | Refactored | SAME | Header; part, surfaceAppearance. |
+| `shared/Egg/EggSteal/EggStealConfig.luau` | ModuleScript | 111 | 111 | Refactored | SAME | C->Config. |
+| `shared/Hatching/HatchFX/HatchFXConfig.luau` | ModuleScript | 85 | 107 | Refactored | SAME | C->Config, U->LEGACY_UNITS, at->scaled, unit/value/text; documented Timeline scaling and that Config.T is not used by Timeline. |
+| `shared/Inventory/CharacterInventory/InventoryConfig.luau` | ModuleScript | 144 | 144 | Reviewed — No Changes Needed | SAME | Untouched; pre-existing selene deprecated (Enum.KeyCode.Unknown) kept — config value. |
+| `shared/Inventory/CharacterInventory/InventoryFormat.luau` | ModuleScript | 78 | 114 | Refactored | SAME | truncated/text/digits/difference/multiplier/percent; exports and output strings unchanged; comments on truncation, rounding, Ago. |
+| `shared/Temple/Construction/ConstructionConfig.luau` | ModuleScript | 104 | 111 | Refactored | SAME | C->Config; timing/count/buildStart in Timeline; replaced stale comment with accurate timeline description. |
+| `shared/UI/EggUIStyle.luau` | ModuleScript | 19 | 61 | Refactored | SAME | Header; label, position; comment on staggered dot grid. |
+| `shared/UI/Leaderboard/LeaderboardConfig.luau` | ModuleScript | 115 | 144 | Reviewed — No Changes Needed | SAME | Untouched. |
+| `shared/UI/Leaderboard/LeaderboardFormat.luau` | ModuleScript | 33 | 54 | Refactored | SAME | UNITS->_UNITS (still created), digits/grouped; comments on Commas, Compact, Value kinds; Selene 1->0. |
+| `shared/UI/PixelIcon.luau` | ModuleScript | 72 | 113 | Refactored | SAME | P->PixelIcon, icon/height/width/char/pixel/property/value; documented run-length merge, +1px seam trick, deprecated Instance.new parent arg. |
+| `shared/World/PirateEggConveyor/RollingMotion.luau` | ModuleScript | 113 | 197 | Refactored | SAME | Header lists phases and attributes; RS->ReplicatedStorage, conveyor, riverOrigin, phase durations, progress vars, eggCFrame, segment. |
+| `shared/World/Portal/PortalBuilder.luau` | ModuleScript | 107 | 258 | Refactored | SAME | C->Config, P->PALETTE, makePart, buildLantern, gate, groundY, pillarHeight, surfaceGui, plaqueText; header notes server near-copy. |
+| `shared/World/Portal/PortalConfig.luau` | ModuleScript | 52 | 67 | Refactored | SAME | C->Config. |
+| `shared/World/WaterfallRiver/RiverConfig.luau` | ModuleScript | 70 | 76 | Refactored | SAME | C->Config. |
+| `shared/World/WaterfallRiver/RiverPath.luau` | ModuleScript | 72 | 92 | Refactored | SAME | ORIGIN, SAMPLE_COUNT, cumulativeDistance, segmentStart/End, fraction, tangent, dashHeads, keypoints, addKeypoint; documented sampling, meander fade, WidthAt, Dash. |
 
 ## Batch 02 — Shared — UI modules
 
@@ -319,255 +319,255 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `shared/Catalogs/CharacterCatalog.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Display text only; model IDs and artwork keys retain their existing names. Player-facing names (Adam, Oct 16): hint at the anime each one references.
 - **Dependencies:** —
 - **Public functions:** Catalog.BuildSpawnPool, Catalog.DisplayName, Catalog.FormatPrice, Catalog.Label, Catalog.Stamp
 - **Events:** —
-- **Readability problems:** 5 dense one-line statements; 5 lines >160 chars; 3 one-letter locals
+- **Readability problems:** no header; cryptic locals (ids/names/prices/colors/e/s/cf/l/line); parallel arrays undocumented
 
 ### `shared/Catalogs/CharacterEconomy.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** High · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** Economy.Apply, Economy.BasePower, Economy.Color, Economy.Format, Economy.Income, Economy.Label, Economy.Quality, Economy.Read, Economy.Roll, Economy.RollWeights
 - **Events:** —
-- **Readability problems:** 6 dense one-line statements; 6 lines >160 chars; 5 one-letter locals
+- **Readability problems:** no header; p/l/u/t/mutMult names; band/luck semantics undocumented
 
 ### `shared/Catalogs/EggCatalog.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 1 lines >160 chars
+- **Readability problems:** no header
 
 ### `shared/Characters/CharacterInfo/Adapter.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.CharacterInfo.Adapter  (ModuleScript)
 - **Dependencies:** CharacterCatalog
 - **Public functions:** Adapter.IsCharacterTool, Adapter.Read, Adapter.Watched
 - **Events:** —
-- **Readability problems:** 2 dense one-line statements; 2 one-letter locals
+- **Readability problems:** A/t/v/inst names
 
 ### `shared/Config/EggHatchTiming.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** CharacterEconomy
 - **Public functions:** M.Format, M.Seconds
 - **Events:** —
-- **Readability problems:** 2 dense one-line statements; 1 lines >160 chars; 4 one-letter locals
+- **Readability problems:** no header; M/h/m/s names; 2 unused_variable warnings
 
 ### `shared/Config/GameMenu/Config.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.GameMenu.Config  (ModuleScript, shared)
 - **Dependencies:** InventoryFormat
 - **Public functions:** C.Full, C.PeriodEnds, C.PeriodKey, C.Short
 - **Events:** —
-- **Readability problems:** 5 dense one-line statements; 7 lines >160 chars; 5 one-letter locals
+- **Readability problems:** C/U/d/y/m/w/t/s names; unused U table
 
 ### `shared/Config/JoinArrival/Config.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Reviewed — No Changes Needed
 - **Responsibility:** JoinArrival.Config
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** none; already fully commented
 
 ### `shared/Config/ShopSystem/ShopConfig.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.ShopSystem.ShopConfig — everything you tune for the Shop + Daily Rewards.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 2 lines >160 chars; 1 one-letter locals
+- **Readability problems:** local named C
 
 ### `shared/Config/TempleAppearanceThemes.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** T.Apply
 - **Events:** —
-- **Readability problems:** 6 dense one-line statements; 3 one-letter locals
+- **Readability problems:** no header; T/t/p/sa/c names
 
 ### `shared/Config/TrailerConfig.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.TrailerConfig: settings for the recording-only trailer (/trailer or F7)
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 1 lines >160 chars; 1 one-letter locals
+- **Readability problems:** local named C
 
 ### `shared/Config/UpdateConfig.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Reviewed — No Changes Needed
 - **Responsibility:** UpdateConfig: edit this for each update. Players see a countdown before LaunchTime and a "What's new" window after it (once per update).
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** none
 
 ### `shared/Config/UpgradePrices.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Cash prices for plot upgrades. Server charges these; the Plot menu shows them.
 - **Dependencies:** —
 - **Public functions:** P.CanAfford, P.Charge
 - **Events:** —
-- **Readability problems:** 2 dense one-line statements; 1 one-letter locals
+- **Readability problems:** P/ls names
 
 ### `shared/Effects/GoldCharacterFX.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** RichGoldFinish
 - **Public functions:** FX.apply, FX.remove
 - **Events:** —
-- **Readability problems:** 4 dense one-line statements; 9 lines >160 chars; 3 one-letter locals
+- **Readability problems:** no header; Collection/cf/v/p/sa/w/e/rw/particle names; unused sa
 
 ### `shared/Effects/RichGoldFinish.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** Finish.Apply
 - **Events:** —
-- **Readability problems:** 1 dense one-line statements
+- **Readability problems:** no header; p/sa names
 
 ### `shared/Egg/EggSteal/EggStealConfig.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.EggSteal.EggStealConfig  (ModuleScript, shared by server + client)
 - **Dependencies:** —
 - **Public functions:** C.RarityColor
 - **Events:** —
-- **Readability problems:** 1 one-letter locals
+- **Readability problems:** local named C
 
 ### `shared/Hatching/HatchFX/HatchFXConfig.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.HatchFX.HatchFXConfig  (ModuleScript, shared)
 - **Dependencies:** InventoryFormat
 - **Public functions:** C.LegacyShort, C.Level, C.Short, C.Timeline
 - **Events:** —
-- **Readability problems:** 1 dense one-line statements; 4 one-letter locals
+- **Readability problems:** C/U/u/v/s/at names; Timeline vs T unclear
 
 ### `shared/Inventory/CharacterInventory/InventoryConfig.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Reviewed — No Changes Needed
 - **Responsibility:** ReplicatedStorage.CharacterInventory.InventoryConfig  (ModuleScript)
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** none; well commented
 
 ### `shared/Inventory/CharacterInventory/InventoryFormat.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.CharacterInventory.InventoryFormat  (ModuleScript)
 - **Dependencies:** —
 - **Public functions:** Format.Ago, Format.Delta, Format.Exact, Format.Money, Format.Multiplier, Format.Rate, Format.Relative, Format.Short
 - **Events:** —
-- **Readability problems:** 14 dense one-line statements; 3 one-letter locals
+- **Readability problems:** t/s/d/m/pct names
 
 ### `shared/Temple/Construction/ConstructionConfig.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.Construction.ConstructionConfig  (ModuleScript, shared by server + client)
 - **Dependencies:** —
 - **Public functions:** C.Timeline
 - **Events:** —
-- **Readability problems:** 3 one-letter locals
+- **Readability problems:** C/k/n/t0 names; stale phaseOffset comment
 
 ### `shared/UI/EggUIStyle.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** Style.Panel, Style.Text
 - **Events:** —
-- **Readability problems:** 8 dense one-line statements; 4 lines >160 chars; 1 one-letter locals
+- **Readability problems:** no header; t/pos names
 
 ### `shared/UI/Leaderboard/LeaderboardConfig.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Reviewed — No Changes Needed
 - **Responsibility:** ReplicatedStorage.Leaderboard.LeaderboardConfig  (ModuleScript)
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** none; well commented
 
 ### `shared/UI/Leaderboard/LeaderboardFormat.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.Leaderboard.LeaderboardFormat  (ModuleScript)
 - **Dependencies:** InventoryFormat
 - **Public functions:** Format.Age, Format.Commas, Format.Compact, Format.Value
 - **Events:** —
-- **Readability problems:** 5 dense one-line statements; 1 one-letter locals
+- **Readability problems:** unused UNITS; s/out names
 
 ### `shared/UI/PixelIcon.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Builds crisp pixel-art icons out of Frames. rows = strings, palette = {char=Color3}; "." = empty
 - **Dependencies:** —
 - **Public functions:** P.build
 - **Events:** —
-- **Readability problems:** 1 dense one-line statements; 1 lines >160 chars; 3 one-letter locals
+- **Readability problems:** P/def/h/w/c/px/k/v names
 
 ### `shared/World/PirateEggConveyor/RollingMotion.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Moves a river egg along the new winding WaterfallRiver (ReplicatedStorage.WaterfallRiver.RiverPath). Same API as before: returns update(), pose(elapsed) -> cframe, phase ("fall"\|"land"\|"travel"\|"exit"
 - **Dependencies:** RiverConfig, RiverPath
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 7 dense one-line statements; 2 lines >160 chars; 8 one-letter locals
+- **Readability problems:** RS/m/O/k/u/wt/d/p/a/cf names; phases/attributes undocumented
 
 ### `shared/World/Portal/PortalBuilder.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.Portal.PortalBuilder  (ModuleScript, shared: server builds live gates, the trailer builds local ones)
 - **Dependencies:** PortalConfig
 - **Public functions:** Builder.Build
 - **Events:** —
-- **Readability problems:** 6 dense one-line statements; 9 one-letter locals
+- **Readability problems:** C/P/m/g/H/l/t/sg/s names
 
 ### `shared/World/Portal/PortalConfig.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.Portal.PortalConfig  (ModuleScript, shared)
 - **Dependencies:** —
 - **Public functions:** C.Color, C.Total, C.WalkTime
 - **Events:** —
-- **Readability problems:** 1 one-letter locals
+- **Readability problems:** local named C
 
 ### `shared/World/WaterfallRiver/RiverConfig.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.WaterfallRiver.RiverConfig Edit values here, then rebuild with:  require(game.ServerStorage.WaterfallRiverBuilder:Clone())() NOTE: fitted to the Hatch A Anime arena (cliff backs onto
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 1 one-letter locals
+- **Readability problems:** local named C
 
 ### `shared/World/WaterfallRiver/RiverPath.luau`
 
-- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 01 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.WaterfallRiver.RiverPath Shared, deterministic river + egg maths. Server (validation) and client (visuals) compute identical positions from server time.
 - **Dependencies:** RiverConfig
 - **Public functions:** Path.At, Path.Dash, Path.WidthAt
 - **Events:** —
-- **Readability problems:** 1 dense one-line statements; 4 one-letter locals
+- **Readability problems:** O/N/cum/a/b/f/tan/ps/kps/add names
 
 ### `client/Egg/EggLabelsClient.client.luau`
 

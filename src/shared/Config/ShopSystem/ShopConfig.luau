@@ -2,13 +2,13 @@
 PASTE YOUR IDS HERE: create the Game Passes / Developer Products on the Creator Hub, then put their numbers below.
 Anything with id 0 shows "SOON" and can't be bought yet.
 ]]
-local C = {}
+local Config = {}
 
-C.GamePasses = {
+Config.GamePasses = {
     VIP = 2026700958, -- Game Pass: crown over head, gold [VIP] chat tag, +10% cash, 2× daily cash rewards
     StarterPack = 2026160959, -- Game Pass (one-time): $25K cash + 30 min 2× Money + 30 min 2× Hatch
 }
-C.Products = {
+Config.Products = {
     Money2x = 3718004641, -- Developer Product: 2× money for 30 minutes (stacks time)
     Hatch2x = 3718004750, -- Developer Product: 2× hatch speed for 30 minutes (stacks time)
     CashSmall = 3718004801, -- Developer Product: cash pack
@@ -17,7 +17,7 @@ C.Products = {
     UnknownEgg = 3718415531, -- Developer Product: LIMITED DEAL Unknown Egg (199 R$). Paste the id here.
     Offline2x = 3719548128 --[[ 19 R$ "2× Offline Earnings" developer product ]],
 }
-C.Prices = {
+Config.Prices = {
     VIP = 360,
     StarterPack = 90,
     Money2x = 49,
@@ -28,14 +28,14 @@ C.Prices = {
     UnknownEgg = 199,
     Offline2x = 19,
 } -- shown on buttons only; real price is set on Roblox
-C.BoostMinutes = 30
-C.CashPacks = { CashSmall = 10000, CashMedium = 75000, CashLarge = 400000 }
-C.StarterPack = { cash = 25000, boostMinutes = 30 }
-C.VIPCashBonus = 1.1
+Config.BoostMinutes = 30
+Config.CashPacks = { CashSmall = 10000, CashMedium = 75000, CashLarge = 400000 }
+Config.StarterPack = { cash = 25000, boostMinutes = 30 }
+Config.VIPCashBonus = 1.1
 
 -- Money multiplier: bought with ROBUX, one level at a time, each level costs more. Permanent.
 -- Make ONE Developer Product per level (price = robux below) and paste its id.
-C.MoneyLevels = {
+Config.MoneyLevels = {
     { mult = 2, robux = 14, productId = 3718005028 },
     { mult = 3, robux = 27, productId = 3718005064 },
     { mult = 5, robux = 54, productId = 3718005137 },
@@ -49,7 +49,7 @@ C.MoneyLevels = {
 }
 
 -- Daily rewards (7-day streak, resets if you miss a day)
-C.Daily = {
+Config.Daily = {
     { kind = "cash", amount = 500 },
     { kind = "cash", amount = 1000 },
     { kind = "boost", boost = "Hatch2x", minutes = 10, label = "2× HATCH 10m" },
@@ -58,7 +58,7 @@ C.Daily = {
     { kind = "cash", amount = 5000 },
     { kind = "mystery", amount = 25000, minutes = 15, label = "MYSTERY GIFT" },
 }
-C.Icons = {
+Config.Icons = {
     Fire = "rbxassetid://123121531396779",
     Chalice = "rbxassetid://101647680219886",
     CoinSmall = "rbxassetid://132917301116912",
@@ -71,11 +71,11 @@ C.Icons = {
     Chest = "rbxassetid://108828180161951",
 }
 -- Limited deal shown at the top of the shop
-C.LimitedDeal = {
+Config.LimitedDeal = {
     key = "UnknownEgg",
     name = "UNKNOWN EGG",
     text = "A secret Halloween egg. Only for a limited time!",
     endsAt = 1793491200,
 } -- ends 1 Nov 2026 00:00 UTC
-C.ComingSoonEgg = { name = "Celestial Egg", text = "A really special egg is on its way…" }
-return C
+Config.ComingSoonEgg = { name = "Celestial Egg", text = "A really special egg is on its way…" }
+return Config

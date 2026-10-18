@@ -1,4 +1,12 @@
-local T = {
+--[[ ReplicatedStorage.TempleAppearanceThemes  (ModuleScript, shared)
+Temple appearance themes (array order = order shown to players) and Themes.Apply, which repaints a
+temple model in place and records the choice as attribute "TempleAppearance".
+  Halloween: restores the HalloweenColor / HalloweenSurfaceColor attributes stored on each part.
+  Original:  leaves the parts untouched.
+  Gold:      metal finish + swaps each SurfaceAppearance for its ReplicatedStorage.GoldTempleSurfaces preset.
+  others:    multiplies the colour (or SurfaceAppearance colour) by the theme Tint.
+]]
+local Themes = {
     { Id = "Halloween", Name = "Halloween", Tint = Color3.fromRGB(151, 92, 191) },
     { Id = "Original", Name = "Classic", Tint = Color3.fromRGB(255, 255, 255) },
     { Id = "Jade", Name = "Jade Garden", Tint = Color3.fromRGB(174, 235, 193) },
@@ -7,29 +15,31 @@ local T = {
     { Id = "Amber", Name = "Amber", Tint = Color3.fromRGB(255, 221, 160) },
     { Id = "Gold", Name = "Royal Gold", Tint = Color3.fromRGB(255, 194, 66) },
 }
-function T.Apply(model, id)
-    local theme = T[2]
-    for _, t in ipairs(T) do
-        if t.Id == id then
-            theme = t
+-- Unknown ids fall back to Themes[2] ("Original").
+function Themes.Apply(model, id)
+    local theme = Themes[2]
+    for _, candidate in ipairs(Themes) do
+        if candidate.Id == id then
+            theme = candidate
         end
     end
     model:SetAttribute("TempleAppearance", theme.Id)
+    -- The Halloween decorations folder is removed for good once any other theme is applied.
     local decor = model:FindFirstChild("HalloweenDecor")
     if decor and theme.Id ~= "Halloween" then
         decor:Destroy()
     end
     if theme.Id == "Halloween" then
-        for _, p in model:GetDescendants() do
-            if p:IsA("BasePart") then
-                local color = p:GetAttribute("HalloweenColor")
+        for _, part in model:GetDescendants() do
+            if part:IsA("BasePart") then
+                local color = part:GetAttribute("HalloweenColor")
                 if color then
-                    p.Color = color
+                    part.Color = color
                 end
-                local sa = p:FindFirstChildOfClass("SurfaceAppearance")
-                local tint = p:GetAttribute("HalloweenSurfaceColor")
-                if sa and tint then
-                    sa.Color = tint
+                local surfaceAppearance = part:FindFirstChildOfClass("SurfaceAppearance")
+                local tint = part:GetAttribute("HalloweenSurfaceColor")
+                if surfaceAppearance and tint then
+                    surfaceAppearance.Color = tint
                 end
             end
         end
@@ -39,33 +49,34 @@ function T.Apply(model, id)
     if theme.Id == "Original" then
         return
     end
-    for _, p in ipairs(model:GetDescendants()) do
-        if p:IsA("BasePart") and p.Material ~= Enum.Material.Neon and p.Material ~= Enum.Material.Glass then
-            local sa = p:FindFirstChildWhichIsA("SurfaceAppearance")
+    -- Neon and Glass parts (lights, windows) keep their look in every tinted theme.
+    for _, part in ipairs(model:GetDescendants()) do
+        if part:IsA("BasePart") and part.Material ~= Enum.Material.Neon and part.Material ~= Enum.Material.Glass then
+            local surfaceAppearance = part:FindFirstChildWhichIsA("SurfaceAppearance")
             if theme.Id == "Gold" then
                 local gold = Color3.fromRGB(238, 174, 49)
-                p.Material = Enum.Material.Metal
-                p.Reflectance = 0.12
-                p.Color = gold
-                if sa then
+                part.Material = Enum.Material.Metal
+                part.Reflectance = 0.12
+                part.Color = gold
+                if surfaceAppearance then
                     -- Preserve the temple's UV-matched cavity normal, replacing only its finish.
-                    local key = sa:GetAttribute("GoldSurfaceKey") or "Flat"
+                    local key = surfaceAppearance:GetAttribute("GoldSurfaceKey") or "Flat"
                     local preset = game.ReplicatedStorage.GoldTempleSurfaces:FindFirstChild(key)
                     if preset then
                         local replacement = preset:Clone()
-                        replacement.Name = sa.Name
-                        sa:Destroy()
-                        replacement.Parent = p
+                        replacement.Name = surfaceAppearance.Name
+                        surfaceAppearance:Destroy()
+                        replacement.Parent = part
                     end
                 end
-            elseif sa then
-                sa.Color = theme.Tint
+            elseif surfaceAppearance then
+                surfaceAppearance.Color = theme.Tint
             else
-                local c = p.Color
-                local t = theme.Tint
-                p.Color = Color3.new(c.R * t.R, c.G * t.G, c.B * t.B)
+                local baseColor = part.Color
+                local tint = theme.Tint
+                part.Color = Color3.new(baseColor.R * tint.R, baseColor.G * tint.G, baseColor.B * tint.B)
             end
         end
     end
 end
-return T
+return Themes

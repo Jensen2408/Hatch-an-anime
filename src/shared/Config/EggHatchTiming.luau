@@ -1,6 +1,11 @@
-local Economy = require(script.Parent.CharacterEconomy)
-local M = {}
-M.Base = {
+--[[ ReplicatedStorage.EggHatchTiming  (ModuleScript, shared)
+Incubation time per egg type (seconds) and the countdown text format.
+Read by PirateEggFreeConveyor (stamps attribute HatchSeconds) and HatchGoo.
+]]
+-- Not used below; the require is kept so load order stays exactly as before.
+local _Economy = require(script.Parent.CharacterEconomy)
+local Timing = {}
+Timing.Base = {
     Pirate = 30,
     Shinobi = 60,
     Power = 90,
@@ -20,17 +25,19 @@ M.Base = {
 }
 -- Every egg of a given type has the same base incubation time.
 -- Power rolls do not change the timer; Nighttime speeds up the countdown.
-function M.Seconds(id, stats)
-    return M.Base[id] or 120
+-- `_stats` (the rolled stats) is accepted for API compatibility but ignored. Unlisted ids get 120 s.
+function Timing.Seconds(id, _stats)
+    return Timing.Base[id] or 120
 end
-function M.Format(seconds)
+-- 3725 -> "1:02:05", 125 -> "02:05". Rounds up so the countdown never shows 00:00 early.
+function Timing.Format(seconds)
     seconds = math.max(0, math.ceil(seconds))
-    local h = math.floor(seconds / 3600)
-    local m = math.floor(seconds / 60) % 60
-    local s = seconds % 60
-    if h > 0 then
-        return string.format("%d:%02d:%02d", h, m, s)
+    local hours = math.floor(seconds / 3600)
+    local minutes = math.floor(seconds / 60) % 60
+    local secs = seconds % 60
+    if hours > 0 then
+        return string.format("%d:%02d:%02d", hours, minutes, secs)
     end
-    return string.format("%02d:%02d", m, s)
+    return string.format("%02d:%02d", minutes, secs)
 end
-return M
+return Timing

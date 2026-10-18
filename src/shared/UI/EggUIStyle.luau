@@ -1,3 +1,6 @@
+-- ReplicatedStorage.EggUIStyle  (ModuleScript, shared)
+-- Cartoon egg-shop UI pieces: a rounded gradient panel with a faint egg-dot pattern, and outlined
+-- Cartoon-font text. Both return the created instance (already parented).
 local Style = {}
 function Style.Panel(parent, color)
     local frame = Instance.new("Frame")
@@ -19,6 +22,7 @@ function Style.Panel(parent, color)
     gradient.Color = ColorSequence.new(color:Lerp(Color3.new(1, 1, 1), 0.2), color:Lerp(Color3.new(0, 0, 0), 0.18))
     gradient.Parent = frame
     -- Repeated egg silhouettes, deliberately low contrast behind the lettering.
+    -- 4 rows x 10 columns; odd rows are shifted half a column (staggered grid).
     for row = 0, 3 do
         for col = 0, 9 do
             local dot = Instance.new("Frame")
@@ -37,21 +41,21 @@ function Style.Panel(parent, color)
     end
     return frame
 end
-function Style.Text(parent, text, pos, size, color)
-    local t = Instance.new("TextLabel")
-    t.BackgroundTransparency = 1
-    t.Position = pos
-    t.Size = size
-    t.Font = Enum.Font.Cartoon
-    t.TextScaled = true
-    t.Text = text
-    t.TextColor3 = color or Color3.new(1, 1, 1)
-    t.ZIndex = 3
-    t.Parent = parent
+function Style.Text(parent, text, position, size, color)
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Position = position
+    label.Size = size
+    label.Font = Enum.Font.Cartoon
+    label.TextScaled = true
+    label.Text = text
+    label.TextColor3 = color or Color3.new(1, 1, 1)
+    label.ZIndex = 3
+    label.Parent = parent
     local stroke = Instance.new("UIStroke")
     stroke.Color = Color3.fromRGB(18, 18, 22)
     stroke.Thickness = 2
-    stroke.Parent = t
-    return t
+    stroke.Parent = label
+    return label
 end
 return Style

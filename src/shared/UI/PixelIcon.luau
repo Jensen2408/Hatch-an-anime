@@ -1,6 +1,8 @@
+-- ReplicatedStorage.PixelIcon  (ModuleScript, shared)
 -- Builds crisp pixel-art icons out of Frames. rows = strings, palette = {char=Color3}; "." = empty
-local P = {}
-P.Icons = {
+-- Every row of an icon must have the same length (the first row sets the width).
+local PixelIcon = {}
+PixelIcon.Icons = {
     home = {
         rows = {
             ".....KK.....",
@@ -69,33 +71,38 @@ P.Icons = {
         },
     },
 }
-function P.build(parent, name, props)
-    local def = P.Icons[name]
-    local h, w = #def.rows, #def.rows[1]
+-- Builds icon `name` into a transparent "PixelIcon" frame (fills its parent, locked to the icon's aspect ratio
+-- by a constraint). `props` are extra properties set on that frame before the pixels are added.
+function PixelIcon.build(parent, name, props)
+    local icon = PixelIcon.Icons[name]
+    local height, width = #icon.rows, #icon.rows[1]
     local holder = Instance.new("Frame")
     holder.Name = "PixelIcon"
     holder.BackgroundTransparency = 1
     holder.Size = UDim2.fromScale(1, 1)
-    for k, v in props or {} do
-        holder[k] = v
+    for property, value in props or {} do
+        holder[property] = value
     end
-    Instance.new("UIAspectRatioConstraint", holder).AspectRatio = w / h
-    for y, row in def.rows do
+    -- (deprecated two-argument Instance.new parents the constraint immediately)
+    Instance.new("UIAspectRatioConstraint", holder).AspectRatio = width / height
+    for y, row in icon.rows do
         local x = 1
-        while x <= w do
-            local c = row:sub(x, x)
+        while x <= width do
+            -- Run-length merge: one Frame per horizontal run of the same character.
+            local char = row:sub(x, x)
             local run = 1
-            while x + run <= w and row:sub(x + run, x + run) == c do
+            while x + run <= width and row:sub(x + run, x + run) == char do
                 run += 1
             end
-            if c ~= "." and def.pal[c] then
-                local px = Instance.new("Frame")
-                px.BorderSizePixel = 0
-                px.BackgroundColor3 = def.pal[c]
-                px.Position = UDim2.fromScale((x - 1) / w, (y - 1) / h)
-                px.Size = UDim2.new(run / w, 1, 1 / h, 1)
-                px.ZIndex = holder.ZIndex
-                px.Parent = holder
+            if char ~= "." and icon.pal[char] then
+                local pixel = Instance.new("Frame")
+                pixel.BorderSizePixel = 0
+                pixel.BackgroundColor3 = icon.pal[char]
+                pixel.Position = UDim2.fromScale((x - 1) / width, (y - 1) / height)
+                -- +1 px on each axis hides the hairline seams between neighbouring frames
+                pixel.Size = UDim2.new(run / width, 1, 1 / height, 1)
+                pixel.ZIndex = holder.ZIndex
+                pixel.Parent = holder
             end
             x += run
         end
@@ -103,4 +110,4 @@ function P.build(parent, name, props)
     holder.Parent = parent
     return holder
 end
-return P
+return PixelIcon

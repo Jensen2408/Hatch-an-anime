@@ -9,6 +9,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
 local Adapter = {}
 
+-- Attribute names the card reads (values are attribute names, keys are what the UI calls them).
 Adapter.Attr = {
     Name = "DesignName",
     Rarity = "Rarity",
@@ -29,43 +30,47 @@ Adapter.OldLabels = { "PowerInfo", "CharacterInfo" }
 -- Gold stripe + shine for the rare huge rolls (CharacterEconomy bands, 10x base Power and up)
 local BIG_ROLLS = { Jackpot = true, Ultra = true, Cosmic = true }
 
-local function characterId(inst)
-    return inst:GetAttribute("BrainrotId") or inst:GetAttribute("CharacterId")
+-- Older tools carry BrainrotId; it wins over CharacterId when both exist.
+local function characterId(instance)
+    return instance:GetAttribute("BrainrotId") or instance:GetAttribute("CharacterId")
 end
 
 function Adapter.IsCharacterTool(tool)
     return tool:IsA("Tool") and tool:GetAttribute(Adapter.Attr.CharacterId) ~= nil
 end
 
-function Adapter.Read(inst)
-    local A = Adapter.Attr
-    local power = inst:GetAttribute(A.Power)
+-- Card data for a tool or model, or nil when it has no Power attribute (not a rolled character).
+function Adapter.Read(instance)
+    local attr = Adapter.Attr
+    local power = instance:GetAttribute(attr.Power)
     if power == nil then
         return nil
     end
-    local entry = Catalog.ById[characterId(inst) or ""]
-    local name = Catalog.DisplayName(inst:GetAttribute(A.Name) or (entry and entry.Name) or inst.Name)
-    if inst:GetAttribute("GoldVariant") and not name:match("^Golden%s") then
+    local entry = Catalog.ById[characterId(instance) or ""]
+    local name = Catalog.DisplayName(instance:GetAttribute(attr.Name) or (entry and entry.Name) or instance.Name)
+    if instance:GetAttribute("GoldVariant") and not name:match("^Golden%s") then
         name = "Golden " .. name
     end
     return {
         name = name,
-        rarity = inst:GetAttribute(A.Rarity) or (entry and entry.Rarity) or "Common",
+        rarity = instance:GetAttribute(attr.Rarity) or (entry and entry.Rarity) or "Common",
         power = tonumber(power) or 0,
-        income = tonumber(inst:GetAttribute(A.Income)) or 0,
-        mutation = inst:GetAttribute("Mutation"),
-        exceptional = BIG_ROLLS[inst:GetAttribute(A.Quality) or ""] == true or inst:GetAttribute("GoldVariant") == true,
+        income = tonumber(instance:GetAttribute(attr.Income)) or 0,
+        mutation = instance:GetAttribute("Mutation"),
+        exceptional = BIG_ROLLS[instance:GetAttribute(attr.Quality) or ""] == true
+            or instance:GetAttribute("GoldVariant") == true,
     }
 end
 
+-- Every attribute whose change should refresh the card.
 function Adapter.Watched()
-    local t = {}
-    for _, v in Adapter.Attr do
-        table.insert(t, v)
+    local attributeNames = {}
+    for _, attributeName in Adapter.Attr do
+        table.insert(attributeNames, attributeName)
     end
-    table.insert(t, "GoldVariant")
-    table.insert(t, "Mutation")
-    return t
+    table.insert(attributeNames, "GoldVariant")
+    table.insert(attributeNames, "Mutation")
+    return attributeNames
 end
 
 -- Touch Drop: the game's existing DropHeldItemClient already shows a Drop button on touch screens,
@@ -74,6 +79,7 @@ end
 Adapter.Drop = nil
 
 Adapter.DropKey = Enum.KeyCode.F -- DropHeldItemClient binds F
+-- Client only (uses LocalPlayer): the game's own toggle or the Roblox setting.
 Adapter.ReducedMotion = function()
     return Players.LocalPlayer:GetAttribute("ReducedMotion") == true
         or game:GetService("GuiService").ReducedMotionEnabled

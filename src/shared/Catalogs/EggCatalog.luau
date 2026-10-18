@@ -1,3 +1,8 @@
+--[[ ReplicatedStorage.EggCatalog  (ModuleScript, shared)
+Legacy egg list used by ConveyorEggs / EggPickupFeedback / EggStealService (array, lowest tier first).
+Weight = relative spawn weight, Price = egg price shown as "$" text, Color = rarity colour
+(EggStealConfig.RarityColors mirrors these). Array order is the tier order and the weighted-roll order.
+]]
 return {
     {
         Id = "Tung",

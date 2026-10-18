@@ -3,10 +3,10 @@ All tuning lives here. The server reads `Rules`; the client reads everything els
 Nothing in this file is trusted by the server for anything the client could change:
 the client never sends a steal-related message, so there is nothing to spoof.
 ]]
-local C = {}
+local Config = {}
 
 -- ═══════════════════════════ SERVER RULES ═══════════════════════════
-C.Rules = {
+Config.Rules = {
     Enabled = false, -- paused until Robux purchase flow is configured
     -- Prompt shown on another player's incubating egg
     PromptKey = Enum.KeyCode.F, -- not E, so it never fights the Insert / Hatch / Collect prompts
@@ -43,7 +43,7 @@ C.Rules = {
 }
 
 -- ═══════════════════════════ LOOK ═══════════════════════════
-C.Colors = {
+Config.Colors = {
     Outline = Color3.fromRGB(20, 20, 25), -- same dark outline as EggUIStyle
     Alert = Color3.fromRGB(255, 92, 62), -- "EGG STOLEN!"
     Carry = Color3.fromRGB(216, 42, 66), -- run-back state
@@ -56,7 +56,7 @@ C.Colors = {
 }
 
 -- Same colours as EggCatalog. Unknown rarities fall back to Common.
-C.RarityColors = {
+Config.RarityColors = {
     Common = Color3.fromRGB(205, 215, 225),
     Uncommon = Color3.fromRGB(110, 230, 135),
     Rare = Color3.fromRGB(90, 180, 255),
@@ -64,11 +64,11 @@ C.RarityColors = {
     Legendary = Color3.fromRGB(255, 200, 75),
     Mythic = Color3.fromRGB(255, 95, 150),
 }
-function C.RarityColor(rarity)
-    return C.RarityColors[rarity] or C.RarityColors.Common
+function Config.RarityColor(rarity)
+    return Config.RarityColors[rarity] or Config.RarityColors.Common
 end
 
-C.UI = {
+Config.UI = {
     CardWidth = 372,
     CardHeight = 80,
     TopOffset = 12,
@@ -86,14 +86,14 @@ C.UI = {
 }
 
 -- Built-in client sounds (verified to load). Replace with your own rbxassetid:// ids any time; "" = silent.
-C.Sounds = {
+Config.Sounds = {
     Beep = "",
     Thud = "rbxassetid://9126047777",
     Whoosh = "rbxassetid://9126047777",
     Success = "rbxassetid://112485797063762",
     Chime = "rbxassetid://126436524243242",
 }
-C.Alarm = {
+Config.Alarm = {
     Volume = 1, -- master multiplier for every steal sound
     InitialBeeps = 3, -- BEEP — BEEP — BEEP
     BeepGap = 0.24,
@@ -106,6 +106,6 @@ C.Alarm = {
     VictimRepeat = 5, -- owner is reminded every few seconds while their egg is out
 }
 
-C.ClientFailsafeSeconds = 270 -- client removes everything if the server never says the steal ended
+Config.ClientFailsafeSeconds = 270 -- client removes everything if the server never says the steal ended
 
-return C
+return Config

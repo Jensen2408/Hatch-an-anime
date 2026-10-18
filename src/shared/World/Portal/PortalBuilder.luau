@@ -3,195 +3,256 @@ Builds the static Summon Gate: red-lacquer torii, stone slab, rope + paper strea
 and an invisible "Surface" part across the opening. The vortex, particles and lights are created per client
 by PortalClient (so they can animate smoothly without replication).
   Builder.Build(baseCFrame, parent) -> Model   -- baseCFrame = ground centre, LookVector = where characters walk
+All offsets below are in baseCFrame space (studs); parts are anchored. Near-copy of
+ServerScriptService.Portal.PortalBuilder (server/World/Portal/PortalBuilder.luau).
 ]]
 local CollectionService = game:GetService("CollectionService")
-local C = require(game:GetService("ReplicatedStorage"):WaitForChild("Portal"):WaitForChild("PortalConfig"))
-local P = C.Palette
+local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("Portal"):WaitForChild("PortalConfig"))
+local PALETTE = Config.Palette
 local CYL = Enum.PartType.Cylinder
 local UPRIGHT = CFrame.Angles(0, 0, math.pi / 2) -- cylinder axis X -> Y
 
 local Builder = {}
 
-local function part(model, name, size, cf, color, opts)
+-- Anchored part helper. opts: shape, material, collide (default true), shadow (default true), transparency.
+local function makePart(parent, name, size, cframe, color, opts)
     opts = opts or {}
-    local p = Instance.new("Part")
-    p.Name = name
-    p.Shape = opts.shape or Enum.PartType.Block
-    p.Size = size
-    p.CFrame = cf
-    p.Color = color
-    p.Material = opts.material or Enum.Material.SmoothPlastic
-    p.Anchored = true
-    p.CanCollide = opts.collide ~= false
-    p.CastShadow = opts.shadow ~= false
-    p.Transparency = opts.transparency or 0
-    p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
-    p.Parent = model
-    return p
+    local part = Instance.new("Part")
+    part.Name = name
+    part.Shape = opts.shape or Enum.PartType.Block
+    part.Size = size
+    part.CFrame = cframe
+    part.Color = color
+    part.Material = opts.material or Enum.Material.SmoothPlastic
+    part.Anchored = true
+    part.CanCollide = opts.collide ~= false
+    part.CastShadow = opts.shadow ~= false
+    part.Transparency = opts.transparency or 0
+    part.TopSurface, part.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
+    part.Parent = parent
+    return part
 end
 
-local function lantern(model, base, x)
-    local g = Instance.new("Model")
-    g.Name = "Lantern"
-    g.Parent = model
+-- Stone lantern at sideways offset `x` (default 4.2 studs in front of the gate), with a real PointLight.
+local function buildLantern(gate, base, x)
+    local lanternModel = Instance.new("Model")
+    lanternModel.Name = "Lantern"
+    lanternModel.Parent = gate
     local at = function(y, z)
         return base * CFrame.new(x, y, z or -4.2)
     end
-    part(g, "Foot", Vector3.new(1.8, 0.4, 1.8), at(C.GroundY + 0.2), P.StoneDark, { material = Enum.Material.Slate })
-    part(
-        g,
-        "Post",
-        Vector3.new(1.6, 0.7, 0.7),
-        at(C.GroundY + 1.2) * UPRIGHT,
-        P.Stone,
-        { shape = CYL, material = Enum.Material.Slate }
-    )
-    part(g, "Plate", Vector3.new(1.7, 0.25, 1.7), at(C.GroundY + 2.15), P.StoneDark, { material = Enum.Material.Slate })
-    local box = part(
-        g,
-        "Firebox",
-        Vector3.new(1.1, 1.0, 1.1),
-        at(C.GroundY + 2.8),
-        P.LanternGlow,
-        { material = Enum.Material.Neon, shadow = false }
-    )
-    local l = Instance.new("PointLight")
-    l.Color = P.LanternGlow
-    l.Range = 12
-    l.Brightness = 1.4
-    l.Shadows = true
-    l.Parent = box
-    part(g, "Roof", Vector3.new(2.0, 0.35, 2.0), at(C.GroundY + 3.45), P.StoneDark, { material = Enum.Material.Slate })
-    part(
-        g,
-        "RoofTop",
-        Vector3.new(1.2, 0.3, 1.2),
-        at(C.GroundY + 3.75),
-        P.StoneDark,
+    makePart(
+        lanternModel,
+        "Foot",
+        Vector3.new(1.8, 0.4, 1.8),
+        at(Config.GroundY + 0.2),
+        PALETTE.StoneDark,
         { material = Enum.Material.Slate }
     )
-    part(
-        g,
+    makePart(
+        lanternModel,
+        "Post",
+        Vector3.new(1.6, 0.7, 0.7),
+        at(Config.GroundY + 1.2) * UPRIGHT,
+        PALETTE.Stone,
+        { shape = CYL, material = Enum.Material.Slate }
+    )
+    makePart(
+        lanternModel,
+        "Plate",
+        Vector3.new(1.7, 0.25, 1.7),
+        at(Config.GroundY + 2.15),
+        PALETTE.StoneDark,
+        { material = Enum.Material.Slate }
+    )
+    local firebox = makePart(
+        lanternModel,
+        "Firebox",
+        Vector3.new(1.1, 1.0, 1.1),
+        at(Config.GroundY + 2.8),
+        PALETTE.LanternGlow,
+        { material = Enum.Material.Neon, shadow = false }
+    )
+    local light = Instance.new("PointLight")
+    light.Color = PALETTE.LanternGlow
+    light.Range = 12
+    light.Brightness = 1.4
+    light.Shadows = true
+    light.Parent = firebox
+    makePart(
+        lanternModel,
+        "Roof",
+        Vector3.new(2.0, 0.35, 2.0),
+        at(Config.GroundY + 3.45),
+        PALETTE.StoneDark,
+        { material = Enum.Material.Slate }
+    )
+    makePart(
+        lanternModel,
+        "RoofTop",
+        Vector3.new(1.2, 0.3, 1.2),
+        at(Config.GroundY + 3.75),
+        PALETTE.StoneDark,
+        { material = Enum.Material.Slate }
+    )
+    makePart(
+        lanternModel,
         "Jewel",
         Vector3.new(0.5, 0.5, 0.5),
-        at(C.GroundY + 4.1),
-        P.Gold,
+        at(Config.GroundY + 4.1),
+        PALETTE.Gold,
         { shape = Enum.PartType.Ball, material = Enum.Material.Metal }
     )
 end
 
 function Builder.Build(base, parent)
-    local m = Instance.new("Model")
-    m.Name = "SummonGate"
-    local g = C.GroundY
+    local gate = Instance.new("Model")
+    gate.Name = "SummonGate"
+    local groundY = Config.GroundY
     local at = function(x, y, z)
         return base * CFrame.new(x, y, z or 0)
     end
 
     -- stone platform (extends forward so characters land on it)
-    part(m, "Slab", Vector3.new(17, g, 9.5), at(0, g / 2, -2.2), P.Stone, { material = Enum.Material.Slate })
-    part(
-        m,
-        "SlabTrim",
-        Vector3.new(17.4, 0.12, 9.9),
-        at(0, g - 0.06, -2.2),
-        P.StoneDark,
+    makePart(
+        gate,
+        "Slab",
+        Vector3.new(17, groundY, 9.5),
+        at(0, groundY / 2, -2.2),
+        PALETTE.Stone,
         { material = Enum.Material.Slate }
     )
-    part(m, "Step", Vector3.new(11, 0.3, 1.4), at(0, 0.15, -7.6), P.Stone, { material = Enum.Material.Slate })
+    makePart(
+        gate,
+        "SlabTrim",
+        Vector3.new(17.4, 0.12, 9.9),
+        at(0, groundY - 0.06, -2.2),
+        PALETTE.StoneDark,
+        { material = Enum.Material.Slate }
+    )
+    makePart(
+        gate,
+        "Step",
+        Vector3.new(11, 0.3, 1.4),
+        at(0, 0.15, -7.6),
+        PALETTE.Stone,
+        { material = Enum.Material.Slate }
+    )
 
     -- pillars
-    local H = 12.4
-    for _, s in { -1, 1 } do
-        local x = 4.9 * s
-        part(m, "Pillar", Vector3.new(H, 1.4, 1.4), at(x, g + H / 2) * UPRIGHT, P.Lacquer, { shape = CYL })
-        part(m, "PillarFoot", Vector3.new(1.3, 1.9, 1.9), at(x, g + 0.65) * UPRIGHT, P.Ink, { shape = CYL })
-        for _, y in { 2.3, 10.0 } do
-            part(
-                m,
+    local pillarHeight = 12.4
+    for _, side in { -1, 1 } do
+        local x = 4.9 * side
+        makePart(
+            gate,
+            "Pillar",
+            Vector3.new(pillarHeight, 1.4, 1.4),
+            at(x, groundY + pillarHeight / 2) * UPRIGHT,
+            PALETTE.Lacquer,
+            { shape = CYL }
+        )
+        makePart(
+            gate,
+            "PillarFoot",
+            Vector3.new(1.3, 1.9, 1.9),
+            at(x, groundY + 0.65) * UPRIGHT,
+            PALETTE.Ink,
+            { shape = CYL }
+        )
+        for _, bandY in { 2.3, 10.0 } do
+            makePart(
+                gate,
                 "GoldBand",
                 Vector3.new(0.25, 1.55, 1.55),
-                at(x, g + y) * UPRIGHT,
-                P.Gold,
+                at(x, groundY + bandY) * UPRIGHT,
+                PALETTE.Gold,
                 { shape = CYL, material = Enum.Material.Metal }
             )
         end
     end
 
     -- beams: nuki (lower), plaque, shimaki + kasagi (top) with upturned tips
-    part(m, "Nuki", Vector3.new(13.6, 0.75, 0.9), at(0, 10.85 + g - 0.6), P.Lacquer)
-    part(m, "PlaqueFrame", Vector3.new(2.0, 2.3, 0.35), at(0, 12.35, 0.05), P.Gold, { material = Enum.Material.Metal })
-    local plaque = part(m, "Plaque", Vector3.new(1.6, 1.9, 0.45), at(0, 12.35), P.Ink)
-    local sg = Instance.new("SurfaceGui")
-    sg.Face = Enum.NormalId.Front
-    sg.PixelsPerStud = 60
-    sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-    sg.LightInfluence = 0.3
-    sg.Parent = plaque
-    local t = Instance.new("TextLabel")
-    t.Size = UDim2.fromScale(1, 1)
-    t.BackgroundTransparency = 1
-    t.Text = "召\n喚"
-    t.TextColor3 = P.Gold
-    t.TextScaled = true
-    t.Font = Enum.Font.GothamBlack
-    t.Parent = sg
-    part(m, "Shimaki", Vector3.new(15, 0.7, 1.1), at(0, 13.4), P.Lacquer)
-    part(m, "Kasagi", Vector3.new(16.4, 0.8, 1.5), at(0, 14.15), P.Ink)
-    for _, s in { -1, 1 } do
-        local tip = at(9.15 * s, 14.38) * CFrame.Angles(0, 0, math.rad(12) * s)
-        part(m, "KasagiTip", Vector3.new(2.2, 0.8, 1.5), tip, P.Ink)
-        part(
-            m,
+    makePart(gate, "Nuki", Vector3.new(13.6, 0.75, 0.9), at(0, 10.85 + groundY - 0.6), PALETTE.Lacquer)
+    makePart(
+        gate,
+        "PlaqueFrame",
+        Vector3.new(2.0, 2.3, 0.35),
+        at(0, 12.35, 0.05),
+        PALETTE.Gold,
+        { material = Enum.Material.Metal }
+    )
+    local plaque = makePart(gate, "Plaque", Vector3.new(1.6, 1.9, 0.45), at(0, 12.35), PALETTE.Ink)
+    local surfaceGui = Instance.new("SurfaceGui")
+    surfaceGui.Face = Enum.NormalId.Front
+    surfaceGui.PixelsPerStud = 60
+    surfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+    surfaceGui.LightInfluence = 0.3
+    surfaceGui.Parent = plaque
+    local plaqueText = Instance.new("TextLabel")
+    plaqueText.Size = UDim2.fromScale(1, 1)
+    plaqueText.BackgroundTransparency = 1
+    plaqueText.Text = "召\n喚" -- "summon", written vertically
+    plaqueText.TextColor3 = PALETTE.Gold
+    plaqueText.TextScaled = true
+    plaqueText.Font = Enum.Font.GothamBlack
+    plaqueText.Parent = surfaceGui
+    makePart(gate, "Shimaki", Vector3.new(15, 0.7, 1.1), at(0, 13.4), PALETTE.Lacquer)
+    makePart(gate, "Kasagi", Vector3.new(16.4, 0.8, 1.5), at(0, 14.15), PALETTE.Ink)
+    for _, side in { -1, 1 } do
+        local tip = at(9.15 * side, 14.38) * CFrame.Angles(0, 0, math.rad(12) * side)
+        makePart(gate, "KasagiTip", Vector3.new(2.2, 0.8, 1.5), tip, PALETTE.Ink)
+        makePart(
+            gate,
             "TipCap",
             Vector3.new(0.3, 0.86, 1.56),
-            tip * CFrame.new(1.05 * s, 0, 0),
-            P.Gold,
+            tip * CFrame.new(1.05 * side, 0, 0),
+            PALETTE.Gold,
             { material = Enum.Material.Metal }
         )
     end
 
     -- shimenawa rope + shide streamers
-    part(
-        m,
+    makePart(
+        gate,
         "Rope",
         Vector3.new(8.4, 0.5, 0.5),
-        at(0, g + 9.55, -0.7),
-        P.Rope,
+        at(0, groundY + 9.55, -0.7),
+        PALETTE.Rope,
         { shape = CYL, material = Enum.Material.Fabric, collide = false }
     )
+    -- three streamers of 3 zig-zag paper pieces each
     for _, x in { -2.6, 0, 2.6 } do
         for i = 0, 2 do
-            part(
-                m,
+            makePart(
+                gate,
                 "Shide",
                 Vector3.new(0.34, 0.42, 0.04),
-                at(x + (i % 2 == 0 and -0.06 or 0.06), g + 9.05 - i * 0.4, -0.72),
-                P.Paper,
+                at(x + (i % 2 == 0 and -0.06 or 0.06), groundY + 9.05 - i * 0.4, -0.72),
+                PALETTE.Paper,
                 { collide = false, shadow = false }
             )
         end
     end
 
-    lantern(m, base, -7)
-    lantern(m, base, 7)
+    buildLantern(gate, base, -7)
+    buildLantern(gate, base, 7)
 
     -- the portal plane (invisible; PortalClient draws the vortex on it)
-    local surface = part(
-        m,
+    local surface = makePart(
+        gate,
         "Surface",
-        Vector3.new(C.Opening.X, C.Opening.Y, 0.1),
-        at(0, g + C.Opening.Y / 2),
-        P.Ink,
+        Vector3.new(Config.Opening.X, Config.Opening.Y, 0.1),
+        at(0, groundY + Config.Opening.Y / 2),
+        PALETTE.Ink,
         { collide = false, shadow = false, transparency = 1 }
     )
     surface.CanQuery = false
     surface.CanTouch = false
 
-    m.WorldPivot = base
-    m.Parent = parent or workspace
-    CollectionService:AddTag(m, C.Tag)
-    return m
+    gate.WorldPivot = base
+    gate.Parent = parent or workspace
+    CollectionService:AddTag(gate, Config.Tag)
+    return gate
 end
 
 return Builder
