@@ -1,21 +1,27 @@
-local RS = game:GetService("RunService")
-local root = script.Parent
-local flick = {}
+-- ServerStorage.DevWorkshop.HalloweenTemple_Deluxe.SpookyMotion (server Script, dev model)
+-- Inert in ServerStorage; runs only if the temple model is placed in Workspace. An older copy is archived under
+-- archive/_ARCHIVE/HalloweenTemple_BeforeVoxelPass_1791847385.
+local RunService = game:GetService("RunService")
+local templeModel = script.Parent
+local flickerLights = {} -- { l = PointLight, b = base Brightness, s = noise seed }
 -- candle-style flicker: old pumpkin "Rib" lights plus any light inside a voxel *_Glow part (jack-o'-lanterns, candles)
-local function track(l)
-    if l:IsA("PointLight") and (l.Parent.Name == "Rib" or l.Parent.Name:find("_Glow") or l:GetAttribute("Flicker")) then
-        table.insert(flick, { l = l, b = l.Brightness, s = math.random() * 100 })
+local function trackLight(light)
+    if
+        light:IsA("PointLight")
+        and (light.Parent.Name == "Rib" or light.Parent.Name:find("_Glow") or light:GetAttribute("Flicker"))
+    then
+        table.insert(flickerLights, { l = light, b = light.Brightness, s = math.random() * 100 })
     end
 end
-for _, d in root:GetDescendants() do
-    track(d)
+for _, descendant in templeModel:GetDescendants() do
+    trackLight(descendant)
 end
-root.DescendantAdded:Connect(track)
-RS.Heartbeat:Connect(function()
-    local t = os.clock()
-    for _, f in flick do
-        if f.l.Parent then
-            f.l.Brightness = f.b * (0.75 + 0.25 * math.noise(t * 6, f.s))
+templeModel.DescendantAdded:Connect(trackLight)
+RunService.Heartbeat:Connect(function()
+    local now = os.clock()
+    for _, entry in flickerLights do
+        if entry.l.Parent then
+            entry.l.Brightness = entry.b * (0.75 + 0.25 * math.noise(now * 6, entry.s))
         end
     end
 end)

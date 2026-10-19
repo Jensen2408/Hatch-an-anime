@@ -2,11 +2,21 @@
 	BatServer
 	Heavy-knockback baseball bat with reliable cone hit-detection,
 	satisfying sound effects, impact sparks, and ragdoll fling.
+
+	Lives in ServerStorage.Weapons.WoodenBat (template); WeaponGiver clones the Tool into each Backpack and the
+	Script runs from there. BatMotionClient plays the swing animation on the client.
+
+	Network authority: Tool.Activated is triggered by the client, but everything else is decided here: the
+	cooldown, the HIT_WINDOW, the overlap + cone hit test, knockback and egg drops. During a knockdown the server
+	takes network ownership of the target's root for RAGDOLL_TIME and then hands it back.
+	Egg drops: a victim carrying a river egg -> RiverEggCarryService.Drop(victim); otherwise a held egg Tool
+	(EggType without CharacterId) -> TwoHandItemCarryService.DropTool(victim, tool). Both are lazily required.
+	Replicated attributes: Tool SwingTick / LastHitTime (server time), attacker Player BatEggKnocks (counter).
 ]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local Debris = game:GetService("Debris")
+local _Debris = game:GetService("Debris")
 
 local tool = script.Parent
 local handle = tool:WaitForChild("Handle")
@@ -25,7 +35,7 @@ local HIT_ARC_COS = 0.25 -- ~150-degree forward sweep arc (dot product threshold
 local canSwing = true
 local swinging = false
 local hitThisSwing = {} -- debounce per swing
-local ragdollTokens = {}
+local ragdollTokens = {} -- [targetCharacter] = token; only the latest knockdown may end the ragdoll
 
 local function getOwner()
     local character = tool.Parent
@@ -59,7 +69,7 @@ local function playSwingFX()
     end
 end
 
-local function playHitFX(hitPosition)
+local function playHitFX(_hitPosition)
     local thud = handle:FindFirstChild("HitThud")
     if thud then
         thud:Play()
@@ -69,19 +79,19 @@ local function playHitFX(hitPosition)
         crack:Play()
     end
 
-    local attTop = handle:FindFirstChild("TrailTop")
-    local sparks = attTop and attTop:FindFirstChild("HitSparks")
+    local trailTop = handle:FindFirstChild("TrailTop")
+    local sparks = trailTop and trailTop:FindFirstChild("HitSparks")
     if sparks then
         sparks:Emit(15)
     end
 end
 
-local function knockDown(targetChar, targetHum, targetRoot, attackerRoot)
+local function knockDown(targetCharacter, targetHumanoid, targetRoot, attackerRoot)
     -- 1) Fall over immediately
-    targetHum.PlatformStand = true
+    targetHumanoid.PlatformStand = true
 
     -- 2) Server takes physics ownership for reliable impulse
-    local targetPlayer = Players:GetPlayerFromCharacter(targetChar)
+    local targetPlayer = Players:GetPlayerFromCharacter(targetCharacter)
     pcall(function()
         targetRoot:SetNetworkOwner(nil)
     end)
@@ -102,17 +112,17 @@ local function knockDown(targetChar, targetHum, targetRoot, attackerRoot)
 
     -- 4) Recovery after RAGDOLL_TIME
     local token = {}
-    ragdollTokens[targetChar] = token
+    ragdollTokens[targetCharacter] = token
 
     task.delay(RAGDOLL_TIME, function()
-        if ragdollTokens[targetChar] ~= token then
+        if ragdollTokens[targetCharacter] ~= token then
             return
         end
-        ragdollTokens[targetChar] = nil
+        ragdollTokens[targetCharacter] = nil
 
-        if targetHum.Parent and targetHum.Health > 0 then
-            targetHum.PlatformStand = false
-            targetHum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        if targetHumanoid.Parent and targetHumanoid.Health > 0 then
+            targetHumanoid.PlatformStand = false
+            targetHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
         end
 
         if targetPlayer and targetRoot.Parent then
@@ -123,29 +133,29 @@ local function knockDown(targetChar, targetHum, targetRoot, attackerRoot)
     end)
 end
 
-local function tryHit(targetChar, attackerChar, attackerRoot)
-    if not targetChar or targetChar == attackerChar then
+local function tryHit(targetCharacter, attackerCharacter, attackerRoot)
+    if not targetCharacter or targetCharacter == attackerCharacter then
         return
     end
-    if hitThisSwing[targetChar] then
-        return
-    end
-
-    local targetHum = targetChar:FindFirstChildOfClass("Humanoid")
-    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-    if not targetHum or not targetRoot or targetHum.Health <= 0 then
+    if hitThisSwing[targetCharacter] then
         return
     end
 
-    hitThisSwing[targetChar] = true
+    local targetHumanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
+    local targetRoot = targetCharacter:FindFirstChild("HumanoidRootPart")
+    if not targetHumanoid or not targetRoot or targetHumanoid.Health <= 0 then
+        return
+    end
+
+    hitThisSwing[targetCharacter] = true
     tool:SetAttribute("LastHitTime", workspace:GetServerTimeNow())
 
     playHitFX(targetRoot.Position)
 
     -- Bat hit makes a player carrying a river egg drop it; anyone can then pick it up and run it home.
-    local victim = Players:GetPlayerFromCharacter(targetChar)
+    local victim = Players:GetPlayerFromCharacter(targetCharacter)
     -- also knocks out an egg that's simply held in hand (not only one being carried home from the river)
-    local heldEgg = targetChar:FindFirstChildOfClass("Tool")
+    local heldEgg = targetCharacter:FindFirstChildOfClass("Tool")
     if heldEgg and not (heldEgg:GetAttribute("EggType") and not heldEgg:GetAttribute("CharacterId")) then
         heldEgg = nil
     end
@@ -157,7 +167,7 @@ local function tryHit(targetChar, attackerChar, attackerRoot)
             return require(game:GetService("ServerScriptService").TwoHandItemCarryService).DropTool(victim, heldEgg)
         end)
         if ok and dropped then
-            local attacker = Players:GetPlayerFromCharacter(attackerChar)
+            local attacker = Players:GetPlayerFromCharacter(attackerCharacter)
             if attacker then
                 attacker:SetAttribute("BatEggKnocks", (attacker:GetAttribute("BatEggKnocks") or 0) + 1)
             end
@@ -165,17 +175,17 @@ local function tryHit(targetChar, attackerChar, attackerRoot)
     end
 
     if DAMAGE > 0 then
-        targetHum:TakeDamage(DAMAGE)
+        targetHumanoid:TakeDamage(DAMAGE)
     end
-    knockDown(targetChar, targetHum, targetRoot, attackerRoot)
+    knockDown(targetCharacter, targetHumanoid, targetRoot, attackerRoot)
 end
 
 tool.Activated:Connect(function()
     if not canSwing then
         return
     end
-    local attackerChar, _, attackerRoot = getOwner()
-    if not attackerChar then
+    local attackerCharacter, _, attackerRoot = getOwner()
+    if not attackerCharacter then
         return
     end
 
@@ -188,9 +198,9 @@ tool.Activated:Connect(function()
     playSwingFX()
 
     -- Robust hit detection: handle overlap + forward sweep cone
-    local params = OverlapParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = { attackerChar }
+    local overlapParams = OverlapParams.new()
+    overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+    overlapParams.FilterDescendantsInstances = { attackerCharacter }
 
     local connection
     connection = RunService.Heartbeat:Connect(function()
@@ -200,10 +210,10 @@ tool.Activated:Connect(function()
         end
 
         -- Check 1: direct handle intersection
-        for _, part in ipairs(workspace:GetPartsInPart(handle, params)) do
-            local char = part:FindFirstAncestorOfClass("Model")
-            if char then
-                tryHit(char, attackerChar, attackerRoot)
+        for _, part in ipairs(workspace:GetPartsInPart(handle, overlapParams)) do
+            local character = part:FindFirstAncestorOfClass("Model")
+            if character then
+                tryHit(character, attackerCharacter, attackerRoot)
             end
         end
 
@@ -213,18 +223,18 @@ tool.Activated:Connect(function()
         local boxSize = Vector3.new(HIT_RANGE * 1.1, 4.5, HIT_RANGE)
         local forwardBox = CFrame.new(forwardCenter, forwardCenter + look)
 
-        for _, part in ipairs(workspace:GetPartBoundsInBox(forwardBox, boxSize, params)) do
-            local char = part:FindFirstAncestorOfClass("Model")
-            if char and not hitThisSwing[char] then
-                local root = char:FindFirstChild("HumanoidRootPart")
-                if root then
-                    local toTarget = root.Position - attackerRoot.Position
-                    local dist = toTarget.Magnitude
-                    if dist <= HIT_RANGE then
+        for _, part in ipairs(workspace:GetPartBoundsInBox(forwardBox, boxSize, overlapParams)) do
+            local character = part:FindFirstAncestorOfClass("Model")
+            if character and not hitThisSwing[character] then
+                local targetRoot = character:FindFirstChild("HumanoidRootPart")
+                if targetRoot then
+                    local toTarget = targetRoot.Position - attackerRoot.Position
+                    local distance = toTarget.Magnitude
+                    if distance <= HIT_RANGE then
                         local flatDir = Vector3.new(toTarget.X, 0, toTarget.Z).Unit
                         local dot = flatDir:Dot(Vector3.new(look.X, 0, look.Z).Unit)
                         if dot >= HIT_ARC_COS then
-                            tryHit(char, attackerChar, attackerRoot)
+                            tryHit(character, attackerCharacter, attackerRoot)
                         end
                     end
                 end

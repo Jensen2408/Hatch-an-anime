@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 21 |
+| Pending | 0 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 163 |
+| Refactored | 184 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -291,27 +291,27 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Audio/BackgroundMusic.client.luau` | LocalScript | 85 | 114 | Pending | — | — |
-| `client/Audio/MusicSettings.client.luau` | LocalScript | 221 | 493 | Pending | — | — |
-| `client/Audio/UIAudioClient.client.luau` | LocalScript | 9 | 8 | Pending | — | — |
-| `client/Weapons/BatMotionClient.client.luau` | LocalScript | 68 | 82 | Pending | — | — |
-| `client/Weapons/WeaponPreloadClient.client.luau` | LocalScript | 64 | 76 | Pending | — | — |
-| `client/World/PirateEggConveyorMotion.client.luau` | LocalScript | 76 | 174 | Pending | — | — |
-| `client/World/RiverFlow.client.luau` | LocalScript | 24 | 51 | Pending | — | — |
-| `client/World/WaterFX.client.luau` | LocalScript | 65 | 85 | Pending | — | — |
-| `client/World/WaterfallFallMotion.client.luau` | LocalScript | 140 | 158 | Pending | — | — |
-| `client/World/WaterfallRiverMotion.client.luau` | LocalScript | 47 | 95 | Pending | — | — |
-| `server/DevTools/DevWorkshop/AnimRig_MovedFromWorkspace/Animate.client.luau` | LocalScript | 971 | 1020 | Pending | — | — |
-| `server/DevTools/DevWorkshop/HalloweenTemple_Deluxe/SpookyMotion.server.luau` | Script | 11 | 21 | Pending | — | — |
-| `server/Services/NoDropping.server.luau` | Script | 18 | 34 | Pending | — | — |
-| `server/Services/ToolIcons.server.luau` | Script | 56 | 92 | Pending | — | — |
-| `server/Storage/FutureUpdateContent/RiverBeforeGoldContentReservation.server.luau` | Script | 58 | 130 | Pending | — | — |
-| `server/Storage/HalloweenSwitch.luau` | ModuleScript | 112 | 195 | Pending | — | — |
-| `server/Storage/RestoreSurfaceAppearances.luau` | ModuleScript | 12 | 31 | Pending | — | — |
-| `server/Storage/StoredCollectAllZones/CollectAllZoneServer.server.luau` | Script | 74 | 94 | Pending | — | — |
-| `server/Weapons/WeaponGiver.server.luau` | Script | 41 | 41 | Pending | — | — |
-| `server/Weapons/WoodenBat/BatServer.server.luau` | Script | 220 | 246 | Pending | — | — |
-| `server/World/PumpkinGentleman/PumpkinIdle.server.luau` | Script | 33 | 65 | Pending | — | — |
+| `client/Audio/BackgroundMusic.client.luau` | LocalScript | 85 | 121 | Refactored | SAME | Renamed locals (makePlaylist, playlist, fadeIn, FADE_TIME, dayPlaylist...); comments on Ended/rotate/fade bookkeeping; header notes client-only |
+| `client/Audio/MusicSettings.client.luau` | LocalScript | 221 | 516 | Refactored | SAME | Full service names; descriptive locals; header documents SaveSettings remote + DataLoaded wait + FigmaSkin re-parenting; 7 section banners; unused musicSlider -> _musicSlider |
+| `client/Audio/UIAudioClient.client.luau` | LocalScript | 9 | 9 | Refactored | SAME | Added location line to header |
+| `client/Weapons/BatMotionClient.client.luau` | LocalScript | 68 | 85 | Refactored | SAME | Header: location, visual-only, cooldown mirrors BatServer |
+| `client/Weapons/WeaponPreloadClient.client.luau` | LocalScript | 64 | 76 | Refactored | SAME | Renamed locals (SURFACE_MAPS, makeSurfaceProxies, preloadTool, watchContainer...); header location |
+| `client/World/PirateEggConveyorMotion.client.luau` | LocalScript | 76 | 183 | Refactored | SAME | Header explains hidden server egg + local clone + CollectRiverEgg remote; renamed locals (conveyor, RollingMotion, visualFolder, goldenEffects...) |
+| `client/World/RiverFlow.client.luau` | LocalScript | 24 | 54 | Refactored | SAME | ReplicatedStorage/RiverPath/TEXTURE/SAMPLE_STEP; addFlowLayer with descriptive params; header lists script attributes |
+| `client/World/WaterFX.client.luau` | LocalScript | 65 | 102 | Refactored | SAME | Descriptive locals; header documents the beam attribute contract; comment marks selene yAxis:Cross false positive |
+| `client/World/WaterfallFallMotion.client.luau` | LocalScript | 140 | 169 | Refactored | SAME | Renamed locals (fallFx, makePart, Z_MIN/Z_MAX, streak, blob, lifeFraction...); section banners; FALL_TIME comment |
+| `client/World/WaterfallRiverMotion.client.luau` | LocalScript | 47 | 99 | Refactored | SAME | Renamed locals (riverRoot, eggFolder, SURFACE_Y, wake, segment...); header explains LocalRiverEggs fallback |
+| `server/DevTools/DevWorkshop/AnimRig_MovedFromWorkspace/Animate.client.luau` | LocalScript | 971 | 1029 | Refactored | SAME | Header (stock Animate, inert in ServerStorage, contracts); unused locals prefixed _; inner child -> addedChild; upstream layout kept |
+| `server/DevTools/DevWorkshop/HalloweenTemple_Deluxe/SpookyMotion.server.luau` | Script | 11 | 27 | Refactored | SAME | Header (inert in ServerStorage, archive copy); RunService; trackLight/flickerLights/entry; record shape comment |
+| `server/Services/NoDropping.server.luau` | Script | 18 | 35 | Refactored | SAME | lockTool/watchContainer/onPlayerAdded, player/backpack/child; location in header |
+| `server/Services/ToolIcons.server.luau` | Script | 56 | 95 | Refactored | SAME | ReplicatedStorage, CharacterCatalog, EGG_ICONS, characterId, icon, mutation...; icon fallback comment; header location |
+| `server/Storage/FutureUpdateContent/RiverBeforeGoldContentReservation.server.luau` | Script | 58 | 140 | Refactored | SAME | Header: parked, inert in ServerStorage (not Disabled), server validation; renamed locals; second prompt -> collectPrompt; unused -> _ |
+| `server/Storage/HalloweenSwitch.luau` | ModuleScript | 112 | 197 | Refactored | SAME | HalloweenSwitch/ServerStorage/Lighting/seasonStorage + descriptive locals; empty loop + deprecated Instance.new parent documented |
+| `server/Storage/RestoreSurfaceAppearances.luau` | ModuleScript | 12 | 33 | Refactored | SAME | restoredCount/root/part/surfaceAppearance; header location; pcall reason comment |
+| `server/Storage/StoredCollectAllZones/CollectAllZoneServer.server.luau` | Script | 74 | 105 | Refactored | SAME | Header: parked (Disabled + ServerStorage), authority + outputs; CollectionService, tickCount, ownerUserId, rootPart...; cooldown comments |
+| `server/Weapons/WeaponGiver.server.luau` | Script | 41 | 42 | Refactored | SAME | Header: location, clone per respawn |
+| `server/Weapons/WoodenBat/BatServer.server.luau` | Script | 220 | 256 | Refactored | SAME | Header documents authority, egg-drop contract, replicated attributes; targetCharacter/targetHumanoid/overlapParams...; unused -> _ |
+| `server/World/PumpkinGentleman/PumpkinIdle.server.luau` | Script | 33 | 68 | Refactored | SAME | model/rigRoot/findMotor/shoulderL/R/baseC0/breath/flicker, LOOP_SECONDS; _glowParts; header notes server replication |
 
 ## Inventory
 
@@ -1831,190 +1831,190 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Audio/BackgroundMusic.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.BackgroundMusic
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3
-- **Readability problems:** 11 dense one-line statements
+- **Readability problems:** Generic names (list, on, start, update, a/b); state tables undocumented
 
 ### `client/Audio/MusicSettings.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.MusicSettings  — Settings button + panel
 - **Dependencies:** PixelIcon, UISound
 - **Public functions:** —
 - **Events:** Connect×15
-- **Readability problems:** 22 dense one-line statements; 16 lines >160 chars; 7 one-letter locals
+- **Readability problems:** Cryptic locals (pg, UIS, r, s, v, i, b, t, ts), no persistence/remote docs, dashed section markers
 
 ### `client/Audio/UIAudioClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** PlayerGui buttons, including menus built after join, share the same audio palette. Activated supports mouse, touch, and gamepad. UISound guards duplicate bindings.
 - **Dependencies:** UISound
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** Header lacked runtime location
 
 ### `client/Weapons/BatMotionClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** BatMotionClient: play the uploaded bat swing through the character Animator.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×6
-- **Readability problems:** 7 dense one-line statements
+- **Readability problems:** Header did not explain visual-only role / server authority
 
 ### `client/Weapons/WeaponPreloadClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3
-- **Readability problems:** 4 dense one-line statements
+- **Readability problems:** Short names (d, id, list, MAPS, watch)
 
 ### `client/World/PirateEggConveyorMotion.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** RollingMotion
 - **Public functions:** —
 - **Events:** Connect×8, RunService×2
-- **Readability problems:** 17 dense one-line statements; 6 lines >160 chars; 1 one-letter locals
+- **Readability problems:** No header; m/p/fx/pos names; server/visual split undocumented
 
 ### `client/World/RiverFlow.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** RiverFlow: scrolling current streaks laid along the river so the water visibly flows downstream (client only).
 - **Dependencies:** RiverPath
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 1 lines >160 chars; 4 one-letter locals
+- **Readability problems:** RS alias, single-letter locals (p, a, b, w, d), cryptic params
 
 ### `client/World/WaterFX.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.WaterFX  (client only: animates flow streaks, foam and ripples — nothing replicates)
 - **Dependencies:** RiverPath
 - **Public functions:** —
 - **Events:** Connect×2, RunService×1
-- **Readability problems:** 5 dense one-line statements; 6 one-letter locals
+- **Readability problems:** RS alias, many single-letter locals (b, s, rp, u, d, hw, c, a), KP alias
 
 ### `client/World/WaterfallFallMotion.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Falling streaks, foam boil and ripple rings for the waterfall. Everything is local (client-only) so it is smooth and costs the server nothing.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×1, RunService×1
-- **Readability problems:** 5 dense one-line statements; 6 one-letter locals
+- **Readability problems:** fx/p/s/f/k/a names, Z0/Z1, dashed sections, FALL_TIME formula unexplained
 
 ### `client/World/WaterfallRiverMotion.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Soft wake ring around river eggs, following the new winding WaterfallRiver.
 - **Dependencies:** RiverPath
 - **Public functions:** —
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 7 dense one-line statements; 1 lines >160 chars; 4 one-letter locals
+- **Readability problems:** r/w/p/a/cf names; folder fallback undocumented
 
 ### `server/DevTools/DevWorkshop/AnimRig_MovedFromWorkspace/Animate.client.luau`
 
-- **Type:** LocalScript · **Batch:** 22 · **Priority:** High · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 22 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×9
-- **Readability problems:** —
+- **Readability problems:** Stock Roblox Animate: no header, 19 unused locals/params, one shadowed child
 
 ### `server/DevTools/DevWorkshop/HalloweenTemple_Deluxe/SpookyMotion.server.luau`
 
-- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** candle-style flicker: old pumpkin "Rib" lights plus any light inside a voxel *_Glow part (jack-o'-lanterns, candles)
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×2, RunService×1
-- **Readability problems:** 2 dense one-line statements; 1 lines >160 chars; 1 one-letter locals
+- **Readability problems:** No header; RS alias for RunService; l/f/t/d names
 
 ### `server/Services/NoDropping.server.luau`
 
-- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Players can't drop anything (owner's rule). Safety net: any Tool that ends up in a player's Backpack or character gets CanBeDropped = false, even if a future script forgets. (The F key / Drop button a
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×4, PlayerAdded×1
-- **Readability problems:** 4 dense one-line statements
+- **Readability problems:** t/p/c/bag names
 
 ### `server/Services/ToolIcons.server.luau`
 
-- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ToolIcons: every egg / character Tool gets a picture (TextureId) so Roblox's default backpack + hotbar show what you hold. Characters use their Index art (CharacterCatalog .image); eggs use rendered i
 - **Dependencies:** CharacterCatalog
 - **Public functions:** —
 - **Events:** Connect×4, PlayerAdded×1
-- **Readability problems:** 10 dense one-line statements; 1 one-letter locals
+- **Readability problems:** RS alias, cid/e/img/mut names
 
 ### `server/Storage/FutureUpdateContent/RiverBeforeGoldContentReservation.server.luau`
 
-- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** RollingMotion
 - **Public functions:** —
 - **Events:** Connect×2, OnServerEvent×1
-- **Readability problems:** 19 dense one-line statements; 3 lines >160 chars; 2 one-letter locals
+- **Readability problems:** No header; m/p/cf/root names; shadowed prompt; 2 unused locals
 
 ### `server/Storage/HalloweenSwitch.luau`
 
-- **Type:** ModuleScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** HALLOWEEN SWITCH Turn Halloween OFF:  require(game.ServerStorage.HalloweenSwitch).Set(false) Turn Halloween ON:   require(game.ServerStorage.HalloweenSwitch).Set(true) Run it in the Studio command bar
 - **Dependencies:** HalloweenSwitch, TempleAppearanceThemes
 - **Public functions:** S.Set
 - **Events:** —
-- **Readability problems:** 8 dense one-line statements; 1 lines >160 chars; 7 one-letter locals
+- **Readability problems:** S/SS/L/f/k/v/c/m/p/o single-letter names; side-effect empty loop unexplained
 
 ### `server/Storage/RestoreSurfaceAppearances.luau`
 
-- **Type:** ModuleScript · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** require(game.ServerStorage.RestoreSurfaceAppearances)() puts back the SurfaceAppearances + RenderFidelity removed by the Oct 15 memory cleanup
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 1 dense one-line statements; 2 lines >160 chars; 2 one-letter locals
+- **Readability problems:** n/r/p/s names
 
 ### `server/Storage/StoredCollectAllZones/CollectAllZoneServer.server.luau`
 
-- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Collect-all pad in front of each temple (Adam, Oct 16). Stand on your own plot's pad to collect every MoneyStand you own at once. The label shows the total waiting.
 - **Dependencies:** QuestService
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 6 dense one-line statements; 1 one-letter locals
+- **Readability problems:** CS alias; local tick shadowed global; uid/hrp/hum/ls/m/v names
 
 ### `server/Weapons/WeaponGiver.server.luau`
 
-- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×2, PlayerAdded×4
-- **Readability problems:** —
+- **Readability problems:** Header lacked location / respawn rationale
 
 ### `server/Weapons/WoodenBat/BatServer.server.luau`
 
-- **Type:** Script · **Batch:** 22 · **Priority:** Medium · **Status:** Pending
+- **Type:** Script · **Batch:** 22 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** RiverEggCarryService, TwoHandItemCarryService
 - **Public functions:** —
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 13 dense one-line statements
+- **Readability problems:** Network authority + carry-service contract undocumented; unused Debris/hitPosition; char/dist abbreviations
 
 ### `server/World/PumpkinGentleman/PumpkinIdle.server.luau`
 
-- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 22 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Idle loop for the Pumpkin Gentleman: breathing, look around, cane tap, hat tip, flickering face.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×1, RunService×1
-- **Readability problems:** 4 dense one-line statements; 3 one-letter locals
+- **Readability problems:** M/shL/shR/br/f/t0 names; unused glowParts
 

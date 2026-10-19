@@ -1,7 +1,8 @@
 --[[
-	WeaponGiver
+	ServerScriptService.WeaponGiver (server, no remotes)
 	Gives players weapons from ServerStorage > Weapons each time they spawn.
-	Add a weapon's name to STARTER_WEAPONS to hand it out.
+	Add a weapon's name to STARTER_WEAPONS to hand it out. The Backpack is reset on every respawn, so a copy is
+	cloned on each CharacterAdded (the WoodenBat clone carries its own BatServer Script).
 ]]
 
 local Players = game:GetService("Players")

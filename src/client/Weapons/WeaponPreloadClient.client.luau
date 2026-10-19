@@ -1,5 +1,5 @@
 --[[
-	WeaponPreloadClient
+	StarterPlayerScripts.WeaponPreloadClient (client only, no remotes)
 	Preloads each weapon Tool (mesh, SurfaceAppearance, sounds, trail) in the
 	background the moment it lands in the Backpack, so it is already textured
 	when the player equips it instead of showing up gray.
@@ -8,23 +8,23 @@
 local Players = game:GetService("Players")
 local ContentProvider = game:GetService("ContentProvider")
 
-local player = Players.LocalPlayer
-local preloaded = setmetatable({}, { __mode = "k" })
+local localPlayer = Players.LocalPlayer
+local preloadedTools = setmetatable({}, { __mode = "k" })
 
-local MAPS = { "ColorMap", "NormalMap", "RoughnessMap", "MetalnessMap" }
+local SURFACE_MAPS = { "ColorMap", "NormalMap", "RoughnessMap", "MetalnessMap" }
 
 -- PreloadAsync skips SurfaceAppearance maps and game scripts cannot read them,
 -- so the ids are stamped on each SurfaceAppearance as Preload<Map> attributes
 -- (re-stamp in Studio if a weapon's textures change) and fetched via Decals.
-local function surfaceProxies(tool)
+local function makeSurfaceProxies(tool)
     local proxies = {}
-    for _, d in ipairs(tool:GetDescendants()) do
-        if d:IsA("SurfaceAppearance") then
-            for _, map in ipairs(MAPS) do
-                local id = d:GetAttribute("Preload" .. map)
-                if type(id) == "string" and id ~= "" then
+    for _, descendant in ipairs(tool:GetDescendants()) do
+        if descendant:IsA("SurfaceAppearance") then
+            for _, map in ipairs(SURFACE_MAPS) do
+                local assetId = descendant:GetAttribute("Preload" .. map)
+                if type(assetId) == "string" and assetId ~= "" then
                     local decal = Instance.new("Decal")
-                    decal.Texture = id
+                    decal.Texture = assetId
                     table.insert(proxies, decal)
                 end
             end
@@ -33,17 +33,17 @@ local function surfaceProxies(tool)
     return proxies
 end
 
-local function preload(tool)
-    if not tool:IsA("Tool") or preloaded[tool] then
+local function preloadTool(tool)
+    if not tool:IsA("Tool") or preloadedTools[tool] then
         return
     end
-    preloaded[tool] = true
+    preloadedTools[tool] = true
     task.spawn(function()
-        local proxies = surfaceProxies(tool)
-        local list = table.clone(proxies)
-        table.insert(list, tool)
+        local proxies = makeSurfaceProxies(tool)
+        local preloadList = table.clone(proxies)
+        table.insert(preloadList, tool)
         pcall(function()
-            ContentProvider:PreloadAsync(list)
+            ContentProvider:PreloadAsync(preloadList)
         end)
         for _, decal in ipairs(proxies) do
             decal:Destroy()
@@ -51,26 +51,26 @@ local function preload(tool)
     end)
 end
 
-local function watch(container)
+local function watchContainer(container)
     for _, child in ipairs(container:GetChildren()) do
-        preload(child)
+        preloadTool(child)
     end
-    container.ChildAdded:Connect(preload)
+    container.ChildAdded:Connect(preloadTool)
 end
 
 local function onBackpack(backpack)
     if backpack:IsA("Backpack") then
-        watch(backpack)
+        watchContainer(backpack)
     end
 end
 
-player.ChildAdded:Connect(onBackpack)
-local backpack = player:FindFirstChildOfClass("Backpack")
+localPlayer.ChildAdded:Connect(onBackpack)
+local backpack = localPlayer:FindFirstChildOfClass("Backpack")
 if backpack then
     onBackpack(backpack)
 end
 
-player.CharacterAdded:Connect(watch)
-if player.Character then
-    watch(player.Character)
+localPlayer.CharacterAdded:Connect(watchContainer)
+if localPlayer.Character then
+    watchContainer(localPlayer.Character)
 end

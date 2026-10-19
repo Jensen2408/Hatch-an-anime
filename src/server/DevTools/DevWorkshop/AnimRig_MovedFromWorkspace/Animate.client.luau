@@ -1,3 +1,12 @@
+--[[ ServerStorage.DevWorkshop.AnimRig_MovedFromWorkspace.Animate  (LocalScript, dev rig only)
+Roblox's stock R15 character "Animate" script, kept inside an animation rig that was moved out of Workspace.
+It is inert where it lives (nothing runs in ServerStorage). The layout deliberately mirrors the upstream file so it
+can be diffed against Roblox's default Animate; only unused locals were prefixed with `_`.
+Contracts: child StringValue folders named after animNames keys (idle, walk, run, ...) with Animation children
+(+ optional Weight NumberValue) override the defaults; emote names (wave, point, dance, dance2, dance3, laugh,
+cheer), the PlayEmote BindableFunction child, and the Tool "toolanim" StringValue protocol are used by Roblox.
+Deprecated API (:connect, wait, tick, className) and the global functions are upstream's and are kept as-is.
+]]
 local Character = script.Parent
 local Humanoid = Character:WaitForChild("Humanoid")
 local pose = "Standing"
@@ -247,9 +256,9 @@ function lookForControllerManager()
         -- assigned charControllerManager on success
         if charControllerManager == nil then
             local managerAddedListener: RBXScriptSignal
-            managerAddedListener = Character.ChildAdded:Connect(function(child)
-                if child:IsA("ControllerManager") then
-                    if processIfManagerBelongsToCharacter(child) then
+            managerAddedListener = Character.ChildAdded:Connect(function(addedChild)
+                if addedChild:IsA("ControllerManager") then
+                    if processIfManagerBelongsToCharacter(addedChild) then
                         managerAddedListener:Disconnect()
                         managerAddedListener = nil
                     end
@@ -289,7 +298,7 @@ function configureAnimationSet(name, fileList)
 
     local allowCustomAnimations = true
 
-    local success, msg = pcall(function()
+    local success, _msg = pcall(function()
         allowCustomAnimations = game:GetService("StarterPlayer").AllowCustomAnimations
     end)
     if not success then
@@ -301,13 +310,13 @@ function configureAnimationSet(name, fileList)
     if allowCustomAnimations and config ~= nil then
         table.insert(
             animTable[name].connections,
-            config.ChildAdded:connect(function(child)
+            config.ChildAdded:connect(function(_child)
                 configureAnimationSet(name, fileList)
             end)
         )
         table.insert(
             animTable[name].connections,
-            config.ChildRemoved:connect(function(child)
+            config.ChildRemoved:connect(function(_child)
                 configureAnimationSet(name, fileList)
             end)
         )
@@ -328,19 +337,19 @@ function configureAnimationSet(name, fileList)
                 animTable[name].totalWeight = animTable[name].totalWeight + animTable[name][idx].weight
                 table.insert(
                     animTable[name].connections,
-                    childPart.Changed:connect(function(property)
+                    childPart.Changed:connect(function(_property)
                         configureAnimationSet(name, fileList)
                     end)
                 )
                 table.insert(
                     animTable[name].connections,
-                    childPart.ChildAdded:connect(function(property)
+                    childPart.ChildAdded:connect(function(_property)
                         configureAnimationSet(name, fileList)
                     end)
                 )
                 table.insert(
                     animTable[name].connections,
-                    childPart.ChildRemoved:connect(function(property)
+                    childPart.ChildRemoved:connect(function(_property)
                         configureAnimationSet(name, fileList)
                     end)
                 )
@@ -362,7 +371,7 @@ function configureAnimationSet(name, fileList)
     end
 
     -- preload anims
-    for i, animType in pairs(animTable) do
+    for _animName, animType in pairs(animTable) do
         for idx = 1, animType.count, 1 do
             if PreloadedAnims[animType[idx].anim.AnimationId] == nil then
                 Humanoid:LoadAnimation(animType[idx].anim)
@@ -387,7 +396,7 @@ function configureAnimationSetOld(name, fileList)
 
     local allowCustomAnimations = true
 
-    local success, msg = pcall(function()
+    local success, _msg = pcall(function()
         allowCustomAnimations = game:GetService("StarterPlayer").AllowCustomAnimations
     end)
     if not success then
@@ -399,13 +408,13 @@ function configureAnimationSetOld(name, fileList)
     if allowCustomAnimations and config ~= nil then
         table.insert(
             animTable[name].connections,
-            config.ChildAdded:connect(function(child)
+            config.ChildAdded:connect(function(_child)
                 configureAnimationSet(name, fileList)
             end)
         )
         table.insert(
             animTable[name].connections,
-            config.ChildRemoved:connect(function(child)
+            config.ChildRemoved:connect(function(_child)
                 configureAnimationSet(name, fileList)
             end)
         )
@@ -414,7 +423,7 @@ function configureAnimationSetOld(name, fileList)
             if childPart:IsA("Animation") then
                 table.insert(
                     animTable[name].connections,
-                    childPart.Changed:connect(function(property)
+                    childPart.Changed:connect(function(_property)
                         configureAnimationSet(name, fileList)
                     end)
                 )
@@ -448,7 +457,7 @@ function configureAnimationSetOld(name, fileList)
     end
 
     -- preload anims
-    for i, animType in pairs(animTable) do
+    for _animName, animType in pairs(animTable) do
         for idx = 1, animType.count, 1 do
             Humanoid:LoadAnimation(animType[idx].anim)
         end
@@ -471,7 +480,7 @@ script.ChildRemoved:connect(scriptChildModified)
 local animator = if Humanoid then Humanoid:FindFirstChildOfClass("Animator") else nil
 if animator then
     local animTracks = animator:GetPlayingAnimationTracks()
-    for i, track in ipairs(animTracks) do
+    for _index, track in ipairs(animTracks) do
         track:Stop(0)
         track:Destroy()
     end
@@ -637,7 +646,7 @@ end
 
 function rollAnimation(animName)
     local roll = math.random(1, animTable[animName].totalWeight)
-    local origRoll = roll
+    local _origRoll = roll
     local idx = 1
     while roll > animTable[animName][idx].weight do
         roll = roll - animTable[animName][idx].weight
@@ -898,13 +907,13 @@ end
 local lastTick = 0
 
 function stepAnimate(currentTime)
-    local amplitude = 1
-    local frequency = 1
+    local _amplitude = 1
+    local _frequency = 1
     local deltaTime = currentTime - lastTick
     lastTick = currentTime
 
-    local climbFudge = 0
-    local setAngles = false
+    local _climbFudge = 0
+    local _setAngles = false
 
     if jumpAnimTime > 0 then
         jumpAnimTime = jumpAnimTime - deltaTime
@@ -925,9 +934,9 @@ function stepAnimate(currentTime)
         or pose == "PlatformStanding"
     then
         stopAllAnimations()
-        amplitude = 0.1
-        frequency = 1
-        setAngles = true
+        _amplitude = 0.1
+        _frequency = 1
+        _setAngles = true
     end
 
     -- Tool Animation handling

@@ -1,12 +1,22 @@
-local RunService = game:GetService("RunService")
-local m = workspace:WaitForChild("PirateEggConveyor")
+--[[ ServerStorage.FutureUpdateContent.RiverBeforeGoldContentReservation  (server Script, PARKED)
+Snapshot of the river egg spawner from before the golden-egg content, reserved for a future update. It does not
+run: Scripts never execute in ServerStorage (it is not marked Disabled in default.project.json, so moving it to
+ServerScriptService would start it immediately, next to the live PirateEggFreeConveyor using the same folder
+and remote).
+Spawns a free egg from ServerStorage.AuxEggTemplates (round-robin by Order) into workspace.WaterfallEggs every
+SpawnInterval seconds, moved by workspace.PirateEggConveyor.RollingMotion.
+Network authority: ReplicatedStorage.CollectRiverEgg:FireServer(egg) is only honoured while the egg is in its
+"travel" phase and the player's root is within 17 studs; the server builds the egg Tool itself.
+]]
+local _RunService = game:GetService("RunService")
+local conveyor = workspace:WaitForChild("PirateEggConveyor")
 local templates = game.ServerStorage:WaitForChild("AuxEggTemplates"):GetChildren()
-table.sort(templates, function(a, b)
-    return a:GetAttribute("Order") < b:GetAttribute("Order")
+table.sort(templates, function(templateA, templateB)
+    return templateA:GetAttribute("Order") < templateB:GetAttribute("Order")
 end)
-local folder = workspace:WaitForChild("WaterfallEggs")
-local motion = require(m:WaitForChild("RollingMotion"))
-local active = {}
+local eggFolder = workspace:WaitForChild("WaterfallEggs")
+local RollingMotion = require(conveyor:WaitForChild("RollingMotion"))
+local collectHandlers = {} -- [egg Model] = collectEgg(player) while the egg can be collected
 local serial = 0
 local function spawnEgg()
     serial += 1
@@ -14,16 +24,16 @@ local function spawnEgg()
     local egg = template:Clone()
     egg.Name = "RiverEgg_" .. serial
     egg:SetAttribute("Sequence", serial)
-    egg:PivotTo(CFrame.new(m:GetAttribute("FallStart")))
+    egg:PivotTo(CFrame.new(conveyor:GetAttribute("FallStart")))
     for _, name in { "LabelAnchor", "CollectAnchor" } do
-        local p = m[name]:Clone()
-        p.CFrame = egg:GetPivot()
-        p.Parent = egg
+        local anchorCopy = conveyor[name]:Clone()
+        anchorCopy.CFrame = egg:GetPivot()
+        anchorCopy.Parent = egg
     end
-    local label = egg.LabelAnchor
-    for _, gui in label:GetChildren() do
-        if gui:IsA("BillboardGui") then
-            gui:Destroy()
+    local labelAnchor = egg.LabelAnchor
+    for _, existingGui in labelAnchor:GetChildren() do
+        if existingGui:IsA("BillboardGui") then
+            existingGui:Destroy()
         end
     end
     local gui = Instance.new("BillboardGui")
@@ -31,18 +41,18 @@ local function spawnEgg()
     gui.Size = UDim2.fromOffset(190, 65)
     gui.MaxDistance = 100
     gui.AlwaysOnTop = false
-    gui.Parent = label
-    local text = Instance.new("TextLabel")
-    text.Size = UDim2.fromScale(1, 1)
-    text.BackgroundTransparency = 1
-    text.Font = Enum.Font.GothamBold
-    text.TextSize = 21
-    text.TextColor3 = Color3.new(1, 1, 1)
-    text.TextStrokeTransparency = 0.2
-    text.Text = template.Name .. " Egg\nFREE"
-    text.Parent = gui
+    gui.Parent = labelAnchor
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.fromScale(1, 1)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 21
+    nameLabel.TextColor3 = Color3.new(1, 1, 1)
+    nameLabel.TextStrokeTransparency = 0.2
+    nameLabel.Text = template.Name .. " Egg\nFREE"
+    nameLabel.Parent = gui
     if template:GetAttribute("Golden") then
-        text.TextColor3 = Color3.fromRGB(255, 219, 111)
+        nameLabel.TextColor3 = Color3.fromRGB(255, 219, 111)
     end
     local prompt = egg.CollectAnchor:FindFirstChildOfClass("ProximityPrompt")
     if prompt then
@@ -50,23 +60,23 @@ local function spawnEgg()
         prompt.ActionText = "Collect • Free"
     end
     egg:SetAttribute("Epoch", workspace:GetServerTimeNow())
-    egg.Parent = folder
-    local update, pose = motion(m, egg)
+    egg.Parent = eggFolder
+    local _update, pose = RollingMotion(conveyor, egg)
     local _, _, _, duration = pose(0)
 
-    local prompt = egg.CollectAnchor:FindFirstChildOfClass("ProximityPrompt")
+    local collectPrompt = egg.CollectAnchor:FindFirstChildOfClass("ProximityPrompt")
     local collected = false
     local function collectEgg(player)
         if collected or not egg.Parent then
             return
         end
-        local cf, phase = pose(workspace:GetServerTimeNow() - egg:GetAttribute("Epoch"))
+        local eggCFrame, phase = pose(workspace:GetServerTimeNow() - egg:GetAttribute("Epoch"))
         if phase ~= "travel" then
             return
         end
-        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        local bag = player:FindFirstChildOfClass("Backpack")
-        if not root or not bag or (root.Position - cf.Position).Magnitude > 17 then
+        local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local backpack = player:FindFirstChildOfClass("Backpack")
+        if not rootPart or not backpack or (rootPart.Position - eggCFrame.Position).Magnitude > 17 then
             return
         end
         collected = true
@@ -88,28 +98,28 @@ local function spawnEgg()
         handle.CanCollide = false
         handle.Massless = true
         handle.Parent = tool
-        for _, p in visual:GetDescendants() do
-            if p:IsA("BasePart") then
-                p.Anchored = false
-                p.CanCollide = false
-                p.CanTouch = false
-                p.Massless = true
+        for _, descendant in visual:GetDescendants() do
+            if descendant:IsA("BasePart") then
+                descendant.Anchored = false
+                descendant.CanCollide = false
+                descendant.CanTouch = false
+                descendant.Massless = true
                 local weld = Instance.new("WeldConstraint")
                 weld.Part0 = handle
-                weld.Part1 = p
+                weld.Part1 = descendant
                 weld.Parent = handle
             end
         end
-        tool.Parent = bag
-        active[egg] = nil
+        tool.Parent = backpack
+        collectHandlers[egg] = nil
         egg:Destroy()
     end
-    active[egg] = collectEgg
-    if prompt then
-        prompt.Triggered:Connect(collectEgg)
+    collectHandlers[egg] = collectEgg
+    if collectPrompt then
+        collectPrompt.Triggered:Connect(collectEgg)
     end
     task.delay(duration - 0.05, function()
-        active[egg] = nil
+        collectHandlers[egg] = nil
         if egg.Parent then
             egg:Destroy()
         end
@@ -119,12 +129,12 @@ game.ReplicatedStorage.CollectRiverEgg.OnServerEvent:Connect(function(player, eg
     if typeof(egg) ~= "Instance" then
         return
     end
-    local collect = active[egg]
-    if collect then
-        collect(player)
+    local collectHandler = collectHandlers[egg]
+    if collectHandler then
+        collectHandler(player)
     end
 end)
 while true do
     spawnEgg()
-    task.wait(m:GetAttribute("SpawnInterval") or 5)
+    task.wait(conveyor:GetAttribute("SpawnInterval") or 5)
 end

@@ -1,4 +1,7 @@
--- BatMotionClient: play the uploaded bat swing through the character Animator.
+-- StarterPlayerScripts.BatMotionClient (client)
+-- Plays the uploaded bat swing through the character Animator when the equipped WoodenBat is activated.
+-- Visual only: hits, knockback and the authoritative cooldown live in the bat's own server Script (BatServer).
+-- SWING_COOLDOWN mirrors BatServer's SWING_COOLDOWN so the animation doesn't play for swings the server ignores.
 local Players = game:GetService("Players")
 local localPlayer = Players.LocalPlayer
 local SWING_COOLDOWN = 1.1

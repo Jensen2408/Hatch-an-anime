@@ -2,21 +2,27 @@
 Music volume, sound-effects volume, reduced motion, night sky effects and floating labels.
 Music = sounds under workspace.Music. Sound effects = everything else (routed into SoundService.SFX).
 Values are kept on the player as attributes for this session (MusicVolume, SFXVolume, SFXMuted, ReducedMotion, ...).
+Persistence: PlayerDataService restores saved values onto those attributes; this script first waits up to 8 s for
+the DataLoaded attribute. Changes are sent back via ReplicatedStorage.SaveSettings:FireServer({ <key> = value, ... })
+for the keys in savedKeys, debounced to one send per 1.5 s.
+Other scripts read the attributes (ReducedMotion, NightFX, HideLabels) and the gear button's holder frame
+(FigmaSkin re-parents it into its side-button row; layoutSettings only positions it while it is still in gui).
 ]]
 local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
+local UserInputService = game:GetService("UserInputService")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local UISound = require(game:GetService("ReplicatedStorage"):WaitForChild("UISound"))
 local player = Players.LocalPlayer
 do
-    local t = os.clock()
-    while not player:GetAttribute("DataLoaded") and os.clock() - t < 8 do
+    local waitStart = os.clock()
+    while not player:GetAttribute("DataLoaded") and os.clock() - waitStart < 8 do
         task.wait(0.1)
     end
 end -- saved settings arrive with the save
-local pg = player:WaitForChild("PlayerGui")
+local playerGui = player:WaitForChild("PlayerGui")
 
+-- ===== 1. Palette and UI helpers =====
 local CREAM, CARD, INK, RED, GOLD, GREEN, MUTED =
     Color3.fromRGB(255, 243, 217),
     Color3.fromRGB(246, 226, 192),
@@ -26,72 +32,73 @@ local CREAM, CARD, INK, RED, GOLD, GREEN, MUTED =
     Color3.fromRGB(85, 163, 78),
     Color3.fromRGB(150, 120, 96)
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local function make(c, p, parent)
-    local o = Instance.new(c)
-    for k, v in p do
-        o[k] = v
+local function make(className, props, parent)
+    local instance = Instance.new(className)
+    for key, value in props do
+        instance[key] = value
     end
     if parent then
-        o.Parent = parent
+        instance.Parent = parent
     end
-    return o
+    return instance
 end
-local function round(o, r)
-    make("UICorner", { CornerRadius = UDim.new(0, r) }, o)
+local function round(guiObject, radius)
+    make("UICorner", { CornerRadius = UDim.new(0, radius) }, guiObject)
 end
-local function text(parent, t, size, color, props)
-    local l = make(
+local function makeText(parent, content, textSize, color, props)
+    local label = make(
         "TextLabel",
-        { BackgroundTransparency = 1, FontFace = FONT, Text = t, TextSize = size, TextColor3 = color or INK },
+        { BackgroundTransparency = 1, FontFace = FONT, Text = content, TextSize = textSize, TextColor3 = color or INK },
         parent
     )
-    for k, v in props or {} do
-        l[k] = v
+    for key, value in props or {} do
+        label[key] = value
     end
-    return l
+    return label
 end
 -- chunky button: dark base + face
-local function chunky(parent, w, h, color, label, props)
-    local hold = make("Frame", { Size = UDim2.fromOffset(w, h + 4), BackgroundTransparency = 1 }, parent)
-    for k, v in props or {} do
-        hold[k] = v
+local function chunky(parent, width, height, color, labelText, props)
+    local holder = make("Frame", { Size = UDim2.fromOffset(width, height + 4), BackgroundTransparency = 1 }, parent)
+    for key, value in props or {} do
+        holder[key] = value
     end
-    local base = make("Frame", {
+    local shadow = make("Frame", {
         Position = UDim2.fromOffset(0, 4),
         Size = UDim2.new(1, 0, 1, -4),
         BackgroundColor3 = INK,
         BorderSizePixel = 0,
-    }, hold)
-    round(base, 10)
+    }, holder)
+    round(shadow, 10)
     local face = make("TextButton", {
         Size = UDim2.new(1, 0, 1, -4),
         BackgroundColor3 = color,
         AutoButtonColor = false,
         Text = "",
         BorderSizePixel = 0,
-    }, hold)
+    }, holder)
     round(face, 10)
     make("UIStroke", { Color = INK, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, face)
-    local l = text(face, label, 16, Color3.new(1, 1, 1), { Size = UDim2.fromScale(1, 1) })
-    local function y(v)
-        TweenService:Create(face, TweenInfo.new(0.08), { Position = UDim2.fromOffset(0, v) }):Play()
+    local textLabel = makeText(face, labelText, 16, Color3.new(1, 1, 1), { Size = UDim2.fromScale(1, 1) })
+    local function nudgeFace(offsetY)
+        TweenService:Create(face, TweenInfo.new(0.08), { Position = UDim2.fromOffset(0, offsetY) }):Play()
     end
     face.MouseEnter:Connect(function()
-        y(-2)
+        nudgeFace(-2)
     end)
     face.MouseLeave:Connect(function()
-        y(0)
+        nudgeFace(0)
     end)
     face.MouseButton1Down:Connect(function()
-        y(4)
+        nudgeFace(4)
     end)
     face.MouseButton1Up:Connect(function()
-        y(0)
+        nudgeFace(0)
     end)
-    return face, l, hold
+    return face, textLabel, holder
 end
 
-local gui = make("ScreenGui", { Name = "MusicSettingsUI", ResetOnSpawn = false, DisplayOrder = 45 }, pg)
+-- ===== 2. Gear button and panel shell =====
+local gui = make("ScreenGui", { Name = "MusicSettingsUI", ResetOnSpawn = false, DisplayOrder = 45 }, playerGui)
 local toggle, toggleLabel =
     chunky(gui, 52, 52, RED, "⚙", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -22, 0, 190) })
 toggleLabel.Text = ""
@@ -111,34 +118,34 @@ local panel = make("Frame", {
     BackgroundTransparency = 1,
     Visible = false,
 }, gui)
-local pscale = make("UIScale", {}, panel)
-local pbase = make(
+local panelScale = make("UIScale", {}, panel)
+local panelBase = make(
     "Frame",
     { Position = UDim2.fromOffset(0, 6), Size = UDim2.new(1, 0, 1, -6), BackgroundColor3 = INK, BorderSizePixel = 0 },
     panel
 )
-round(pbase, 18)
+round(panelBase, 18)
 local body = make("Frame", { Size = UDim2.new(1, 0, 1, -6), BackgroundColor3 = CREAM, BorderSizePixel = 0 }, panel)
 round(body, 18)
 make("UIStroke", { Color = INK, Thickness = 3 }, body)
-local head = make("Frame", { Size = UDim2.new(1, 0, 0, 50), BackgroundColor3 = RED, BorderSizePixel = 0 }, body)
-round(head, 18)
+local header = make("Frame", { Size = UDim2.new(1, 0, 0, 50), BackgroundColor3 = RED, BorderSizePixel = 0 }, body)
+round(header, 18)
 make(
     "Frame",
     { Position = UDim2.new(0, 0, 1, -18), Size = UDim2.new(1, 0, 0, 18), BackgroundColor3 = RED, BorderSizePixel = 0 },
-    head
+    header
 )
 make(
     "Frame",
     { Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 3), BackgroundColor3 = INK, BorderSizePixel = 0 },
-    head
+    header
 )
 make(
     "UIStroke",
     { Color = Color3.new(0, 0, 0), Thickness = 2.5 },
-    text(head, "SETTINGS", 26, Color3.new(1, 1, 1), { Size = UDim2.fromScale(1, 1) })
+    makeText(header, "SETTINGS", 26, Color3.new(1, 1, 1), { Size = UDim2.fromScale(1, 1) })
 )
-local close = make("TextButton", {
+local closeButton = make("TextButton", {
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.new(1, -26, 0, 25),
     Size = UDim2.fromOffset(32, 32),
@@ -149,36 +156,37 @@ local close = make("TextButton", {
     TextColor3 = RED,
     AutoButtonColor = true,
 }, body)
-round(close, 16)
-make("UIStroke", { Color = INK, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, close)
-local list = make(
+round(closeButton, 16)
+make("UIStroke", { Color = INK, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, closeButton)
+local rowList = make(
     "Frame",
     { Position = UDim2.fromOffset(14, 64), Size = UDim2.new(1, -28, 1, -76), BackgroundTransparency = 1 },
     body
 )
-make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, rowList)
 
-local function row(order, h)
-    local r = make(
+-- ===== 3. Row widgets (slider, switch) =====
+local function makeRow(order, height)
+    local rowFrame = make(
         "Frame",
-        { LayoutOrder = order, Size = UDim2.new(1, 0, 0, h), BackgroundColor3 = CARD, BorderSizePixel = 0 },
-        list
+        { LayoutOrder = order, Size = UDim2.new(1, 0, 0, height), BackgroundColor3 = CARD, BorderSizePixel = 0 },
+        rowList
     )
-    round(r, 12)
-    make("UIStroke", { Color = Color3.fromRGB(205, 170, 120), Thickness = 1.5 }, r)
-    return r
+    round(rowFrame, 12)
+    make("UIStroke", { Color = Color3.fromRGB(205, 170, 120), Thickness = 1.5 }, rowFrame)
+    return rowFrame
 end
 
--- slider row
-local dragging
-local function slider(order, title, initial, onChange)
-    local r = row(order, 64)
-    text(r, title, 17, INK, {
+-- slider row. Only one slider drags at a time: activeDrag = { s = setFromScreenX, input = InputObject }.
+local activeDrag
+local function makeSlider(order, title, initial, onChange)
+    local rowFrame = makeRow(order, 64)
+    makeText(rowFrame, title, 17, INK, {
         Position = UDim2.fromOffset(12, 6),
         Size = UDim2.new(1, -80, 0, 22),
         TextXAlignment = Enum.TextXAlignment.Left,
     })
-    local val = text(r, "", 16, MUTED, {
+    local valueLabel = makeText(rowFrame, "", 16, MUTED, {
         AnchorPoint = Vector2.new(1, 0),
         Position = UDim2.new(1, -12, 0, 6),
         Size = UDim2.fromOffset(60, 22),
@@ -189,7 +197,7 @@ local function slider(order, title, initial, onChange)
         Size = UDim2.new(1, -28, 0, 10),
         BackgroundColor3 = Color3.fromRGB(214, 190, 150),
         BorderSizePixel = 0,
-    }, r)
+    }, rowFrame)
     round(track, 5)
     local fill = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = GOLD, BorderSizePixel = 0 }, track)
     round(fill, 5)
@@ -202,57 +210,60 @@ local function slider(order, title, initial, onChange)
     }, track)
     round(knob, 11)
     make("UIStroke", { Color = INK, Thickness = 2 }, knob)
-    local hit = make(
+    local hitArea = make(
         "TextButton",
         { Position = UDim2.fromOffset(0, 28), Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Text = "" },
-        r
+        rowFrame
     )
-    hit:SetAttribute("UISoundMuted", true)
-    local s = {}
-    function s.set(v, silent)
-        v = math.clamp(v, 0, 1)
-        fill.Size = UDim2.fromScale(v, 1)
-        knob.Position = UDim2.fromScale(v, 0.5)
-        val.Text = v == 0 and "OFF" or (math.floor(v * 100 + 0.5) .. "%")
+    hitArea:SetAttribute("UISoundMuted", true)
+    local sliderApi = {}
+    function sliderApi.set(value, silent)
+        value = math.clamp(value, 0, 1)
+        fill.Size = UDim2.fromScale(value, 1)
+        knob.Position = UDim2.fromScale(value, 0.5)
+        valueLabel.Text = value == 0 and "OFF" or (math.floor(value * 100 + 0.5) .. "%")
         if not silent then
-            onChange(v)
+            onChange(value)
         end
     end
-    local function at(x)
-        s.set((x - track.AbsolutePosition.X) / track.AbsoluteSize.X)
+    local function setFromScreenX(screenX)
+        sliderApi.set((screenX - track.AbsolutePosition.X) / track.AbsoluteSize.X)
     end
-    hit.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = { s = at, input = i }
-            at(i.Position.X)
+    hitArea.InputBegan:Connect(function(input)
+        if
+            input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch
+        then
+            activeDrag = { s = setFromScreenX, input = input }
+            setFromScreenX(input.Position.X)
         end
     end)
-    s.set(initial)
-    return s
+    sliderApi.set(initial)
+    return sliderApi
 end
-UIS.InputChanged:Connect(function(i)
+UserInputService.InputChanged:Connect(function(input)
     if
-        dragging
-        and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch)
+        activeDrag
+        and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch)
     then
-        dragging.s(i.Position.X)
+        activeDrag.s(input.Position.X)
     end
 end)
-UIS.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        dragging = nil
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        activeDrag = nil
     end
 end)
 
 -- toggle row
-local function switch(order, title, desc, initial, onChange)
-    local r = row(order, 50)
-    text(r, title, 16, INK, {
+local function makeSwitch(order, title, description, initial, onChange)
+    local rowFrame = makeRow(order, 50)
+    makeText(rowFrame, title, 16, INK, {
         Position = UDim2.fromOffset(12, 5),
         Size = UDim2.new(1, -90, 0, 22),
         TextXAlignment = Enum.TextXAlignment.Left,
     })
-    text(r, desc, 12, MUTED, {
+    makeText(rowFrame, description, 12, MUTED, {
         Position = UDim2.fromOffset(12, 26),
         Size = UDim2.new(1, -90, 0, 16),
         TextXAlignment = Enum.TextXAlignment.Left,
@@ -264,7 +275,7 @@ local function switch(order, title, desc, initial, onChange)
         BackgroundColor3 = GREEN,
         Text = "",
         AutoButtonColor = false,
-    }, r)
+    }, rowFrame)
     round(pill, 14)
     make("UIStroke", { Color = INK, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, pill)
     local dot = make("Frame", {
@@ -275,205 +286,217 @@ local function switch(order, title, desc, initial, onChange)
     }, pill)
     round(dot, 10)
     make("UIStroke", { Color = INK, Thickness = 1.5 }, dot)
-    local on = initial
+    local isOn = initial
     local function paint()
         TweenService
-            :Create(pill, TweenInfo.new(0.15), { BackgroundColor3 = on and GREEN or Color3.fromRGB(190, 170, 145) })
+            :Create(pill, TweenInfo.new(0.15), { BackgroundColor3 = isOn and GREEN or Color3.fromRGB(190, 170, 145) })
             :Play()
         TweenService:Create(
             dot,
             TweenInfo.new(0.15, Enum.EasingStyle.Back),
-            { Position = UDim2.fromScale(on and 0.72 or 0.28, 0.5) }
+            { Position = UDim2.fromScale(isOn and 0.72 or 0.28, 0.5) }
         ):Play()
     end
     pill.Activated:Connect(function()
-        on = not on
+        isOn = not isOn
         paint()
-        onChange(on)
+        onChange(isOn)
     end)
     paint()
-    onChange(on)
+    onChange(isOn)
 end
 
----------------------------------------------------------------- music
-local musicVol, originals = player:GetAttribute("MusicVolume") or 1, {}
+-- ===== 4. Music / sound-effect routing =====
+-- Music sounds keep their authored volume in originalVolumes and are scaled by musicVolume; every other
+-- Sound without a SoundGroup is routed into SoundService.SFX so the SFX slider can scale it.
+local musicVolume, originalVolumes = player:GetAttribute("MusicVolume") or 1, {}
 local function isMusic(sound)
-    local m = workspace:FindFirstChild("Music")
-    return m and sound:IsDescendantOf(m)
+    local musicFolder = workspace:FindFirstChild("Music")
+    return musicFolder and sound:IsDescendantOf(musicFolder)
 end
 ---------------------------------------------------------------- sound effects (everything that isn't music)
-local sfx = SoundService:FindFirstChild("SFX")
-if not (sfx and sfx:IsA("SoundGroup")) then
-    sfx = make("SoundGroup", { Name = "SFX", Volume = 1 }, SoundService)
+local sfxGroup = SoundService:FindFirstChild("SFX")
+if not (sfxGroup and sfxGroup:IsA("SoundGroup")) then
+    sfxGroup = make("SoundGroup", { Name = "SFX", Volume = 1 }, SoundService)
 end
-local function register(sound)
+local function registerSound(sound)
     if not sound:IsA("Sound") then
         return
     end
     if isMusic(sound) then
-        if not originals[sound] then
-            originals[sound] = sound.Volume
-            sound.Volume = originals[sound] * musicVol
+        if not originalVolumes[sound] then
+            originalVolumes[sound] = sound.Volume
+            sound.Volume = originalVolumes[sound] * musicVolume
         end
     elseif not sound.SoundGroup then
-        sound.SoundGroup = sfx
+        sound.SoundGroup = sfxGroup
     end
 end
 task.spawn(function()
-    for _, root in { workspace, pg, SoundService } do
-        for n, d in root:GetDescendants() do
-            if d:IsA("Sound") then
-                pcall(register, d)
+    for _, container in { workspace, playerGui, SoundService } do
+        for index, descendant in container:GetDescendants() do
+            if descendant:IsA("Sound") then
+                pcall(registerSound, descendant)
             end
-            if n % 2000 == 0 then
+            if index % 2000 == 0 then
                 task.wait()
             end
         end
-        root.DescendantAdded:Connect(function(d)
-            if d:IsA("Sound") then
-                task.defer(pcall, register, d)
+        container.DescendantAdded:Connect(function(descendant)
+            if descendant:IsA("Sound") then
+                task.defer(pcall, registerSound, descendant)
             end
         end)
     end
 end)
 
-local musicSlider = slider(1, "Music", musicVol, function(v)
-    musicVol = v
-    player:SetAttribute("MusicVolume", v)
-    for snd, b in originals do
-        if snd.Parent then
-            snd.Volume = b * v
+-- ===== 5. Settings rows =====
+local _musicSlider = makeSlider(1, "Music", musicVolume, function(volume)
+    musicVolume = volume
+    player:SetAttribute("MusicVolume", volume)
+    for sound, baseVolume in originalVolumes do
+        if sound.Parent then
+            sound.Volume = baseVolume * volume
         else
-            originals[snd] = nil
+            originalVolumes[sound] = nil
         end
     end
 end)
-slider(2, "Sound effects", player:GetAttribute("SFXVolume") or 1, function(v)
-    sfx.Volume = v
-    player:SetAttribute("SFXVolume", v)
-    player:SetAttribute("SFXMuted", v == 0)
+makeSlider(2, "Sound effects", player:GetAttribute("SFXVolume") or 1, function(volume)
+    sfxGroup.Volume = volume
+    player:SetAttribute("SFXVolume", volume)
+    player:SetAttribute("SFXMuted", volume == 0)
 end)
-switch(
+makeSwitch(
     3,
     "Animations",
     "Turn off for simpler, calmer effects",
     player:GetAttribute("ReducedMotion") ~= true,
-    function(on)
-        player:SetAttribute("ReducedMotion", not on)
+    function(isOn)
+        player:SetAttribute("ReducedMotion", not isOn)
     end
 )
-switch(
+makeSwitch(
     4,
     "Night sky effects",
     "Aurora and floating stars at night",
     player:GetAttribute("NightFX") ~= false,
-    function(on)
-        player:SetAttribute("NightFX", on)
-        local fx = workspace:FindFirstChild("NighttimeLocalFX")
-        if fx then
-            for _, d in fx:GetDescendants() do
-                if d:IsA("Beam") or d:IsA("ParticleEmitter") then
-                    d:SetAttribute("UserOff", not on)
-                    if not on then
-                        d.Enabled = false
+    function(isOn)
+        player:SetAttribute("NightFX", isOn)
+        local nightFx = workspace:FindFirstChild("NighttimeLocalFX")
+        if nightFx then
+            for _, descendant in nightFx:GetDescendants() do
+                if descendant:IsA("Beam") or descendant:IsA("ParticleEmitter") then
+                    descendant:SetAttribute("UserOff", not isOn)
+                    if not isOn then
+                        descendant.Enabled = false
                     end
                 end
             end
         end
     end
 )
-switch(5, "Floating labels", "Names and stats above characters", player:GetAttribute("HideLabels") ~= true, function(on)
-    player:SetAttribute("HideLabels", not on)
-    for _, b in pg:GetChildren() do
-        if b:IsA("BillboardGui") and b.Name == "CharacterInfoLabel" then
-            b.Enabled = on
+makeSwitch(
+    5,
+    "Floating labels",
+    "Names and stats above characters",
+    player:GetAttribute("HideLabels") ~= true,
+    function(isOn)
+        player:SetAttribute("HideLabels", not isOn)
+        for _, billboard in playerGui:GetChildren() do
+            if billboard:IsA("BillboardGui") and billboard.Name == "CharacterInfoLabel" then
+                billboard.Enabled = isOn
+            end
         end
     end
-end)
+)
+-- ===== 6. Persistence =====
 do -- apply saved values + save changes
-    sfx.Volume = player:GetAttribute("SFXVolume") or 1
-    local keys = { "MusicVolume", "SFXVolume", "SFXMuted", "ReducedMotion", "NightFX", "HideLabels" }
-    local pending = false
-    local remote = game:GetService("ReplicatedStorage"):WaitForChild("SaveSettings", 10)
+    sfxGroup.Volume = player:GetAttribute("SFXVolume") or 1
+    local savedKeys = { "MusicVolume", "SFXVolume", "SFXMuted", "ReducedMotion", "NightFX", "HideLabels" }
+    local saveQueued = false
+    local saveRemote = game:GetService("ReplicatedStorage"):WaitForChild("SaveSettings", 10)
     player.AttributeChanged:Connect(function(name)
-        if not remote or pending or not table.find(keys, name) then
+        if not saveRemote or saveQueued or not table.find(savedKeys, name) then
             return
         end
-        pending = true
+        saveQueued = true
         task.delay(1.5, function()
-            pending = false
-            local t = {}
-            for _, k in keys do
-                t[k] = player:GetAttribute(k)
+            saveQueued = false
+            local payload = {}
+            for _, key in savedKeys do
+                payload[key] = player:GetAttribute(key)
             end
-            remote:FireServer(t)
+            saveRemote:FireServer(payload)
         end)
     end)
 end
-pg.ChildAdded:Connect(function(b)
-    if b.Name == "CharacterInfoLabel" and player:GetAttribute("HideLabels") then
+playerGui.ChildAdded:Connect(function(child)
+    if child.Name == "CharacterInfoLabel" and player:GetAttribute("HideLabels") then
         task.defer(function()
-            b.Enabled = false
+            child.Enabled = false
         end)
     end
 end)
 
----------------------------------------------------------------- open / close
-local open = false
+-- ===== 7. Open / close =====
+local isOpen = false
 gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
 local BASE_DISPLAY = gui.DisplayOrder -- 45
 
 local function panelFit()
-    local v = gui.AbsoluteSize
-    return math.max(0.01, math.min(1, (v.X - 32) / 340, (v.Y - 32) / 408))
+    local viewport = gui.AbsoluteSize
+    return math.max(0.01, math.min(1, (viewport.X - 32) / 340, (viewport.Y - 32) / 408))
 end
 local function layoutSettings()
-    local v = gui.AbsoluteSize
-    if v.X <= 0 or v.Y <= 0 then
+    local viewport = gui.AbsoluteSize
+    if viewport.X <= 0 or viewport.Y <= 0 then
         return
     end
-    local s = math.min(1, v.X / 600, v.Y / 560)
+    local hudScale = math.min(1, viewport.X / 600, viewport.Y / 560)
     if toggle.Parent.Parent == gui then
-        toggle.Parent.Position = UDim2.new(1, -10, 0, 20 + 104 * s)
+        toggle.Parent.Position = UDim2.new(1, -10, 0, 20 + 104 * hudScale)
     end
     -- phones: smaller gear (GameHUD stacks the EGGS button right under it, clear of the jump button)
-    local ts = toggle.Parent:FindFirstChild("PhoneScale") or make("UIScale", { Name = "PhoneScale" }, toggle.Parent)
-    ts.Scale = toggle.Parent.Parent ~= gui and 1 or (v.Y < 600 and math.clamp(v.Y / 720, 0.6, 1) or 1)
-    pscale.Scale = panelFit()
+    local phoneScale = toggle.Parent:FindFirstChild("PhoneScale")
+        or make("UIScale", { Name = "PhoneScale" }, toggle.Parent)
+    phoneScale.Scale = toggle.Parent.Parent ~= gui and 1
+        or (viewport.Y < 600 and math.clamp(viewport.Y / 720, 0.6, 1) or 1)
+    panelScale.Scale = panelFit()
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutSettings)
 layoutSettings()
-local function setOpen(v)
-    if open ~= v then
-        UISound.Play(v and "Open" or "Close")
+local function setOpen(shouldOpen)
+    if isOpen ~= shouldOpen then
+        UISound.Play(shouldOpen and "Open" or "Close")
     end
-    open = v
+    isOpen = shouldOpen
     -- When Settings panel is open, render above GameMenus' boosted DisplayOrder (60)
-    gui.DisplayOrder = v and math.max(BASE_DISPLAY, 65) or BASE_DISPLAY
-    if v then
+    gui.DisplayOrder = shouldOpen and math.max(BASE_DISPLAY, 65) or BASE_DISPLAY
+    if shouldOpen then
         panel.Visible = true
-        pscale.Scale = panelFit() * 0.85
-        TweenService:Create(pscale, TweenInfo.new(0.22, Enum.EasingStyle.Back), { Scale = panelFit() }):Play()
+        panelScale.Scale = panelFit() * 0.85
+        TweenService:Create(panelScale, TweenInfo.new(0.22, Enum.EasingStyle.Back), { Scale = panelFit() }):Play()
     else
-        local t = TweenService:Create(pscale, TweenInfo.new(0.12), { Scale = panelFit() * 0.85 })
-        t:Play()
-        t.Completed:Once(function()
-            if not open then
+        local closeTween = TweenService:Create(panelScale, TweenInfo.new(0.12), { Scale = panelFit() * 0.85 })
+        closeTween:Play()
+        closeTween.Completed:Once(function()
+            if not isOpen then
                 panel.Visible = false
             end
         end)
     end
 end
 toggle.Activated:Connect(function()
-    setOpen(not open)
+    setOpen(not isOpen)
 end)
-close.Activated:Connect(function()
+closeButton.Activated:Connect(function()
     setOpen(false)
 end)
 
 -- Hide Settings toggle when a GameMenu panel is open so it can't cover
 -- the panel's Close button on compact screens.
-local gameMenusGui = pg:WaitForChild("GameMenus", 10)
+local gameMenusGui = playerGui:WaitForChild("GameMenus", 10)
 if gameMenusGui then
     local dim = gameMenusGui:WaitForChild("Dim", 5)
     if dim then
@@ -483,7 +506,7 @@ if gameMenusGui then
             -- the Settings button now sits in the small row under the side buttons (FigmaSkin), so it never covers a panel: keep it visible
             toggle.Parent.Visible = true
             -- If the settings panel was open, close it so it doesn't fight the menu
-            if menuOpen and open then
+            if menuOpen and isOpen then
                 setOpen(false)
             end
         end

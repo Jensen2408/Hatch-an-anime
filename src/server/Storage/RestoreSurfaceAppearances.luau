@@ -1,31 +1,33 @@
+-- ServerStorage.RestoreSurfaceAppearances (ModuleScript; Studio command-bar tool, returns the number restored)
 -- require(game.ServerStorage.RestoreSurfaceAppearances)() puts back the SurfaceAppearances + RenderFidelity removed by the Oct 15 memory cleanup
 return function()
-    local n = 0
-    for _, r in ipairs({ workspace, game.ServerStorage }) do
-        for _, p in ipairs(r:GetDescendants()) do
+    local restoredCount = 0
+    for _, root in ipairs({ workspace, game.ServerStorage }) do
+        for _, part in ipairs(root:GetDescendants()) do
             if
-                p:IsA("BasePart")
-                and p:GetAttribute("SA_Color") ~= nil
-                and not p:FindFirstChildOfClass("SurfaceAppearance")
+                part:IsA("BasePart")
+                and part:GetAttribute("SA_Color") ~= nil
+                and not part:FindFirstChildOfClass("SurfaceAppearance")
             then
-                local s = Instance.new("SurfaceAppearance")
-                s.ColorMap = p:GetAttribute("SA_Color")
-                s.NormalMap = p:GetAttribute("SA_Normal")
-                s.MetalnessMap = p:GetAttribute("SA_Metal")
-                s.RoughnessMap = p:GetAttribute("SA_Rough")
+                local surfaceAppearance = Instance.new("SurfaceAppearance")
+                surfaceAppearance.ColorMap = part:GetAttribute("SA_Color")
+                surfaceAppearance.NormalMap = part:GetAttribute("SA_Normal")
+                surfaceAppearance.MetalnessMap = part:GetAttribute("SA_Metal")
+                surfaceAppearance.RoughnessMap = part:GetAttribute("SA_Rough")
+                -- SA_Alpha / SA_Tint may be missing or invalid; skip them rather than abort the restore
                 pcall(function()
-                    s.AlphaMode = Enum.AlphaMode[p:GetAttribute("SA_Alpha")]
-                    s.Color = p:GetAttribute("SA_Tint")
+                    surfaceAppearance.AlphaMode = Enum.AlphaMode[part:GetAttribute("SA_Alpha")]
+                    surfaceAppearance.Color = part:GetAttribute("SA_Tint")
                 end)
-                s.Parent = p
-                n += 1
+                surfaceAppearance.Parent = part
+                restoredCount += 1
             end
-            if p:IsA("MeshPart") and p:GetAttribute("OldRenderFidelity") then
+            if part:IsA("MeshPart") and part:GetAttribute("OldRenderFidelity") then
                 pcall(function()
-                    p.RenderFidelity = Enum.RenderFidelity[p:GetAttribute("OldRenderFidelity")]
+                    part.RenderFidelity = Enum.RenderFidelity[part:GetAttribute("OldRenderFidelity")]
                 end)
             end
         end
     end
-    return n
+    return restoredCount
 end

@@ -3,15 +3,17 @@ Background music. Plays the workspace.Music.Day playlist normally; while workspa
 (20 s every 5 min, see NighttimeService) it crossfades to the workspace.Music.Night playlist and back.
 Each playlist plays its sounds in Order and loops. A faded-out playlist pauses and resumes where it left off;
 night also moves on to its next track each night so every night track gets heard.
-Volume slider lives in MusicSettings.
+Volume slider lives in MusicSettings. Client-only: no remotes; reads the replicated workspace attribute
+NighttimeActive.
 ]]
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
-local FADE = 2.5
-local music = workspace:WaitForChild("Music")
+local FADE_TIME = 2.5
+local musicFolder = workspace:WaitForChild("Music")
 
-local function start(sound)
+-- Resume a paused track where it stopped, otherwise start it from TimePosition.
+local function startTrack(sound)
     if sound.IsPlaying then
         return
     end
@@ -23,92 +25,97 @@ local function start(sound)
 end
 
 -- fades run on a SoundGroup per playlist so they don't fight MusicSettings, which scales Sound.Volume
-local function playlist(name, rotate)
-    local folder = music:WaitForChild(name)
+local function makePlaylist(name, rotate)
+    local folder = musicFolder:WaitForChild(name)
     local group = Instance.new("SoundGroup")
     group.Name = "MusicFade" .. name
     group.Volume = 0
     group.Parent = SoundService
-    local list = { group = group, tracks = {}, index = 1, rotate = rotate, entered = false, active = false }
+    local playlist = { group = group, tracks = {}, index = 1, rotate = rotate, entered = false, active = false }
     for _, sound in folder:GetChildren() do
         if sound:IsA("Sound") then
             sound.Looped = false
             sound.SoundGroup = group
-            table.insert(list.tracks, sound)
+            table.insert(playlist.tracks, sound)
         end
     end
-    table.sort(list.tracks, function(a, b)
-        return (a:GetAttribute("Order") or 0) < (b:GetAttribute("Order") or 0)
+    table.sort(playlist.tracks, function(trackA, trackB)
+        return (trackA:GetAttribute("Order") or 0) < (trackB:GetAttribute("Order") or 0)
     end)
-    for _, sound in list.tracks do
+    for _, sound in playlist.tracks do
+        -- Only the current track advances the playlist; a stale Ended from another track just rewinds it.
         sound.Ended:Connect(function()
             sound.TimePosition = 0
-            if list.tracks[list.index] ~= sound then
+            if playlist.tracks[playlist.index] ~= sound then
                 return
             end
-            list.index = list.index % #list.tracks + 1
-            if list.active then
-                start(list.tracks[list.index])
+            playlist.index = playlist.index % #playlist.tracks + 1
+            if playlist.active then
+                startTrack(playlist.tracks[playlist.index])
             end
         end)
     end
-    return list
+    return playlist
 end
 
-local fades = {}
-local function fade(list, on)
-    if fades[list] then
-        fades[list]:Cancel()
+local activeFades = {} -- [playlist] = Tween currently fading that playlist's SoundGroup
+local function fadePlaylist(playlist, fadeIn)
+    if activeFades[playlist] then
+        activeFades[playlist]:Cancel()
     end
-    local tween =
-        TweenService:Create(list.group, TweenInfo.new(FADE, Enum.EasingStyle.Sine), { Volume = on and 1 or 0 })
+    local tween = TweenService:Create(
+        playlist.group,
+        TweenInfo.new(FADE_TIME, Enum.EasingStyle.Sine),
+        { Volume = fadeIn and 1 or 0 }
+    )
     tween.Completed:Connect(function(state)
-        if state ~= Enum.PlaybackState.Completed or on then
+        if state ~= Enum.PlaybackState.Completed or fadeIn then
             return
         end
-        for _, sound in list.tracks do
+        for _, sound in playlist.tracks do
             if sound.IsPlaying then
                 sound:Pause()
             end
         end
     end)
-    fades[list] = tween
+    activeFades[playlist] = tween
     tween:Play()
 end
 
-local function enter(list)
-    if #list.tracks == 0 then
+-- Night (rotate = true) moves on to the next track on every re-entry; day resumes the paused track.
+local function enterPlaylist(playlist)
+    if #playlist.tracks == 0 then
         return
     end
-    if list.rotate and list.entered then
-        local previous = list.tracks[list.index]
+    if playlist.rotate and playlist.entered then
+        local previous = playlist.tracks[playlist.index]
         if previous.IsPlaying then
             previous:Pause()
         end
-        list.index = list.index % #list.tracks + 1
+        playlist.index = playlist.index % #playlist.tracks + 1
     end
-    list.entered, list.active = true, true
-    start(list.tracks[list.index])
-    fade(list, true)
+    playlist.entered, playlist.active = true, true
+    startTrack(playlist.tracks[playlist.index])
+    fadePlaylist(playlist, true)
 end
 
-local function leave(list)
-    list.active = false
-    fade(list, false)
+local function leavePlaylist(playlist)
+    playlist.active = false
+    fadePlaylist(playlist, false)
 end
 
-local day, night = playlist("Day", false), playlist("Night", true)
-local current
-local function update()
-    local target = if workspace:GetAttribute("NighttimeActive") == true then night else day
-    if target == current then
+local dayPlaylist, nightPlaylist = makePlaylist("Day", false), makePlaylist("Night", true)
+local currentPlaylist
+local function updatePlaylist()
+    local target = if workspace:GetAttribute("NighttimeActive") == true then nightPlaylist else dayPlaylist
+    if target == currentPlaylist then
         return
     end
-    if current then
-        leave(current)
+    if currentPlaylist then
+        leavePlaylist(currentPlaylist)
     end
-    current = target
-    enter(target)
+    currentPlaylist = target
+    enterPlaylist(target)
 end
-workspace:GetAttributeChangedSignal("NighttimeActive"):Connect(update)
-update()
+workspace:GetAttributeChangedSignal("NighttimeActive"):Connect(updatePlaylist)
+updatePlaylist()
