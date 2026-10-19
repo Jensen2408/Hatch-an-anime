@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 47 |
+| Pending | 46 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 137 |
+| Refactored | 138 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -245,7 +245,7 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Cinematics/TrailerCinematic.client.luau` | LocalScript | 962 | 2355 | Pending | — | — |
+| `client/Cinematics/TrailerCinematic.client.luau` | LocalScript | 962 | 2688 | Refactored | CHANGED | Header (triggers, _G contracts, shot list), 18 section banners + per-scene timelines, descriptive renames, 26 helpers extracted from prepare/hideForRecording/scenes/updateFrame |
 
 ## Batch 19 — Cinematics — duo trailers and cine cam
 
@@ -1597,12 +1597,12 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Cinematics/TrailerCinematic.client.luau`
 
-- **Type:** LocalScript · **Batch:** 18 · **Priority:** High · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 18 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.TrailerCinematic  (LocalScript)
 - **Dependencies:** TrailerConfig
 - **Public functions:** —
 - **Events:** Connect×11, RunService×1, PlayerAdded×1
-- **Readability problems:** 229 dense one-line statements; 56 lines >160 chars; 24 one-letter locals
+- **Readability problems:** 2355-line script with no section layout; one/two-letter names everywhere (R, A, E, W, T, M, V, rf, xf, inc, sc...); prepare() ~370 and hideForRecording() ~200 lines; 11 unused-variable warnings
 
 ### `client/Cinematics/CineCamClient.client.luau`
 
