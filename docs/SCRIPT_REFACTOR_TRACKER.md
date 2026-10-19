@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 53 |
+| Pending | 47 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 131 |
+| Refactored | 137 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -234,12 +234,12 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Bootstrap/LoadingScreen.client.luau` | LocalScript | 209 | 578 | Pending | — | — |
-| `client/Bootstrap/LoadingScreen/Config.luau` | ModuleScript | 34 | 50 | Pending | — | — |
-| `client/Bootstrap/StartupLoader.luau` | ModuleScript | 131 | 259 | Pending | — | — |
-| `client/Tutorial/FirstHatchTutorial.client.luau` | LocalScript | 321 | 738 | Pending | — | — |
-| `client/Tutorial/JoinArrival.client.luau` | LocalScript | 523 | 894 | Pending | — | — |
-| `server/Services/StartupAssetManifest.server.luau` | Script | 20 | 40 | Pending | — | — |
+| `client/Bootstrap/LoadingScreen.client.luau` | LocalScript | 209 | 635 | Refactored | SAME | Header documents yield order, close() paths and attribute handshake; create/tween/numberSequence/coverScreen; *_FONT/LOGO_* constants; unused _prefixed; 8 banners; timings untouched |
+| `client/Bootstrap/LoadingScreen/Config.luau` | ModuleScript | 34 | 53 | Refactored | SAME | Header lists keys read by LoadingScreen and the currently unused ones (Images, PreloadFolders, PlotReadyAttribute, PlotWait, Colors) |
+| `client/Bootstrap/StartupLoader.luau` | ModuleScript | 131 | 305 | Refactored | SAME | Header documents public API, manifest contract and attributes; StartupLoader/CONTENT_ID_PROPERTIES/BATCH_SIZE; assets/failedByIndex/essentialAssets renames; 4 banners; sequence untouched |
+| `client/Tutorial/FirstHatchTutorial.client.luau` | LocalScript | 321 | 784 | Refactored | SAME | Header documents step flow, remote actions, attributes and GameHUD/MenuLogic instance names; guideBeam/objectiveLabel/currentStep etc.; *_FONT constants; 8 section banners |
+| `client/Tutorial/JoinArrival.client.luau` | LocalScript | 523 | 924 | Refactored | CHANGED | Header updated (Hero path, lock/restore contract, attributes); runState/camera/skipButton renames; unused locals _prefixed; welcome card extracted to showWelcomeCard(travelTime); banners |
+| `server/Services/StartupAssetManifest.server.luau` | Script | 20 | 59 | Refactored | SAME | Header documents both StringValue manifests (name, JSON entry shape, load order); full service names; manifestRoots/essentialRoots; 2 banners |
 
 ## Batch 18 — Cinematics — TrailerCinematic
 
@@ -1543,57 +1543,57 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Bootstrap/LoadingScreen.client.luau`
 
-- **Type:** LocalScript · **Batch:** 17 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 17 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ReplicatedFirst.LoadingScreen  (LocalScript) — Hatch An Anime × Velm Studios
 - **Dependencies:** Config
 - **Public functions:** —
 - **Events:** Connect×2, RunService×2
-- **Readability problems:** 19 dense one-line statements; 22 lines >160 chars; 9 one-letter locals
+- **Readability problems:** RF/TS/CP/C/pg aliases; terse helpers (make, tw, seq, cover, petal); cryptic locals (pct, tscale, vign, ps, pm, w, x); unused C/loop/fillShine/artZoom/anime/rays; load order undocumented
 
 ### `client/Bootstrap/LoadingScreen/Config.luau`
 
-- **Type:** ModuleScript · **Batch:** 17 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 17 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ReplicatedFirst.LoadingScreen.Config  (ModuleScript, child of the LoadingScreen LocalScript)
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** Header did not say which keys are actually read
 
 ### `client/Bootstrap/StartupLoader.luau`
 
-- **Type:** ModuleScript · **Batch:** 17 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 17 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Startup readiness and bounded content loading. No gameplay data is created here.
 - **Dependencies:** —
 - **Public functions:** M.Collect, M.Preload, M.Ready, M.Run
 - **Events:** —
-- **Readability problems:** 18 dense one-line statements; 2 lines >160 chars; 2 one-letter locals
+- **Readability problems:** M/CP/RS/HTTP aliases; ids/v/p/byId/rest/ess names; manifest contract and Run order undocumented
 
 ### `client/Tutorial/FirstHatchTutorial.client.luau`
 
-- **Type:** LocalScript · **Batch:** 17 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 17 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** A local first-hatch guide. No client requests can grant progress or rewards.
 - **Dependencies:** InventoryConfig
 - **Public functions:** —
 - **Events:** Connect×6, RunService×1
-- **Readability problems:** 50 dense one-line statements; 22 lines >160 chars; 6 one-letter locals
+- **Readability problems:** No header/contract; RS/Run/pg aliases; Guide (module) vs guide (Beam) clash; cryptic locals (fx, d, p, g, c, bb, phone_, shown_); stale card comment; unused PathfindingService
 
 ### `client/Tutorial/JoinArrival.client.luau`
 
-- **Type:** LocalScript · **Batch:** 17 · **Priority:** High · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 17 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** JoinArrival (LocalScript, StarterPlayerScripts)
 - **Dependencies:** Config
 - **Public functions:** —
 - **Events:** Connect×11, RunService×1
-- **Readability problems:** 66 dense one-line statements; 18 lines >160 chars; 11 one-letter locals
+- **Readability problems:** Header described old sky path and LaunchLoadingScreen; 370-line begin(); r/cam/hum/a0/da/off/sc/t names; Actions/UserInput aliases; unused WOOD/CREAM_*, mapBounds, bezier, restoreCoreGui
 
 ### `server/Services/StartupAssetManifest.server.luau`
 
-- **Type:** Script · **Batch:** 17 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 17 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Build a content-ID manifest, including gameplay templates not yet replicated.
 - **Dependencies:** StartupLoader
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 2 dense one-line statements; 1 lines >160 chars; 1 one-letter locals
+- **Readability problems:** One-line header; RS/SS/Loader/ess/r aliases; manifest contract undocumented
 
 ### `client/Cinematics/TrailerCinematic.client.luau`
 

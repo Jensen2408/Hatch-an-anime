@@ -1,5 +1,8 @@
 --[[ ReplicatedFirst.LoadingScreen.Config  (ModuleScript, child of the LoadingScreen LocalScript)
 Edit everything here. Any empty or failed image falls back to a clean built-in shape, and Skip keeps working either way.
+Read by LoadingScreen: MaxSeconds (safety close), MinSeconds (minimum time on screen), Tips / TipSeconds,
+HideCoreGui, DisableControls, ReducedMotionAttribute. Images, PreloadFolders, PlotReadyAttribute, PlotWait
+and Colors are currently not read by LoadingScreen.
 ]]
 return {
     MaxSeconds = 180,

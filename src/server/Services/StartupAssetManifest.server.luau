@@ -1,9 +1,27 @@
--- Build a content-ID manifest, including gameplay templates not yet replicated.
-local RS = game:GetService("ReplicatedStorage")
-local SS = game:GetService("ServerStorage")
-local Loader = require(game:GetService("ReplicatedFirst"):WaitForChild("StartupLoader"))
-local roots =
-    { workspace, RS, game:GetService("Lighting"), game:GetService("MaterialService"), game:GetService("StarterGui") }
+--[[ StartupAssetManifest (Script, ServerScriptService)
+Builds the content-ID manifests that ReplicatedFirst.StartupLoader preloads on the client, including
+gameplay templates in ServerStorage that are never replicated (the client could not scan them itself).
+
+Contract with StartupLoader.Run (client):
+  ReplicatedStorage.StartupAssetManifest           StringValue, JSON array of { id = contentId, kind = "Mesh" | "Sound" | "Animation" | "Image" }
+                                                   - everything; preloaded after the essentials
+  ReplicatedStorage.StartupAssetManifestEssential  StringValue, same shape - what the player sees first (HUD,
+                                                   eggs, characters); preloaded first
+Both lists come from StartupLoader.Collect, so the entry shape is defined in one place. The values are written
+once at server start; a client that joins before they exist simply scans its own replicated instances.
+]]
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+-- Server-side require: only Collect is used here (pure scan, no yielding).
+local StartupLoader = require(game:GetService("ReplicatedFirst"):WaitForChild("StartupLoader"))
+-- ===== 1. Full manifest =====
+local manifestRoots = {
+    workspace,
+    ReplicatedStorage,
+    game:GetService("Lighting"),
+    game:GetService("MaterialService"),
+    game:GetService("StarterGui"),
+}
 for _, name in
     {
         "BrainrotModels",
@@ -16,25 +34,26 @@ for _, name in
         "FutureUpdateContent",
     }
 do
-    local root = SS:FindFirstChild(name)
+    local root = ServerStorage:FindFirstChild(name)
     if root then
-        table.insert(roots, root)
+        table.insert(manifestRoots, root)
     end
 end
-local ids = Loader.Collect(roots)
+local assetIds = StartupLoader.Collect(manifestRoots)
 local manifest = Instance.new("StringValue")
 manifest.Name = "StartupAssetManifest"
-manifest.Value = game:GetService("HttpService"):JSONEncode(ids)
-manifest.Parent = RS
+manifest.Value = game:GetService("HttpService"):JSONEncode(assetIds)
+manifest.Parent = ReplicatedStorage
 
-local essRoots = { game:GetService("StarterGui"), game:GetService("Lighting") }
+-- ===== 2. Essential manifest (loaded first) =====
+local essentialRoots = { game:GetService("StarterGui"), game:GetService("Lighting") }
 for _, name in { "AuxEggTemplates", "BrainrotModels" } do
-    local r = SS:FindFirstChild(name)
-    if r then
-        table.insert(essRoots, r)
+    local root = ServerStorage:FindFirstChild(name)
+    if root then
+        table.insert(essentialRoots, root)
     end
 end
-local ess = Instance.new("StringValue")
-ess.Name = "StartupAssetManifestEssential"
-ess.Value = game:GetService("HttpService"):JSONEncode(Loader.Collect(essRoots))
-ess.Parent = RS
+local essentialManifest = Instance.new("StringValue")
+essentialManifest.Name = "StartupAssetManifestEssential"
+essentialManifest.Value = game:GetService("HttpService"):JSONEncode(StartupLoader.Collect(essentialRoots))
+essentialManifest.Parent = ReplicatedStorage
