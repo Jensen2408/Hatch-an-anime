@@ -16,10 +16,14 @@ The filesystem layout is **independent of the Roblox hierarchy**. Every script's
 ## Quick start
 
 ```sh
-rokit install                               # Rojo 7.7.0 (rokit.toml)
+rokit install                               # Rojo 7.7.0, StyLua 2.6.0, selene 0.32.0 (rokit.toml)
 rojo build default.project.json -o check.rbxlx   # sanity check
 rojo serve default.project.json             # live sync; connect from a COPY of the place first
+stylua --check src                          # formatting (.stylua.toml: 4 spaces, 120 columns)
+selene src                                  # lint (selene.toml, Roblox std in roblox.yml)
 ```
+
+Code conventions (naming, headers, section banners) and how behaviour preservation was verified are described in [docs/FULL_REFACTOR_REPORT.md](docs/FULL_REFACTOR_REPORT.md).
 
 See [docs/ROJO_SETUP.md](docs/ROJO_SETUP.md) before the first sync.
 
@@ -29,7 +33,7 @@ See [docs/ROJO_SETUP.md](docs/ROJO_SETUP.md) before the first sync.
 - Models, GUIs, maps and Studio-created remotes are **not** in this repo. They stay managed in Studio (`$ignoreUnknownInstances`).
 - Do not rename DataStores (`PlayerData_v1`, `ShopData_v2`, …), remotes, or instances without updating every reference. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 - Scripts disabled in the original place are kept disabled via `$properties.Disabled`.
-- Known bugs and security issues (not yet fixed) are listed in [docs/PROJECT_AUDIT.md](docs/PROJECT_AUDIT.md).
+- Known bugs and security issues (not yet fixed) are listed in [docs/PROJECT_AUDIT.md](docs/PROJECT_AUDIT.md) and section 12 of [docs/FULL_REFACTOR_REPORT.md](docs/FULL_REFACTOR_REPORT.md).
 
 ## Metadata
 

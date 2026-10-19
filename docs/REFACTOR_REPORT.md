@@ -40,7 +40,7 @@ The brief forbids changing behaviour that static analysis cannot prove safe, so 
 - **Splitting oversized scripts** (MenuLogic, GameHUD, InventoryView, …). These are large closures over shared local state, and splitting them without play-testing is not provably safe.
 - **Merging number formatters.** The implementations produce different strings (truncate vs round, different suffix sets), so merging them would visibly change the UI.
 - **Moving scripts to other runtime locations**, renaming instances, remotes or DataStores.
-- **Running StyLua.** Reformatting all sources would hide real diffs and cannot be checked without tooling. `.stylua.toml` is provided for new code.
+- **Running StyLua.** Reformatting all sources would hide real diffs and cannot be checked without tooling. `.stylua.toml` is provided for new code. *(Superseded 2026-10-19: all sources are now formatted with StyLua, AST-verified — see [FULL_REFACTOR_REPORT.md](FULL_REFACTOR_REPORT.md).)*
 - **Deleting archives, dead code, or the 0-byte `EggLabelsClient`.** Kept, because a 0-byte LocalScript is harmless and removing it changes the place tree.
 
 ## Remaining risks
