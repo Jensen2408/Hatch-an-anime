@@ -157,6 +157,14 @@ PlayerDataService, ShopService, LeaderboardService, InventoryService and the adm
    - Local names and comments do not reach `-g0` bytecode. So when the output is identical (`SAME`), the
      behaviour is proven identical.
    - **177 files are SAME.**
+   - **Limitation found after the refactor:** `--text` output does not print the values stored in
+     table-literal templates (`DUPTABLE`). A changed string or number inside a table literal therefore does not
+     change the fingerprint. To close this gap, two extra checks were run over **all 189 files** against
+     `9b0615e`:
+     - the full string table of the binary bytecode;
+     - the `--dump-constants` constant set.
+     Both were identical for every file. The only exceptions are the two intentional tutorial fixes made
+     afterwards: the step 11 text and the `"figma"` page check.
 4. **Constant check** for the 12 CHANGED files: the set of bytecode constants (strings, numbers, global and field
    names) must be unchanged. All 12 pass.
    - This check caught one real mistake during the work: a rename had turned the string `"/s"` into `"/sort"`.
