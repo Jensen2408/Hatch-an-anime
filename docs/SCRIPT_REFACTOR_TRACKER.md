@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 22 |
+| Pending | 21 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 162 |
+| Refactored | 163 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -285,7 +285,7 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `shared/Admin/OwnerPanel/StudPanel.luau` | ModuleScript | 488 | 1599 | Pending | — | — |
+| `shared/Admin/OwnerPanel/StudPanel.luau` | ModuleScript | 488 | 1813 | Refactored | CHANGED | Pass 1 (SAME, sp_pass1.luau): renames, header with API/pages/actions+payloads/confirm flow, banners. Pass 2: extracted addAmountPresets, addPlayerRow, addHalloweenDropCard |
 
 ## Batch 22 — Remaining — audio, weapons, world, services, storage, dev tools
 
@@ -1822,12 +1822,12 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `shared/Admin/OwnerPanel/StudPanel.luau`
 
-- **Type:** ModuleScript · **Batch:** 21 · **Priority:** High · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 21 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** StudPanel: the brick/stud style Owner + Admin panel UI. Built by OwnerPanelClient. Purely visual: every button calls the server (OwnerPanelServer), which checks the role again.
 - **Dependencies:** —
 - **Public functions:** M.Build
 - **Events:** Connect×12
-- **Readability problems:** 54 dense one-line statements; 71 lines >160 chars; 21 one-letter locals
+- **Readability problems:** 1-2 letter names everywhere (M/C/RC/F/FB/nx/fmt/ask/b/g/g2/h/sel...), no API/action docs, 1190-line Build with inline page bodies, money/punish preset rows duplicated, dead studRow/stud/shadow undocumented
 
 ### `client/Audio/BackgroundMusic.client.luau`
 

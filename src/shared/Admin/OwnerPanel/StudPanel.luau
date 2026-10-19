@@ -1,13 +1,58 @@
--- StudPanel: the brick/stud style Owner + Admin panel UI. Built by OwnerPanelClient.
--- Purely visual: every button calls the server (OwnerPanelServer), which checks the role again.
+--[[
+    StudPanel (ModuleScript, ReplicatedStorage.OwnerPanel.StudPanel)
+    The brick/stud style Owner + Admin panel UI. Required and built by OwnerPanelClient
+    (src/client/Admin/OwnerPanelClient.client.luau), which rebuilds it when the PanelRole attribute changes.
+    Purely visual: every button calls the server (OwnerPanelServer), which checks the role again. Hiding a
+    button here is cosmetic only; the server is the authority for every action.
+
+    Public API (contract):
+        StudPanel.Colors                     the palette table (PALETTE below)
+        StudPanel.Button(parent, text, color, onClick, options) -> buttonApi
+            buttonApi = { face, holder, label, stroke, set(isOn, newText?), select(isOn) }
+            options   = { depth, h, w, size, order, textSize, studs, nav }
+        StudPanel.Build(gui, context) -> panelApi
+            context  = { role = "Owner" | "Admin", userId, userName, invoke(action, args) -> (success, message|data) }
+            panelApi = { open(), close(), toggle(), refresh(), show(pageId) }
+
+    Pages (sidebar tabs): Owner gets home, players, eggs, money, temple, events, admins, saves (Restore), punish, log
+    (Activity). Admin gets home, players, eggs (River Eggs), events, log. Scope buttons in the top bar pick the
+    target: "me", "selected" (the player picked on the Players page) and, Owner only, "lobby" (everyone).
+
+    Server calls (context.invoke -> OwnerPanel.Action). Every action goes through sendAction, which also fills in
+    args.scope (current scope), args.userId (selected player) and args.confirmed when the caller did not set them:
+        Home     GiveCash {amount = "1000000", scope = "me"}, ReturnToPublic {}, JoinStaffServer {},
+                 EggShower {amount = 8}, AnnounceUpdate {}*, StartEvent {eventId = "rush", seconds = 300},
+                 StopEvent {}, StartNight {seconds = 60}
+        Players  Bring {}, GoTo {}, SendHome {}, Respawn {}*, Kick {userId}*, Ban {userId}*,
+                 SetAdmin {userId, on}, Unban {userId = typed id}*
+        Eggs     GiveEgg {itemId} / GiveCharacter {itemId} (* when scope is lobby), SpawnEgg {itemId, mutation?}
+        Money    GiveCash {amount} (* when lobby), SetCash {amount}*, GiveCash {amount, scope = "lobby"}*
+        Temples  UpgradeTemple {}, UnlockSlot {}, AddIncubator {}, UpgradeIncubator {index},
+                 ClearInventory {}*, ClearPlaced {}*, ResetSlots {}*
+        Events   StartEvent {eventId = "rush" | "cash" | "gold", seconds}, EggShower {amount = 8}, StopEvent {},
+                 StartNight {seconds}, StopNight {}, Announce {text, color = "pink" | "purple", allServers},
+                 AnnounceUpdate {text?}*, SetSpawnInterval {seconds = typed text}
+        Admins   SetAdmin {userId, on}
+        Punish   TakeCash {who, amount = number text | "all"}*, WipePlayer {who}*
+        Restore  SaveRestore {who = tostring(userId), version}*
+    (* = behind a confirm dialog.) Direct invokes that skip sendAction (no log row, no toast on success):
+        Snapshot {} -> (success, {players, catalog, admins, event, isStaffServer}), SaveList {who} -> (success, data)
+
+    Confirmation flow: showConfirm opens a modal over the panel. Cancel just closes it. Confirm closes it, sets the
+    shared "confirmed" flag, runs onYes inside pcall (sendAction copies the flag into args.confirmed), then clears
+    the flag. The server can require args.confirmed for destructive actions.
+    Only one action runs at a time ("busy"); clicks during a pending call are dropped.
+]]
+-- ===== 1. Services, palette and fonts =====
 local TweenService = game:GetService("TweenService")
-local M = {}
+local StudPanel = {}
 local function rgb(r, g, b)
     return Color3.fromRGB(r, g, b)
 end
+-- Near-black used for text outlines and the panel's drop plate.
 local INK = rgb(8, 8, 10)
 -- v2 palette (Figma "Owner Panel v2"): night-purple plates, white borders, gradient + stud buttons
-local C = {
+local PALETTE = {
     Plate = rgb(47, 35, 87),
     Plate2 = rgb(36, 27, 72),
     Card = rgb(58, 43, 110),
@@ -24,149 +69,162 @@ local C = {
     Pink = rgb(255, 99, 177),
     Grey = rgb(122, 129, 145),
 }
-local STUDS = "rbxassetid://132561191216691"
-M.Colors = C
-local RC = {
+-- Tiled stud texture laid over every brick surface.
+local STUD_TEXTURE = "rbxassetid://132561191216691"
+StudPanel.Colors = PALETTE
+-- Rarity -> strip colour on catalog cells.
+local RARITY_COLORS = {
     Common = rgb(160, 168, 184),
-    Uncommon = C.Green,
-    Rare = C.Blue,
-    Epic = C.Purple,
-    Legendary = C.Yellow,
-    Mythic = C.Pink,
-    Secret = C.Red,
+    Uncommon = PALETTE.Green,
+    Rare = PALETTE.Blue,
+    Epic = PALETTE.Purple,
+    Legendary = PALETTE.Yellow,
+    Mythic = PALETTE.Pink,
+    Secret = PALETTE.Red,
 }
-local F = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local FB = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local function dark(c, a)
-    return c:Lerp(Color3.new(0, 0, 0), a or 0.3)
+-- Both fonts are FredokaOne; kept as two Font objects (title vs body text).
+local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
+local FONT_BODY = Font.new("rbxasset://fonts/families/FredokaOne.json")
+
+-- ===== 2. Instance helpers =====
+local function darken(color, amount)
+    return color:Lerp(Color3.new(0, 0, 0), amount or 0.3)
 end
-local function light(c, a)
-    return c:Lerp(Color3.new(1, 1, 1), a or 0.3)
+local function lighten(color, amount)
+    return color:Lerp(Color3.new(1, 1, 1), amount or 0.3)
 end
-local function make(cls, props, parent)
-    local o = Instance.new(cls)
-    for k, v in pairs(props) do
-        o[k] = v
+-- Instance.new + assign props + optional parent (Parent set last).
+local function make(className, props, parent)
+    local instance = Instance.new(className)
+    for key, value in pairs(props) do
+        instance[key] = value
     end
     if parent then
-        o.Parent = parent
+        instance.Parent = parent
     end
-    return o
+    return instance
 end
-local function corner(o, r)
-    make("UICorner", { CornerRadius = UDim.new(0, math.min(r or 6, 6)) }, o)
+-- Corner radius is capped at 6 px for the flat brick look, whatever the caller asks.
+local function addCorner(guiObject, radius)
+    make("UICorner", { CornerRadius = UDim.new(0, math.min(radius or 6, 6)) }, guiObject)
 end
-local function studTex(o, a)
-    local im = make("ImageLabel", {
+local function addStudTexture(guiObject, transparency)
+    local texture = make("ImageLabel", {
         Name = "StudTex",
         BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1),
-        Image = STUDS,
-        ImageTransparency = a or 0.6,
+        Image = STUD_TEXTURE,
+        ImageTransparency = transparency or 0.6,
         ScaleType = Enum.ScaleType.Tile,
         TileSize = UDim2.fromOffset(22, 22),
-        ZIndex = o.ZIndex,
-    }, o)
-    corner(im)
-    return im
+        ZIndex = guiObject.ZIndex,
+    }, guiObject)
+    addCorner(texture)
+    return texture
 end
-local function stroke(o, t, col)
+local function addStroke(guiObject, thickness, color)
     return make(
         "UIStroke",
-        { Color = col or C.White, Thickness = t or 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-        o
+        { Color = color or PALETTE.White, Thickness = thickness or 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+        guiObject
     )
 end
 -- top-to-bottom gradient like the Figma fills (object BackgroundColor3 must stay white)
-local function grad(o, col, amt)
-    o.BackgroundColor3 = C.White
-    local g = o:FindFirstChild("Grad") or make("UIGradient", { Name = "Grad", Rotation = 90 }, o)
-    g.Color = ColorSequence.new(col, dark(col, amt or 0.5))
-    return g
+local function applyGradient(guiObject, color, darkAmount)
+    guiObject.BackgroundColor3 = PALETTE.White
+    local gradient = guiObject:FindFirstChild("Grad") or make("UIGradient", { Name = "Grad", Rotation = 90 }, guiObject)
+    gradient.Color = ColorSequence.new(color, darken(color, darkAmount or 0.5))
+    return gradient
 end
-local function shadow(parent, o, y)
-    local s = make("Frame", {
+-- Unused: drop-shadow helper kept from an older layout.
+local function _addHardShadow(parent, source, offsetY)
+    local shadowFrame = make("Frame", {
         Name = "HardShadow",
         BackgroundColor3 = Color3.new(0, 0, 0),
         BackgroundTransparency = 0.1,
         BorderSizePixel = 0,
-        Position = o.Position + UDim2.fromOffset(0, y or 5),
-        Size = o.Size,
-        ZIndex = math.max(o.ZIndex - 1, 0),
+        Position = source.Position + UDim2.fromOffset(0, offsetY or 5),
+        Size = source.Size,
+        ZIndex = math.max(source.ZIndex - 1, 0),
     }, parent)
-    corner(s, 6)
-    return s
+    addCorner(shadowFrame, 6)
+    return shadowFrame
 end
-local function pad(o, t, s)
+local function addPadding(guiObject, vertical, horizontal)
     make("UIPadding", {
-        PaddingTop = UDim.new(0, t),
-        PaddingBottom = UDim.new(0, t),
-        PaddingLeft = UDim.new(0, s or t),
-        PaddingRight = UDim.new(0, s or t),
-    }, o)
+        PaddingTop = UDim.new(0, vertical),
+        PaddingBottom = UDim.new(0, vertical),
+        PaddingLeft = UDim.new(0, horizontal or vertical),
+        PaddingRight = UDim.new(0, horizontal or vertical),
+    }, guiObject)
 end
-local function vlist(o, gap)
-    return make("UIListLayout", { Padding = UDim.new(0, gap), SortOrder = Enum.SortOrder.LayoutOrder }, o)
+local function addVerticalList(guiObject, gap)
+    return make("UIListLayout", { Padding = UDim.new(0, gap), SortOrder = Enum.SortOrder.LayoutOrder }, guiObject)
 end
-local order = 0
-local function nx()
-    order += 1
-    return order
+-- Shared LayoutOrder counter; render() resets it to 0 before each page build.
+local layoutOrder = 0
+local function nextLayoutOrder()
+    layoutOrder += 1
+    return layoutOrder
 end
-local function label(parent, txt, size, color, font, props)
-    local l = make("TextLabel", {
+
+-- ===== 3. Widgets =====
+local function makeLabel(parent, text, textSize, color, font, props)
+    local textLabel = make("TextLabel", {
         BackgroundTransparency = 1,
-        Text = txt,
-        TextSize = size or 16,
-        TextColor3 = color or C.White,
-        FontFace = font or F,
+        Text = text,
+        TextSize = textSize or 16,
+        TextColor3 = color or PALETTE.White,
+        FontFace = font or FONT,
         TextXAlignment = Enum.TextXAlignment.Left,
         AutomaticSize = Enum.AutomaticSize.XY,
     }, parent)
     if props then
-        for k, v in pairs(props) do
-            l[k] = v
+        for key, value in pairs(props) do
+            textLabel[key] = value
         end
     end
-    return l
+    return textLabel
 end
-local function title(parent, txt, size, props)
-    local l = label(parent, txt, size, C.White, F, props)
-    make("UIStroke", { Color = INK, Thickness = size >= 24 and 3 or 2 }, l)
-    return l
+local function makeTitle(parent, text, textSize, props)
+    local textLabel = makeLabel(parent, text, textSize, PALETTE.White, FONT, props)
+    make("UIStroke", { Color = INK, Thickness = textSize >= 24 and 3 or 2 }, textLabel)
+    return textLabel
 end
--- one brick stud (same look as the StudHUD buttons)
-local function stud(parent, color, x, w, h, z)
+-- One brick stud (same look as the StudHUD buttons). Only reached via addStudRow, which is disabled.
+local function makeStud(parent, color, xScale, width, height, zIndex)
     local base = make("Frame", {
         Name = "Stud",
         AnchorPoint = Vector2.new(0.5, 1),
-        Position = UDim2.new(x, 0, 0, 2),
-        Size = UDim2.fromOffset(w, h),
-        BackgroundColor3 = dark(color, 0.18),
+        Position = UDim2.new(xScale, 0, 0, 2),
+        Size = UDim2.fromOffset(width, height),
+        BackgroundColor3 = darken(color, 0.18),
         BorderSizePixel = 0,
-        ZIndex = z,
+        ZIndex = zIndex,
     }, parent)
-    corner(base, math.floor(h * 0.45))
-    stroke(base, 2.5)
+    addCorner(base, math.floor(height * 0.45))
+    addStroke(base, 2.5)
     local top = make("Frame", {
         BorderSizePixel = 0,
-        BackgroundColor3 = light(color, 0.28),
+        BackgroundColor3 = lighten(color, 0.28),
         Size = UDim2.new(1, -4, 0.55, 0),
         Position = UDim2.fromOffset(2, 2),
-        ZIndex = z + 1,
+        ZIndex = zIndex + 1,
     }, base)
-    corner(top, math.floor(h * 0.35))
-    local sh = make("Frame", {
+    addCorner(top, math.floor(height * 0.35))
+    local highlight = make("Frame", {
         BorderSizePixel = 0,
-        BackgroundColor3 = C.White,
+        BackgroundColor3 = PALETTE.White,
         BackgroundTransparency = 0.35,
         Size = UDim2.new(0.28, 0, 0.35, 0),
         Position = UDim2.new(0.14, 0, 0.18, 0),
-        ZIndex = z + 2,
+        ZIndex = zIndex + 2,
     }, top)
-    corner(sh, 99)
+    addCorner(highlight, 99)
 end
-local function studRow(parent, color, count, inset, w, h)
+-- Disabled: returns nil straight away (the code after the early return is dead). Studs now come
+-- from addStudTexture; call sites are kept so the layout stays the same.
+local function addStudRow(parent, color, count, inset, studWidth, studHeight)
     do
         return nil
     end -- studs live on the surface now (studTex)
@@ -178,12 +236,12 @@ local function studRow(parent, color, count, inset, w, h)
         ZIndex = parent.ZIndex + 1,
     }, parent)
     for i = 1, count do
-        stud(row, color, (i - 0.5) / count, w, h, parent.ZIndex + 1)
+        makeStud(row, color, (i - 0.5) / count, studWidth, studHeight, parent.ZIndex + 1)
     end
     return row
 end
 -- 3D brick: darker side under a coloured face. Returns holder, face
-local function brick(parent, color, size, depth, props)
+local function makeBrick(parent, color, size, depth, props)
     depth = depth or 6
     local holder = make("Frame", { BackgroundTransparency = 1, Size = size }, parent)
     if props then
@@ -199,15 +257,19 @@ local function brick(parent, color, size, depth, props)
         Position = UDim2.fromOffset(0, depth),
         Size = UDim2.new(1, 0, 1, -depth),
     }, holder)
-    corner(side, 6)
+    addCorner(side, 6)
     local face = make("Frame", { Name = "Face", Size = UDim2.new(1, 0, 1, -depth) }, holder)
-    corner(face, 6)
-    stroke(face, color == C.Inset and 2 or 3, color == C.Inset and dark(C.Muted, 0.4) or C.White)
-    grad(face, color)
-    studTex(face, color == C.Inset and 0.9 or 0.6)
+    addCorner(face, 6)
+    addStroke(
+        face,
+        color == PALETTE.Inset and 2 or 3,
+        color == PALETTE.Inset and darken(PALETTE.Muted, 0.4) or PALETTE.White
+    )
+    applyGradient(face, color)
+    addStudTexture(face, color == PALETTE.Inset and 0.9 or 0.6)
     make("Frame", {
         Name = "Shine",
-        BackgroundColor3 = C.White,
+        BackgroundColor3 = PALETTE.White,
         BackgroundTransparency = 0.7,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(4, 3),
@@ -217,14 +279,14 @@ local function brick(parent, color, size, depth, props)
     return holder, face
 end
 -- pressable 3D brick button
-local function button(parent, txt, color, onClick, opt)
-    opt = opt or {}
-    local depth = opt.depth or 5
-    local h = opt.h or 50
+local function makeButton(parent, text, color, onClick, options)
+    options = options or {}
+    local depth = options.depth or 5
+    local height = options.h or 50
     local holder = make("Frame", {
         BackgroundTransparency = 1,
-        Size = opt.size or UDim2.new(opt.w and 0 or 1, opt.w or 0, 0, h + depth),
-        LayoutOrder = opt.order or nx(),
+        Size = options.size or UDim2.new(options.w and 0 or 1, options.w or 0, 0, height + depth),
+        LayoutOrder = options.order or nextLayoutOrder(),
     }, parent)
     local side = make("Frame", {
         BackgroundColor3 = Color3.new(0, 0, 0),
@@ -233,20 +295,20 @@ local function button(parent, txt, color, onClick, opt)
         Position = UDim2.fromOffset(0, depth),
         Size = UDim2.new(1, 0, 1, -depth),
     }, holder)
-    corner(side, 6)
+    addCorner(side, 6)
     local face = make("TextButton", { Size = UDim2.new(1, 0, 1, -depth), Text = "", AutoButtonColor = false }, holder)
-    corner(face, 6)
-    local fs = stroke(face, 3)
-    local fg = grad(face, color)
-    studTex(face)
+    addCorner(face, 6)
+    local faceStroke = addStroke(face, 3)
+    local _faceGradient = applyGradient(face, color)
+    addStudTexture(face)
     make("Frame", {
-        BackgroundColor3 = C.White,
+        BackgroundColor3 = PALETTE.White,
         BackgroundTransparency = 0.7,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(4, 3),
         Size = UDim2.new(1, -8, 0, 3),
     }, face)
-    local t = title(face, txt, opt.textSize or 18, {
+    local textLabel = makeTitle(face, text, options.textSize or 18, {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.55),
         TextXAlignment = Enum.TextXAlignment.Center,
@@ -255,13 +317,14 @@ local function button(parent, txt, color, onClick, opt)
         TextScaled = false,
         TextWrapped = true,
     })
-    if opt.studs ~= false then
-        studRow(face, color, opt.studs or 2, 0.22, 22, 10)
+    if options.studs ~= false then
+        addStudRow(face, color, options.studs or 2, 0.22, 22, 10)
     end
     local enabled = true
     local pressed = false
-    local function setDown(d)
-        TweenService:Create(face, TweenInfo.new(0.07), { Position = UDim2.fromOffset(0, d and depth - 1 or 0) }):Play()
+    local function setDown(isDown)
+        TweenService:Create(face, TweenInfo.new(0.07), { Position = UDim2.fromOffset(0, isDown and depth - 1 or 0) })
+            :Play()
     end
     face.MouseButton1Down:Connect(function()
         if enabled then
@@ -273,209 +336,244 @@ local function button(parent, txt, color, onClick, opt)
         pressed = false
         setDown(false)
     end)
-    local cur = color
+    local currentColor = color
     face.MouseLeave:Connect(function()
         if pressed then
             pressed = false
             setDown(false)
         end
         if enabled then
-            grad(face, cur)
+            applyGradient(face, currentColor)
         end
     end)
     face.MouseEnter:Connect(function()
         if enabled then
-            grad(face, light(cur, 0.15))
+            applyGradient(face, lighten(currentColor, 0.15))
         end
     end)
-    local api = { face = face, holder = holder, label = t, stroke = fs }
+    local buttonApi = { face = face, holder = holder, label = textLabel, stroke = faceStroke }
     face.Activated:Connect(function()
         if enabled and onClick then
-            onClick(api)
+            onClick(buttonApi)
         end
     end)
-    function api.set(on, newText)
-        enabled = on
-        grad(face, on and cur or C.Grey)
-        t.TextTransparency = on and 0 or 0.4
+    function buttonApi.set(isOn, newText)
+        enabled = isOn
+        applyGradient(face, isOn and currentColor or PALETTE.Grey)
+        textLabel.TextTransparency = isOn and 0 or 0.4
         if newText then
-            t.Text = newText
+            textLabel.Text = newText
         end
     end
     -- nav / scope style: unselected = dark night plate, selected = its own colour
-    function api.select(on)
-        if opt.nav then
-            cur = on and color or C.Card
-            grad(face, cur, on and 0.5 or 0.4)
-            fs.Thickness = on and 3 or 2
-            fs.Transparency = on and 0 or 0.3
+    function buttonApi.select(isOn)
+        if options.nav then
+            currentColor = isOn and color or PALETTE.Card
+            applyGradient(face, currentColor, isOn and 0.5 or 0.4)
+            faceStroke.Thickness = isOn and 3 or 2
+            faceStroke.Transparency = isOn and 0 or 0.3
         else
-            fs.Thickness = on and 4 or 3
-            fs.Color = on and C.Yellow or C.White
+            faceStroke.Thickness = isOn and 4 or 3
+            faceStroke.Color = isOn and PALETTE.Yellow or PALETTE.White
         end
     end
-    return api
+    return buttonApi
 end
-M.Button = button
-local function grid(parent, cellW, cellH)
-    local f = make("Frame", {
+StudPanel.Button = makeButton
+-- Auto-height UIGridLayout container with fixed cell size.
+local function makeGrid(parent, cellW, cellH)
+    local gridFrame = make("Frame", {
         BackgroundTransparency = 1,
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
-        LayoutOrder = nx(),
+        LayoutOrder = nextLayoutOrder(),
     }, parent)
     make("UIGridLayout", {
         CellSize = UDim2.fromOffset(cellW, cellH),
         CellPadding = UDim2.fromOffset(12, 14),
         SortOrder = Enum.SortOrder.LayoutOrder,
-    }, f)
-    return f
+    }, gridFrame)
+    return gridFrame
 end
 -- brick card with a coloured title strip + studs
-local function card(parent, txt, color, sub)
-    color = color or C.Blue
+local function makeCard(parent, text, color, subtitle)
+    color = color or PALETTE.Blue
     local holder = make("Frame", {
         BackgroundTransparency = 1,
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
-        LayoutOrder = nx(),
+        LayoutOrder = nextLayoutOrder(),
     }, parent)
     local body = make("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y }, holder)
-    corner(body, 6)
-    stroke(body, 4)
-    grad(body, C.Card, 0.45)
+    addCorner(body, 6)
+    addStroke(body, 4)
+    applyGradient(body, PALETTE.Card, 0.45)
     local head = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 40), LayoutOrder = 0 }, body)
     local dot = make("Frame", { Position = UDim2.fromOffset(16, 14), Size = UDim2.fromOffset(14, 14) }, head)
-    corner(dot, 3)
-    grad(dot, color)
-    stroke(dot, 2, INK)
-    title(head, string.upper(txt), 18, { Position = UDim2.fromOffset(40, 10) })
-    if sub then
-        label(head, sub, 14, C.Muted, FB, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 13) })
+    addCorner(dot, 3)
+    applyGradient(dot, color)
+    addStroke(dot, 2, INK)
+    makeTitle(head, string.upper(text), 18, { Position = UDim2.fromOffset(40, 10) })
+    if subtitle then
+        makeLabel(
+            head,
+            subtitle,
+            14,
+            PALETTE.Muted,
+            FONT_BODY,
+            { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 13) }
+        )
     end
-    vlist(body, 0)
+    addVerticalList(body, 0)
     local inner = make("Frame", {
         BackgroundTransparency = 1,
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
         LayoutOrder = 1,
     }, body)
-    pad(inner, 16)
-    vlist(inner, 12)
+    addPadding(inner, 16)
+    addVerticalList(inner, 12)
     return inner
 end
-local function input(parent, ph, numeric)
-    local b = make("TextBox", {
-        BackgroundColor3 = C.Inset,
+-- Text box; numeric = strip every non-digit character as the user types.
+local function makeInput(parent, placeholder, numeric)
+    local textBox = make("TextBox", {
+        BackgroundColor3 = PALETTE.Inset,
         BackgroundTransparency = 0.35,
-        PlaceholderText = ph,
+        PlaceholderText = placeholder,
         Text = "",
-        FontFace = F,
+        FontFace = FONT,
         TextSize = 20,
-        TextColor3 = C.White,
-        PlaceholderColor3 = C.Grey,
+        TextColor3 = PALETTE.White,
+        PlaceholderColor3 = PALETTE.Grey,
         ClearTextOnFocus = false,
         Size = UDim2.new(1, 0, 0, 50),
         TextXAlignment = Enum.TextXAlignment.Left,
-        LayoutOrder = nx(),
+        LayoutOrder = nextLayoutOrder(),
     }, parent)
-    corner(b, 6)
-    stroke(b, 2, dark(C.Muted, 0.4))
-    make("UIPadding", { PaddingLeft = UDim.new(0, 16) }, b)
+    addCorner(textBox, 6)
+    addStroke(textBox, 2, darken(PALETTE.Muted, 0.4))
+    make("UIPadding", { PaddingLeft = UDim.new(0, 16) }, textBox)
     if numeric then
-        b:GetPropertyChangedSignal("Text"):Connect(function()
-            local t = b.Text:gsub("[^%d]", "")
-            if t ~= b.Text then
-                b.Text = t
+        textBox:GetPropertyChangedSignal("Text"):Connect(function()
+            local digitsOnly = textBox.Text:gsub("[^%d]", "")
+            if digitsOnly ~= textBox.Text then
+                textBox.Text = digitsOnly
             end
         end)
     end
-    return b
-end
-local function fmt(n)
-    n = tonumber(n) or 0
-    for _, u in ipairs({ { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }) do
-        if n >= u[1] then
-            return (string.format("%.2f", n / u[1]):gsub("0+$", ""):gsub("%.$", "")) .. u[2]
-        end
-    end
-    return tostring(math.floor(n))
+    return textBox
 end
 
-function M.Build(gui, ctx)
-    local isOwner = ctx.role == "Owner"
-    local accent = isOwner and C.Red or C.Blue
-    local snap = { players = {}, catalog = {}, admins = {} }
+-- Quick amount presets (1K .. 1T) that fill amountBox; used by the Money and Punish pages.
+local function addAmountPresets(parent, amountBox)
+    local presetGrid = makeGrid(parent, 130, 58)
+    for _, preset in ipairs({ { "1K", 1e3 }, { "100K", 1e5 }, { "1M", 1e6 }, { "1B", 1e9 }, { "1T", 1e12 } }) do
+        makeButton(presetGrid, preset[1], PALETTE.Yellow, function()
+            amountBox.Text = tostring(preset[2])
+        end, { h = 46, studs = 1 })
+    end
+end
+
+-- ===== 4. Formatting =====
+-- 1234567 -> "1.23M" (2 decimals, trailing zeros removed); below 1000 -> floored integer.
+local function formatNumber(value)
+    value = tonumber(value) or 0
+    for _, unit in ipairs({ { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }) do
+        if value >= unit[1] then
+            return (string.format("%.2f", value / unit[1]):gsub("0+$", ""):gsub("%.$", "")) .. unit[2]
+        end
+    end
+    return tostring(math.floor(value))
+end
+
+-- ===== 5. Panel builder =====
+function StudPanel.Build(gui, context)
+    -- ----- 5.1 State -----
+    -- snapshot: last Snapshot reply. logRows: newest-first activity log (max 50). scope: "me" | "selected" | "lobby".
+    local isOwner = context.role == "Owner"
+    local accent = isOwner and PALETTE.Red or PALETTE.Blue
+    local snapshot = { players = {}, catalog = {}, admins = {} }
     local logRows = {}
-    local scope, selectedId = "me", ctx.userId
-    local page = "home"
+    local scope, selectedId = "me", context.userId
+    local currentPage = "home"
     make("Frame", {
         Name = "Dim",
         BackgroundColor3 = rgb(10, 12, 20),
         BackgroundTransparency = 0.35,
         Size = UDim2.fromScale(1, 1),
     }, gui)
-    local W, H = 1180, 730
-    local root = make("Frame", {
+    -- ----- 5.2 Frame: dim backdrop, panel root, viewport fit, plate -----
+    local PANEL_WIDTH, PANEL_HEIGHT = 1180, 730
+    local panelRoot = make("Frame", {
         Name = "Panel",
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(W, H),
+        Size = UDim2.fromOffset(PANEL_WIDTH, PANEL_HEIGHT),
         BackgroundTransparency = 1,
     }, gui)
-    local fit = make("UIScale", {}, root)
-    local function refit()
-        local v = workspace.CurrentCamera.ViewportSize
-        fit.Scale = math.clamp(math.min((v.X - 20) / W, (v.Y - 30) / (H + 12)), 0.3, 1)
+    local uiScale = make("UIScale", {}, panelRoot)
+    -- Scale the fixed 1180x730 design down to the viewport (never above 1, never below 0.3).
+    local function refitToViewport()
+        local viewport = workspace.CurrentCamera.ViewportSize
+        uiScale.Scale =
+            math.clamp(math.min((viewport.X - 20) / PANEL_WIDTH, (viewport.Y - 30) / (PANEL_HEIGHT + 12)), 0.3, 1)
     end
-    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(refit)
-    refit()
-    make("Frame", { BackgroundColor3 = INK, Position = UDim2.fromOffset(0, 12), Size = UDim2.new(1, 0, 1, 0) }, root).ZIndex =
+    -- Never disconnected: a rebuilt panel leaves this connection behind (see findings).
+    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(refitToViewport)
+    refitToViewport()
+    make(
+        "Frame",
+        { BackgroundColor3 = INK, Position = UDim2.fromOffset(0, 12), Size = UDim2.new(1, 0, 1, 0) },
+        panelRoot
+    ).ZIndex =
         0
-    local plate = make("Frame", { Size = UDim2.fromScale(1, 1), ClipsDescendants = true }, root)
-    corner(plate, 8)
-    stroke(plate, 6)
-    grad(plate, C.Plate, 0.55)
-    studTex(plate, 0.75)
-    for _, c in ipairs(root:GetChildren()) do
-        if c:IsA("Frame") and c.BackgroundColor3 == INK then
-            corner(c, 8)
+    local plate = make("Frame", { Size = UDim2.fromScale(1, 1), ClipsDescendants = true }, panelRoot)
+    addCorner(plate, 8)
+    addStroke(plate, 6)
+    applyGradient(plate, PALETTE.Plate, 0.55)
+    addStudTexture(plate, 0.75)
+    for _, child in ipairs(panelRoot:GetChildren()) do
+        if child:IsA("Frame") and child.BackgroundColor3 == INK then
+            addCorner(child, 8)
         end
     end
+    -- ----- 5.3 Top bar: crown, title, role badge, target pill, scope + close buttons -----
     -- top bar (dark header, crown, role badge)
-    local top = make("Frame", { Position = UDim2.fromOffset(0, 0), Size = UDim2.new(1, 0, 0, 96) }, plate)
-    grad(top, rgb(43, 43, 51), 0.65)
-    studTex(top, 0.7)
+    local topBar = make("Frame", { Position = UDim2.fromOffset(0, 0), Size = UDim2.new(1, 0, 0, 96) }, plate)
+    applyGradient(topBar, rgb(43, 43, 51), 0.65)
+    addStudTexture(topBar, 0.7)
     make("Frame", {
-        BackgroundColor3 = C.White,
+        BackgroundColor3 = PALETTE.White,
         BorderSizePixel = 0,
         Position = UDim2.new(0, 0, 1, -6),
         Size = UDim2.new(1, 0, 0, 6),
-    }, top)
-    label(top, "👑", 40, C.Yellow, F, { Position = UDim2.fromOffset(22, 18) })
-    local tt = title(top, isOwner and "OWNER PANEL" or "ADMIN PANEL", 40, { Position = UDim2.fromOffset(80, 14) })
+    }, topBar)
+    makeLabel(topBar, "👑", 40, PALETTE.Yellow, FONT, { Position = UDim2.fromOffset(22, 18) })
+    local _titleLabel =
+        makeTitle(topBar, isOwner and "OWNER PANEL" or "ADMIN PANEL", 40, { Position = UDim2.fromOffset(80, 14) })
     local badge = make("Frame", {
         AutomaticSize = Enum.AutomaticSize.X,
         Size = UDim2.fromOffset(0, 38),
         Position = UDim2.fromOffset(isOwner and 380 or 370, 26),
-    }, top)
-    corner(badge, 6)
-    stroke(badge, 3)
-    grad(badge, isOwner and C.Yellow or C.Blue)
-    studTex(badge)
-    pad(badge, 0, 16)
-    title(
+    }, topBar)
+    addCorner(badge, 6)
+    addStroke(badge, 3)
+    applyGradient(badge, isOwner and PALETTE.Yellow or PALETTE.Blue)
+    addStudTexture(badge)
+    addPadding(badge, 0, 16)
+    makeTitle(
         badge,
         isOwner and "OWNER" or "ADMIN",
         20,
         { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0) }
     )
-    label(
-        top,
+    makeLabel(
+        topBar,
         "Hatch an Anime  ·  server control",
         16,
-        C.Muted,
-        FB,
+        PALETTE.Muted,
+        FONT_BODY,
         { Position = UDim2.fromOffset(24, 70), Visible = false }
     )
     local topRight = make("Frame", {
@@ -483,7 +581,7 @@ function M.Build(gui, ctx)
         AnchorPoint = Vector2.new(1, 0.5),
         Position = UDim2.new(1, -16, 0.5, -1),
         Size = UDim2.fromOffset(640, 56),
-    }, top)
+    }, topBar)
     make("UIListLayout", {
         FillDirection = Enum.FillDirection.Horizontal,
         HorizontalAlignment = Enum.HorizontalAlignment.Right,
@@ -491,18 +589,18 @@ function M.Build(gui, ctx)
         Padding = UDim.new(0, 10),
         SortOrder = Enum.SortOrder.LayoutOrder,
     }, topRight)
-    local target = make("Frame", {
-        BackgroundColor3 = C.Inset,
+    local targetPill = make("Frame", {
+        BackgroundColor3 = PALETTE.Inset,
         BackgroundTransparency = 0.4,
         AutomaticSize = Enum.AutomaticSize.X,
         Size = UDim2.fromOffset(0, 40),
         LayoutOrder = 1,
     }, topRight)
-    corner(target, 6)
-    stroke(target, 2, dark(C.Muted, 0.4))
-    pad(target, 0, 14)
-    local targetText = title(
-        target,
+    addCorner(targetPill, 6)
+    addStroke(targetPill, 2, darken(PALETTE.Muted, 0.4))
+    addPadding(targetPill, 0, 14)
+    local targetText = makeTitle(
+        targetPill,
         "",
         16,
         { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), AutomaticSize = Enum.AutomaticSize.XY }
@@ -510,22 +608,23 @@ function M.Build(gui, ctx)
     local scopeBtns = {}
     local content -- forward
     local render
-    local closeBtn
+    local _closeButton
+    -- ----- 5.4 Sidebar and scrolling content area -----
     -- sidebar + content plates
-    local sideBg = make("Frame", {
-        BackgroundColor3 = C.Inset,
+    local _sideBackground = make("Frame", {
+        BackgroundColor3 = PALETTE.Inset,
         BackgroundTransparency = 0.65,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 96),
         Size = UDim2.new(0, 262, 1, -96),
     }, plate)
-    local side = make(
+    local sidebar = make(
         "Frame",
         { BackgroundTransparency = 1, Position = UDim2.fromOffset(16, 112), Size = UDim2.new(0, 230, 1, -126) },
         plate
     )
-    vlist(side, 8)
-    local body = make(
+    addVerticalList(sidebar, 8)
+    local contentArea = make(
         "Frame",
         { BackgroundTransparency = 1, Position = UDim2.fromOffset(270, 100), Size = UDim2.new(1, -280, 1, -108) },
         plate
@@ -538,9 +637,10 @@ function M.Build(gui, ctx)
         ScrollBarThickness = 8,
         ScrollBarImageColor3 = accent,
         BorderSizePixel = 0,
-    }, body)
-    pad(content, 22, 20)
-    vlist(content, 22)
+    }, contentArea)
+    addPadding(content, 22, 20)
+    addVerticalList(content, 22)
+    -- ----- 5.5 Toast, server actions, confirm dialog -----
     -- toast
     local toastHolder = make("Frame", {
         BackgroundTransparency = 1,
@@ -549,12 +649,12 @@ function M.Build(gui, ctx)
         Size = UDim2.fromOffset(560, 64),
         Visible = false,
         ZIndex = 40,
-    }, root)
+    }, panelRoot)
     local toastFace = make("Frame", { Size = UDim2.new(1, 0, 0, 58), ZIndex = 41 }, toastHolder)
-    corner(toastFace, 6)
-    stroke(toastFace, 3)
-    grad(toastFace, C.Green)
-    local toastText = title(toastFace, "", 17, {
+    addCorner(toastFace, 6)
+    addStroke(toastFace, 3)
+    applyGradient(toastFace, PALETTE.Green)
+    local toastText = makeTitle(toastFace, "", 17, {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5),
         TextXAlignment = Enum.TextXAlignment.Center,
@@ -564,895 +664,1002 @@ function M.Build(gui, ctx)
         TextWrapped = true,
     })
     local toastId = 0
-    local function toast(ok, msg)
+    -- Slide-in result banner; the id check makes only the newest toast hide itself after 2.8 s.
+    local function showToast(success, message)
         toastId += 1
-        local id = toastId
-        grad(toastFace, ok and C.Green or C.Red)
-        toastText.Text = (ok and "✓  " or "✕  ") .. msg
+        local thisToastId = toastId
+        applyGradient(toastFace, success and PALETTE.Green or PALETTE.Red)
+        toastText.Text = (success and "✓  " or "✕  ") .. message
         toastHolder.Visible = true
         toastHolder.Position = UDim2.new(0.5, 0, 1, 10)
         TweenService
             :Create(toastHolder, TweenInfo.new(0.25, Enum.EasingStyle.Back), { Position = UDim2.new(0.5, 0, 1, -18) })
             :Play()
         task.delay(2.8, function()
-            if id == toastId then
+            if thisToastId == toastId then
                 toastHolder.Visible = false
             end
         end)
     end
+    -- busy: an action is in flight. confirmed: true only while a confirmed onYes runs (see header).
     local busy = false
     local confirmed = false
-    local function ask(action, args, lbl, btn)
+    -- Single entry point for panel actions: disables the source button, fills scope/userId/confirmed,
+    -- invokes the server, logs the result and shows a toast. Returns (success, message).
+    local function sendAction(action, args, logLabel, sourceButton)
         if busy then
             return
         end
         busy = true
-        local old = btn and btn.label.Text
-        if btn then
-            btn.set(false, "...")
+        local previousText = sourceButton and sourceButton.label.Text
+        if sourceButton then
+            sourceButton.set(false, "...")
         end
         args = args or {}
         args.confirmed = confirmed or args.confirmed
         args.scope = args.scope or scope
         args.userId = args.userId or selectedId
-        local ok, res, msg = pcall(ctx.invoke, action, args)
+        local callOk, success, message = pcall(context.invoke, action, args)
         busy = false
-        if btn then
-            btn.set(true, old)
+        if sourceButton then
+            sourceButton.set(true, previousText)
         end
-        if not ok then
-            res, msg = false, "Server didn't respond"
+        if not callOk then
+            success, message = false, "Server didn't respond"
         end
-        msg = type(msg) == "string" and msg or (res and "Done" or "Failed")
-        table.insert(logRows, 1, { time = os.date("%H:%M"), action = lbl or action, ok = res, msg = msg })
+        message = type(message) == "string" and message or (success and "Done" or "Failed")
+        table.insert(logRows, 1, { time = os.date("%H:%M"), action = logLabel or action, ok = success, msg = message })
         if #logRows > 50 then
             table.remove(logRows)
         end
-        toast(res, msg)
-        return res, msg
+        showToast(success, message)
+        return success, message
     end
-    local function refresh()
-        local ok, res, data = pcall(ctx.invoke, "Snapshot", {})
-        if ok and res and type(data) == "table" then
-            snap = data
+    -- Re-fetch players/catalog/admins/event state; keeps the old snapshot when the call fails.
+    local function refreshSnapshot()
+        local callOk, success, data = pcall(context.invoke, "Snapshot", {})
+        if callOk and success and type(data) == "table" then
+            snapshot = data
         end
     end
-    local function selected()
-        for _, p in ipairs(snap.players) do
-            if p.userId == selectedId then
-                return p
+    local function getSelectedPlayer()
+        for _, playerInfo in ipairs(snapshot.players) do
+            if playerInfo.userId == selectedId then
+                return playerInfo
             end
         end
     end
-    local function confirm(head, text, onYes)
-        local dim = make("TextButton", {
+    -- Modal confirm dialog. Its descendants get +51 ZIndex so it draws above the panel.
+    local function showConfirm(heading, text, onYes)
+        local overlay = make("TextButton", {
             Text = "",
             AutoButtonColor = false,
             BackgroundColor3 = rgb(10, 12, 20),
             BackgroundTransparency = 0.35,
             Size = UDim2.fromScale(1, 1),
             ZIndex = 50,
-        }, root)
-        corner(dim, 18)
-        local box = make("Frame", {
+        }, panelRoot)
+        addCorner(overlay, 18)
+        local dialog = make("Frame", {
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
             Size = UDim2.fromOffset(460, 0),
             AutomaticSize = Enum.AutomaticSize.Y,
             BackgroundTransparency = 1,
             ZIndex = 51,
-        }, dim)
-        local inner = card(box, head, C.Red)
-        label(
-            inner,
+        }, overlay)
+        local dialogBody = makeCard(dialog, heading, PALETTE.Red)
+        makeLabel(
+            dialogBody,
             text,
             17,
-            C.Muted,
-            FB,
+            PALETTE.Muted,
+            FONT_BODY,
             { TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0) }
         )
-        local row = grid(inner, 200, 62)
-        button(row, "Cancel", C.Grey, function()
-            dim:Destroy()
+        local buttonRow = makeGrid(dialogBody, 200, 62)
+        makeButton(buttonRow, "Cancel", PALETTE.Grey, function()
+            overlay:Destroy()
         end)
-        button(row, "Confirm", C.Red, function()
-            dim:Destroy()
+        makeButton(buttonRow, "Confirm", PALETTE.Red, function()
+            overlay:Destroy()
             confirmed = true
-            local ok, err = pcall(onYes)
+            local callOk, err = pcall(onYes)
             confirmed = false
-            if not ok then
-                toast(false, tostring(err))
+            if not callOk then
+                showToast(false, tostring(err))
             end
         end)
-        for _, d in ipairs(dim:GetDescendants()) do
-            if d:IsA("GuiObject") then
-                d.ZIndex = d.ZIndex + 51
+        for _, descendant in ipairs(overlay:GetDescendants()) do
+            if descendant:IsA("GuiObject") then
+                descendant.ZIndex = descendant.ZIndex + 51
             end
         end
     end
-    local function header(txt, sub)
-        local f =
-            make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44), LayoutOrder = nx() }, content)
-        local h = title(f, txt, 34)
-        local s = label(f, sub, 16, C.Muted, FB, { Position = UDim2.fromOffset(0, 12) })
+    -- Page title + subtitle. The subtitle is moved next to the title one frame later, once the
+    -- title's AbsoluteSize is known (divided by the UIScale to get unscaled offsets).
+    local function addPageHeader(text, subtitle)
+        local headerFrame = make(
+            "Frame",
+            { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44), LayoutOrder = nextLayoutOrder() },
+            content
+        )
+        local titleLabel = makeTitle(headerFrame, text, 34)
+        local subtitleLabel =
+            makeLabel(headerFrame, subtitle, 16, PALETTE.Muted, FONT_BODY, { Position = UDim2.fromOffset(0, 12) })
         task.defer(function()
-            s.Position = UDim2.fromOffset(h.AbsoluteSize.X / math.max(fit.Scale, 0.01) + 18, 14)
+            subtitleLabel.Position =
+                UDim2.fromOffset(titleLabel.AbsoluteSize.X / math.max(uiScale.Scale, 0.01) + 18, 14)
         end)
     end
-    local function roleColor(r)
-        return r == "Owner" and C.Red or r == "Admin" and C.Blue or C.Grey
+    local function roleColor(role)
+        return role == "Owner" and PALETTE.Red or role == "Admin" and PALETTE.Blue or PALETTE.Grey
+    end
+    -- One clickable row on the Players page; clicking selects that player (scope "me" for yourself).
+    local function addPlayerRow(pickCard, playerInfo)
+        local isSelected = playerInfo.userId == selectedId
+        local _row, face = makeBrick(
+            pickCard,
+            isSelected and PALETTE.Purple or PALETTE.Inset,
+            UDim2.new(1, 0, 0, 72),
+            5,
+            { LayoutOrder = nextLayoutOrder() }
+        )
+        local hitbox = make("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, face)
+        local avatar = make("ImageLabel", {
+            Image = ("rbxthumb://type=AvatarHeadShot&id=%d&w=60&h=60"):format(playerInfo.userId),
+            BackgroundColor3 = PALETTE.Plate,
+            Position = UDim2.fromOffset(10, 8),
+            Size = UDim2.fromOffset(50, 50),
+        }, face)
+        addCorner(avatar, 10)
+        addStroke(avatar, 2.5)
+        makeTitle(face, playerInfo.name, 19, { Position = UDim2.fromOffset(72, 10) })
+        makeLabel(
+            face,
+            "@" .. playerInfo.user .. "  •  " .. playerInfo.userId,
+            14,
+            PALETTE.Muted,
+            FONT_BODY,
+            { Position = UDim2.fromOffset(72, 38) }
+        )
+        if playerInfo.role then
+            local roleTag = make("Frame", {
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -14, 0.5, 0),
+                Size = UDim2.fromOffset(0, 32),
+                AutomaticSize = Enum.AutomaticSize.X,
+                BackgroundColor3 = roleColor(playerInfo.role),
+            }, face)
+            addCorner(roleTag, 8)
+            addStroke(roleTag, 2.5)
+            addPadding(roleTag, 0, 12)
+            makeTitle(
+                roleTag,
+                playerInfo.role:upper(),
+                15,
+                { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0) }
+            )
+        end
+        hitbox.Activated:Connect(function()
+            selectedId = playerInfo.userId
+            scope = (playerInfo.userId == context.userId) and "me" or "selected"
+            render()
+        end)
     end
     local pages = {}
+
+    -- ----- 5.6 Pages (pages[pageId] builds the content area) -----
     pages.home = function()
-        header("Home", snap.isStaffServer and "🔒 Staff Private Server (Restricted)" or "Live view of this server")
-        local g = grid(content, 205, 96)
-        local sel = selected()
+        addPageHeader(
+            "Home",
+            snapshot.isStaffServer and "🔒 Staff Private Server (Restricted)" or "Live view of this server"
+        )
+        local statGrid = makeGrid(content, 205, 96)
+        local selectedPlayer = getSelectedPlayer()
         local stats = {
-            { "PLAYERS", tostring(#snap.players), C.Blue },
-            { "SELECTED", sel and sel.name or "-", C.Purple },
-            { "EVENT", (snap.event and snap.event ~= "None") and snap.event or "None", C.Orange },
-            { "YOUR ROLE", ctx.role, accent },
+            { "PLAYERS", tostring(#snapshot.players), PALETTE.Blue },
+            { "SELECTED", selectedPlayer and selectedPlayer.name or "-", PALETTE.Purple },
+            { "EVENT", (snapshot.event and snapshot.event ~= "None") and snapshot.event or "None", PALETTE.Orange },
+            { "YOUR ROLE", context.role, accent },
         }
-        for _, s in ipairs(stats) do
-            local h, face = brick(g, s[3], UDim2.fromOffset(205, 96))
-            studRow(face, s[3], 3, 0.14, 26, 11)
-            title(face, s[1], 14, { Position = UDim2.fromOffset(16, 12) })
-            title(face, s[2], 30, {
+        for _, stat in ipairs(stats) do
+            local _holder, face = makeBrick(statGrid, stat[3], UDim2.fromOffset(205, 96))
+            addStudRow(face, stat[3], 3, 0.14, 26, 11)
+            makeTitle(face, stat[1], 14, { Position = UDim2.fromOffset(16, 12) })
+            makeTitle(face, stat[2], 30, {
                 Position = UDim2.fromOffset(16, 36),
                 AutomaticSize = Enum.AutomaticSize.None,
                 Size = UDim2.new(1, -24, 0, 40),
                 TextTruncate = Enum.TextTruncate.AtEnd,
             })
         end
-        local q = card(content, "Quick actions", C.Yellow)
-        local g2 = grid(q, 250, 62)
+        local quickCard = makeCard(content, "Quick actions", PALETTE.Yellow)
+        local quickGrid = makeGrid(quickCard, 250, 62)
         if isOwner then
-            button(g2, "Give $1M to me", C.Green, function(b)
-                ask("GiveCash", { amount = "1000000", scope = "me" }, "Give $1M", b)
+            makeButton(quickGrid, "Give $1M to me", PALETTE.Green, function(buttonApi)
+                sendAction("GiveCash", { amount = "1000000", scope = "me" }, "Give $1M", buttonApi)
             end)
         end
-        if snap.isStaffServer then
-            button(g2, "Return to Public", C.Grey, function(b)
-                ask("ReturnToPublic", {}, "Public Server", b)
+        if snapshot.isStaffServer then
+            makeButton(quickGrid, "Return to Public", PALETTE.Grey, function(buttonApi)
+                sendAction("ReturnToPublic", {}, "Public Server", buttonApi)
             end)
         else
-            button(g2, "Join Staff Server", C.Purple, function(b)
-                ask("JoinStaffServer", {}, "Staff Server", b)
+            makeButton(quickGrid, "Join Staff Server", PALETTE.Purple, function(buttonApi)
+                sendAction("JoinStaffServer", {}, "Staff Server", buttonApi)
             end)
         end
-        button(g2, "Egg Shower", C.Teal, function(b)
-            ask("EggShower", { amount = 8 }, "Egg Shower", b)
+        makeButton(quickGrid, "Egg Shower", PALETTE.Teal, function(buttonApi)
+            sendAction("EggShower", { amount = 8 }, "Egg Shower", buttonApi)
         end)
-        button(g2, "🚨 Update & Rejoin", C.Yellow, function()
-            confirm(
+        makeButton(quickGrid, "🚨 Update & Rejoin", PALETTE.Yellow, function()
+            showConfirm(
                 "Trigger Game Update?",
                 "Announce update across ALL servers and make all players safely rejoin to load the new version?",
                 function()
-                    ask("AnnounceUpdate", {}, "Update & Rejoin")
+                    sendAction("AnnounceUpdate", {}, "Update & Rejoin")
                 end
             )
         end)
-        button(g2, "Start Egg Rush 5m", C.Orange, function(b)
-            ask("StartEvent", { eventId = "rush", seconds = 300 }, "Egg Rush", b)
+        makeButton(quickGrid, "Start Egg Rush 5m", PALETTE.Orange, function(buttonApi)
+            sendAction("StartEvent", { eventId = "rush", seconds = 300 }, "Egg Rush", buttonApi)
         end)
-        button(g2, "Stop event", C.Red, function(b)
-            ask("StopEvent", {}, "Stop event", b)
+        makeButton(quickGrid, "Stop event", PALETTE.Red, function(buttonApi)
+            sendAction("StopEvent", {}, "Stop event", buttonApi)
         end)
-        button(g2, "Start Nighttime", C.Purple, function(b)
-            ask("StartNight", { seconds = 60 }, "Start Nighttime", b)
+        makeButton(quickGrid, "Start Nighttime", PALETTE.Purple, function(buttonApi)
+            sendAction("StartNight", { seconds = 60 }, "Start Nighttime", buttonApi)
         end)
-        button(g2, "Find a player", C.Blue, function()
-            page = "players"
+        makeButton(quickGrid, "Find a player", PALETTE.Blue, function()
+            currentPage = "players"
             render()
         end)
     end
     pages.players = function()
-        header("Players", #snap.players .. " in this server")
-        local c = card(content, "Pick a player", C.Blue)
-        for _, p in ipairs(snap.players) do
-            local on = p.userId == selectedId
-            local rowH, face = brick(c, on and C.Purple or C.Inset, UDim2.new(1, 0, 0, 72), 5, { LayoutOrder = nx() })
-            local hit =
-                make("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, face)
-            local av = make("ImageLabel", {
-                Image = ("rbxthumb://type=AvatarHeadShot&id=%d&w=60&h=60"):format(p.userId),
-                BackgroundColor3 = C.Plate,
-                Position = UDim2.fromOffset(10, 8),
-                Size = UDim2.fromOffset(50, 50),
-            }, face)
-            corner(av, 10)
-            stroke(av, 2.5)
-            title(face, p.name, 19, { Position = UDim2.fromOffset(72, 10) })
-            label(
-                face,
-                "@" .. p.user .. "  •  " .. p.userId,
-                14,
-                C.Muted,
-                FB,
-                { Position = UDim2.fromOffset(72, 38) }
-            )
-            if p.role then
-                local tag = make("Frame", {
-                    AnchorPoint = Vector2.new(1, 0.5),
-                    Position = UDim2.new(1, -14, 0.5, 0),
-                    Size = UDim2.fromOffset(0, 32),
-                    AutomaticSize = Enum.AutomaticSize.X,
-                    BackgroundColor3 = roleColor(p.role),
-                }, face)
-                corner(tag, 8)
-                stroke(tag, 2.5)
-                pad(tag, 0, 12)
-                title(
-                    tag,
-                    p.role:upper(),
-                    15,
-                    { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0) }
+        addPageHeader("Players", #snapshot.players .. " in this server")
+        local pickCard = makeCard(content, "Pick a player", PALETTE.Blue)
+        for _, playerInfo in ipairs(snapshot.players) do
+            addPlayerRow(pickCard, playerInfo)
+        end
+        local selectedPlayer = getSelectedPlayer()
+        local teleportCard = makeCard(
+            content,
+            "Teleport",
+            PALETTE.Teal,
+            selectedPlayer and ("Selected: " .. selectedPlayer.name) or "Select a player"
+        )
+        local teleportGrid = makeGrid(teleportCard, 250, 62)
+        makeButton(teleportGrid, "Bring to me", PALETTE.Teal, function(buttonApi)
+            sendAction("Bring", {}, "Bring", buttonApi)
+        end)
+        makeButton(teleportGrid, "Go to them", PALETTE.Teal, function(buttonApi)
+            sendAction("GoTo", {}, "Go to player", buttonApi)
+        end)
+        makeButton(teleportGrid, "Send home", PALETTE.Teal, function(buttonApi)
+            sendAction("SendHome", {}, "Send home", buttonApi)
+        end)
+        makeButton(teleportGrid, "Respawn", PALETTE.Orange, function()
+            local selectedNow = getSelectedPlayer()
+            if selectedNow then
+                showConfirm("Respawn " .. selectedNow.name .. "?", "Their character will restart.", function()
+                    sendAction("Respawn", {}, "Respawn")
+                end)
+            end
+        end)
+        local moderationCard = makeCard(content, "Moderation", PALETTE.Red)
+        local moderationGrid = makeGrid(moderationCard, 250, 62)
+        local canPunish = selectedPlayer and not selectedPlayer.role
+        local kickButton = makeButton(moderationGrid, "Kick", PALETTE.Red, function()
+            local selectedNow = getSelectedPlayer()
+            if selectedNow then
+                showConfirm(
+                    "Kick " .. selectedNow.name .. "?",
+                    "They are removed from this server and can rejoin.",
+                    function()
+                        sendAction("Kick", { userId = selectedNow.userId }, "Kick")
+                        refreshSnapshot()
+                        render()
+                    end
                 )
             end
-            hit.Activated:Connect(function()
-                selectedId = p.userId
-                scope = (p.userId == ctx.userId) and "me" or "selected"
-                render()
-            end)
-        end
-        local sel = selected()
-        local t = card(content, "Teleport", C.Teal, sel and ("Selected: " .. sel.name) or "Select a player")
-        local g = grid(t, 250, 62)
-        button(g, "Bring to me", C.Teal, function(b)
-            ask("Bring", {}, "Bring", b)
         end)
-        button(g, "Go to them", C.Teal, function(b)
-            ask("GoTo", {}, "Go to player", b)
-        end)
-        button(g, "Send home", C.Teal, function(b)
-            ask("SendHome", {}, "Send home", b)
-        end)
-        button(g, "Respawn", C.Orange, function()
-            local s = selected()
-            if s then
-                confirm("Respawn " .. s.name .. "?", "Their character will restart.", function()
-                    ask("Respawn", {}, "Respawn")
-                end)
-            end
-        end)
-        local m = card(content, "Moderation", C.Red)
-        local g3 = grid(m, 250, 62)
-        local can = sel and not sel.role
-        local k = button(g3, "Kick", C.Red, function()
-            local s = selected()
-            if s then
-                confirm("Kick " .. s.name .. "?", "They are removed from this server and can rejoin.", function()
-                    ask("Kick", { userId = s.userId }, "Kick")
-                    refresh()
-                    render()
-                end)
-            end
-        end)
-        k.set(can and true or false)
+        kickButton.set(canPunish and true or false)
         if isOwner then
-            local b = button(g3, "Ban 24 hours", dark(C.Red, 0.25), function()
-                local s = selected()
-                if s then
-                    confirm(
-                        "Ban " .. s.name .. " for 24 hours?",
+            local banButton = makeButton(moderationGrid, "Ban 24 hours", darken(PALETTE.Red, 0.25), function()
+                local selectedNow = getSelectedPlayer()
+                if selectedNow then
+                    showConfirm(
+                        "Ban " .. selectedNow.name .. " for 24 hours?",
                         "Roblox ban. Only works in the published game.",
                         function()
-                            ask("Ban", { userId = s.userId }, "Ban 24h")
+                            sendAction("Ban", { userId = selectedNow.userId }, "Ban 24h")
                         end
                     )
                 end
             end)
-            b.set(can and true or false)
-            if sel and sel.userId ~= ctx.userId and sel.role ~= "Owner" then
-                local isAdmin = sel.role == "Admin"
-                button(g3, isAdmin and "Remove admin" or "Make admin", C.Blue, function(btn)
-                    ask(
+            banButton.set(canPunish and true or false)
+            if selectedPlayer and selectedPlayer.userId ~= context.userId and selectedPlayer.role ~= "Owner" then
+                local isAdmin = selectedPlayer.role == "Admin"
+                makeButton(moderationGrid, isAdmin and "Remove admin" or "Make admin", PALETTE.Blue, function(buttonApi)
+                    sendAction(
                         "SetAdmin",
-                        { userId = sel.userId, on = not isAdmin },
+                        { userId = selectedPlayer.userId, on = not isAdmin },
                         isAdmin and "Remove admin" or "Make admin",
-                        btn
+                        buttonApi
                     )
-                    refresh()
+                    refreshSnapshot()
                     render()
                 end)
             end
-            local box = input(m, "User ID to unban", true)
-            button(m, "Unban", C.Grey, function()
-                if box.Text ~= "" then
-                    confirm("Unban " .. box.Text .. "?", "Removes their active ban.", function()
-                        ask("Unban", { userId = box.Text }, "Unban")
+            local unbanBox = makeInput(moderationCard, "User ID to unban", true)
+            makeButton(moderationCard, "Unban", PALETTE.Grey, function()
+                if unbanBox.Text ~= "" then
+                    showConfirm("Unban " .. unbanBox.Text .. "?", "Removes their active ban.", function()
+                        sendAction("Unban", { userId = unbanBox.Text }, "Unban")
                     end)
                 end
             end, { w = 250 })
         end
-        if not can then
-            label(m, "Staff can't be kicked or banned. Pick a normal player.", 15, C.Muted, FB, { LayoutOrder = nx() })
+        if not canPunish then
+            makeLabel(
+                moderationCard,
+                "Staff can't be kicked or banned. Pick a normal player.",
+                15,
+                PALETTE.Muted,
+                FONT_BODY,
+                { LayoutOrder = nextLayoutOrder() }
+            )
         end
     end
-    local riverMut = "None"
+    -- Mutation used by "Drop in river" on the Eggs page; survives page re-renders.
+    local riverMutation = "None"
+    -- Owner-only Eggs card: pick an egg + Halloween tier, then DROP IN RIVER sends SpawnEgg {itemId, mutation = tier}.
+    local function addHalloweenDropCard()
+        local halloweenCard =
+            makeCard(content, "Halloween eggs: drop in river", PALETTE.Orange, "Pick one, then press Drop")
+        local HALLOWEEN_TIERS = {
+            { "Silver", PALETTE.Grey },
+            { "Gold", PALETTE.Yellow },
+            { "Diamond", PALETTE.Teal },
+            { "Rainbow", PALETTE.Pink },
+        }
+        local pickedEgg, pickedButton
+        local pickRow = make(
+            "Frame",
+            { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 56), LayoutOrder = nextLayoutOrder() },
+            halloweenCard
+        )
+        local pickText = makeTitle(pickRow, "Nothing picked", 20, { Position = UDim2.fromOffset(0, 16) })
+        local dropHolder = make("Frame", {
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, 0, 0, 0),
+            Size = UDim2.fromOffset(260, 56),
+        }, pickRow)
+        local dropButton = makeButton(dropHolder, "DROP IN RIVER", PALETTE.Green, function(buttonApi)
+            if pickedEgg then
+                sendAction(
+                    "SpawnEgg",
+                    { itemId = pickedEgg.id, mutation = pickedEgg.tier },
+                    "River " .. pickedEgg.tier .. " " .. pickedEgg.name,
+                    buttonApi
+                )
+            end
+        end, { size = UDim2.fromScale(1, 1), textSize = 20 })
+        dropButton.set(false)
+        for _, item in ipairs(snapshot.catalog) do
+            if item.id ~= "Golden Pirate" then
+                local itemRow = make(
+                    "Frame",
+                    { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 46), LayoutOrder = nextLayoutOrder() },
+                    halloweenCard
+                )
+                makeTitle(itemRow, item.name, 17, {
+                    Position = UDim2.fromOffset(0, 12),
+                    AutomaticSize = Enum.AutomaticSize.None,
+                    Size = UDim2.fromOffset(150, 24),
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                })
+                local tierRow = make("Frame", {
+                    BackgroundTransparency = 1,
+                    Position = UDim2.fromOffset(160, 0),
+                    Size = UDim2.new(1, -160, 1, 0),
+                }, itemRow)
+                make("UIListLayout", {
+                    FillDirection = Enum.FillDirection.Horizontal,
+                    Padding = UDim.new(0, 8),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                }, tierRow)
+                for i, tier in ipairs(HALLOWEEN_TIERS) do
+                    makeButton(tierRow, tier[1]:upper(), tier[2], function(buttonApi)
+                        if pickedButton then
+                            pickedButton.select(false)
+                        end
+                        pickedButton = buttonApi
+                        buttonApi.select(true)
+                        pickedEgg = { id = item.id, name = item.name, tier = tier[1] }
+                        pickText.Text = tier[1] .. " " .. item.name .. " egg"
+                        dropButton.set(true)
+                    end, { w = 118, h = 36, depth = 4, order = i, textSize = 15 })
+                end
+            end
+        end
+    end
     pages.eggs = function()
-        header(
+        addPageHeader(
             isOwner and "Eggs & Characters" or "River Eggs",
             isOwner and "Give items or drop eggs in the river" or "Drop any egg into the river for everyone"
         )
-        local chosen
-        local act = card(content, "Selected", C.Purple)
-        local chosenText = title(act, "Pick an item below", 22, { LayoutOrder = nx() })
-        local g = grid(act, 250, 62)
-        local b1, b2
+        local chosenItem
+        local selectedCard = makeCard(content, "Selected", PALETTE.Purple)
+        local chosenText = makeTitle(selectedCard, "Pick an item below", 22, { LayoutOrder = nextLayoutOrder() })
+        local actionGrid = makeGrid(selectedCard, 250, 62)
+        local giveEggButton, giveCharacterButton
         if isOwner then
-            b1 = button(g, "Give egg", C.Green, function(b)
-                if chosen then
-                    local function give()
-                        ask("GiveEgg", { itemId = chosen.id }, "Give " .. chosen.name, b)
+            giveEggButton = makeButton(actionGrid, "Give egg", PALETTE.Green, function(buttonApi)
+                if chosenItem then
+                    local function giveChosen()
+                        sendAction("GiveEgg", { itemId = chosenItem.id }, "Give " .. chosenItem.name, buttonApi)
                     end
                     if scope == "lobby" then
-                        confirm("Give egg to everyone?", chosen.name, give)
+                        showConfirm("Give egg to everyone?", chosenItem.name, giveChosen)
                     else
-                        give()
+                        giveChosen()
                     end
                 end
             end)
-            b2 = button(g, "Give character", C.Yellow, function(b)
-                if chosen then
-                    local function give()
-                        ask("GiveCharacter", { itemId = chosen.id }, "Give " .. chosen.name, b)
+            giveCharacterButton = makeButton(actionGrid, "Give character", PALETTE.Yellow, function(buttonApi)
+                if chosenItem then
+                    local function giveChosen()
+                        sendAction("GiveCharacter", { itemId = chosenItem.id }, "Give " .. chosenItem.name, buttonApi)
                     end
                     if scope == "lobby" then
-                        confirm("Give character to everyone?", chosen.name, give)
+                        showConfirm("Give character to everyone?", chosenItem.name, giveChosen)
                     else
-                        give()
+                        giveChosen()
                     end
                 end
             end)
-            b1.set(false)
-            b2.set(false)
+            giveEggButton.set(false)
+            giveCharacterButton.set(false)
         end
-        local b3 = button(g, "Drop in river", C.Teal, function(b)
-            if chosen then
-                ask(
+        local riverDropButton = makeButton(actionGrid, "Drop in river", PALETTE.Teal, function(buttonApi)
+            if chosenItem then
+                sendAction(
                     "SpawnEgg",
-                    { itemId = chosen.id, mutation = riverMut ~= "None" and riverMut or nil },
-                    "River " .. (riverMut ~= "None" and riverMut .. " " or "") .. chosen.name,
-                    b
+                    { itemId = chosenItem.id, mutation = riverMutation ~= "None" and riverMutation or nil },
+                    "River " .. (riverMutation ~= "None" and riverMutation .. " " or "") .. chosenItem.name,
+                    buttonApi
                 )
             end
         end)
-        b3.set(false)
+        riverDropButton.set(false)
         if isOwner then
-            label(act, "River egg mutation (Halloween eggs)", 15, C.Muted, FB, { LayoutOrder = nx() })
-            local mg = grid(act, 130, 50)
-            local mbtn = {}
-            for _, m in ipairs({
-                { "None", C.Purple },
-                { "Silver", C.Grey },
-                { "Gold", C.Yellow },
-                { "Diamond", C.Teal },
-                { "Rainbow", C.Pink },
+            makeLabel(
+                selectedCard,
+                "River egg mutation (Halloween eggs)",
+                15,
+                PALETTE.Muted,
+                FONT_BODY,
+                { LayoutOrder = nextLayoutOrder() }
+            )
+            local mutationGrid = makeGrid(selectedCard, 130, 50)
+            local mutationButtons = {}
+            for _, mutation in ipairs({
+                { "None", PALETTE.Purple },
+                { "Silver", PALETTE.Grey },
+                { "Gold", PALETTE.Yellow },
+                { "Diamond", PALETTE.Teal },
+                { "Rainbow", PALETTE.Pink },
             }) do
-                mbtn[m[1]] = button(mg, m[1]:upper(), m[2], function()
-                    riverMut = m[1]
-                    for k, v in pairs(mbtn) do
-                        v.select(k == riverMut)
+                mutationButtons[mutation[1]] = makeButton(mutationGrid, mutation[1]:upper(), mutation[2], function()
+                    riverMutation = mutation[1]
+                    for mutationName, mutationButton in pairs(mutationButtons) do
+                        mutationButton.select(mutationName == riverMutation)
                     end
                 end, { h = 40, studs = 1, textSize = 16 })
             end
-            for k, v in pairs(mbtn) do
-                v.select(k == riverMut)
+            for mutationName, mutationButton in pairs(mutationButtons) do
+                mutationButton.select(mutationName == riverMutation)
             end
         end
         if isOwner then
-            local hw = card(content, "Halloween eggs: drop in river", C.Orange, "Pick one, then press Drop")
-            local TIERS = { { "Silver", C.Grey }, { "Gold", C.Yellow }, { "Diamond", C.Teal }, { "Rainbow", C.Pink } }
-            local pick, pickBtn
-            local top =
-                make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 56), LayoutOrder = nx() }, hw)
-            local pickText = title(top, "Nothing picked", 20, { Position = UDim2.fromOffset(0, 16) })
-            local dropHold = make("Frame", {
-                BackgroundTransparency = 1,
-                AnchorPoint = Vector2.new(1, 0),
-                Position = UDim2.new(1, 0, 0, 0),
-                Size = UDim2.fromOffset(260, 56),
-            }, top)
-            local drop = button(dropHold, "DROP IN RIVER", C.Green, function(b)
-                if pick then
-                    ask(
-                        "SpawnEgg",
-                        { itemId = pick.id, mutation = pick.tier },
-                        "River " .. pick.tier .. " " .. pick.name,
-                        b
-                    )
-                end
-            end, { size = UDim2.fromScale(1, 1), textSize = 20 })
-            drop.set(false)
-            for _, it in ipairs(snap.catalog) do
-                if it.id ~= "Golden Pirate" then
-                    local row = make(
-                        "Frame",
-                        { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 46), LayoutOrder = nx() },
-                        hw
-                    )
-                    title(row, it.name, 17, {
-                        Position = UDim2.fromOffset(0, 12),
-                        AutomaticSize = Enum.AutomaticSize.None,
-                        Size = UDim2.fromOffset(150, 24),
-                        TextTruncate = Enum.TextTruncate.AtEnd,
-                    })
-                    local bx = make("Frame", {
-                        BackgroundTransparency = 1,
-                        Position = UDim2.fromOffset(160, 0),
-                        Size = UDim2.new(1, -160, 1, 0),
-                    }, row)
-                    make("UIListLayout", {
-                        FillDirection = Enum.FillDirection.Horizontal,
-                        Padding = UDim.new(0, 8),
-                        SortOrder = Enum.SortOrder.LayoutOrder,
-                    }, bx)
-                    for i, t in ipairs(TIERS) do
-                        button(bx, t[1]:upper(), t[2], function(b)
-                            if pickBtn then
-                                pickBtn.select(false)
-                            end
-                            pickBtn = b
-                            b.select(true)
-                            pick = { id = it.id, name = it.name, tier = t[1] }
-                            pickText.Text = t[1] .. " " .. it.name .. " egg"
-                            drop.set(true)
-                        end, { w = 118, h = 36, depth = 4, order = i, textSize = 15 })
-                    end
-                end
-            end
+            addHalloweenDropCard()
         end
-        local list = card(content, "Catalog", C.Blue, #snap.catalog .. " items")
-        local cg = grid(list, 190, 84)
-        for _, it in ipairs(snap.catalog) do
-            local col = RC[it.rarity] or C.Grey
-            local h, face = brick(cg, C.Inset, UDim2.fromOffset(190, 84), 5)
+        local catalogCard = makeCard(content, "Catalog", PALETTE.Blue, #snapshot.catalog .. " items")
+        local catalogGrid = makeGrid(catalogCard, 190, 84)
+        for _, item in ipairs(snapshot.catalog) do
+            local rarityColor = RARITY_COLORS[item.rarity] or PALETTE.Grey
+            local _holder, face = makeBrick(catalogGrid, PALETTE.Inset, UDim2.fromOffset(190, 84), 5)
             make("Frame", {
-                BackgroundColor3 = col,
+                BackgroundColor3 = rarityColor,
                 BorderSizePixel = 0,
                 Size = UDim2.new(0, 8, 1, -16),
                 Position = UDim2.fromOffset(8, 8),
             }, face)
-            title(face, it.name, 17, {
+            makeTitle(face, item.name, 17, {
                 Position = UDim2.fromOffset(24, 12),
                 AutomaticSize = Enum.AutomaticSize.None,
                 Size = UDim2.new(1, -30, 0, 24),
                 TextTruncate = Enum.TextTruncate.AtEnd,
             })
-            label(face, (it.rarity or ""):upper(), 14, col, F, { Position = UDim2.fromOffset(24, 42) })
-            local hit =
+            makeLabel(face, (item.rarity or ""):upper(), 14, rarityColor, FONT, { Position = UDim2.fromOffset(24, 42) })
+            local hitbox =
                 make("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, face)
-            hit.Activated:Connect(function()
-                chosen = it
-                chosenText.Text = it.name .. "  •  " .. (it.rarity or "")
-                if b1 then
-                    b1.set(it.eggAvailable)
-                    b2.set(it.charAvailable)
+            hitbox.Activated:Connect(function()
+                chosenItem = item
+                chosenText.Text = item.name .. "  •  " .. (item.rarity or "")
+                if giveEggButton then
+                    giveEggButton.set(item.eggAvailable)
+                    giveCharacterButton.set(item.charAvailable)
                 end
-                b3.set(it.eggAvailable and not it.noRiver)
-                for _, o in ipairs(cg:GetChildren()) do
-                    local f = o:FindFirstChild("Face")
-                    if f then
-                        f:FindFirstChildOfClass("UIStroke").Color = INK
+                riverDropButton.set(item.eggAvailable and not item.noRiver)
+                for _, cell in ipairs(catalogGrid:GetChildren()) do
+                    local cellFace = cell:FindFirstChild("Face")
+                    if cellFace then
+                        cellFace:FindFirstChildOfClass("UIStroke").Color = INK
                     end
                 end
-                face:FindFirstChildOfClass("UIStroke").Color = C.White
+                face:FindFirstChildOfClass("UIStroke").Color = PALETTE.White
             end)
         end
     end
     pages.money = function()
-        header("Money", "Give or set cash")
-        local c = card(content, "Amount", C.Green)
-        local box = input(c, "Amount", true)
-        box.Text = "1000000"
-        local prev = title(c, "", 22, { LayoutOrder = nx() })
-        local function upd()
-            local n = tonumber(box.Text)
-            prev.Text = n and n > 0 and ("$" .. fmt(n)) or "Enter an amount"
+        addPageHeader("Money", "Give or set cash")
+        local amountCard = makeCard(content, "Amount", PALETTE.Green)
+        local amountBox = makeInput(amountCard, "Amount", true)
+        amountBox.Text = "1000000"
+        local preview = makeTitle(amountCard, "", 22, { LayoutOrder = nextLayoutOrder() })
+        local function updatePreview()
+            local amount = tonumber(amountBox.Text)
+            preview.Text = amount and amount > 0 and ("$" .. formatNumber(amount)) or "Enter an amount"
         end
-        box:GetPropertyChangedSignal("Text"):Connect(upd)
-        upd()
-        local g = grid(c, 130, 58)
-        for _, p in ipairs({ { "1K", 1e3 }, { "100K", 1e5 }, { "1M", 1e6 }, { "1B", 1e9 }, { "1T", 1e12 } }) do
-            button(g, p[1], C.Yellow, function()
-                box.Text = tostring(p[2])
-            end, { h = 46, studs = 1 })
-        end
-        local a = card(content, "Send it", C.Yellow)
-        local g2 = grid(a, 250, 62)
-        button(g2, "Give cash", C.Green, function(b)
+        amountBox:GetPropertyChangedSignal("Text"):Connect(updatePreview)
+        updatePreview()
+        addAmountPresets(amountCard, amountBox)
+        local sendCard = makeCard(content, "Send it", PALETTE.Yellow)
+        local sendGrid = makeGrid(sendCard, 250, 62)
+        makeButton(sendGrid, "Give cash", PALETTE.Green, function(buttonApi)
             if scope == "lobby" then
-                confirm("Give cash to everyone?", "Every player gets $" .. fmt(box.Text), function()
-                    ask("GiveCash", { amount = box.Text }, "Give lobby", b)
+                showConfirm("Give cash to everyone?", "Every player gets $" .. formatNumber(amountBox.Text), function()
+                    sendAction("GiveCash", { amount = amountBox.Text }, "Give lobby", buttonApi)
                 end)
             else
-                ask("GiveCash", { amount = box.Text }, "Give $" .. fmt(box.Text), b)
+                sendAction("GiveCash", { amount = amountBox.Text }, "Give $" .. formatNumber(amountBox.Text), buttonApi)
             end
         end)
-        button(g2, "Set exact balance", C.Orange, function()
-            confirm("Replace balance?", "Their current cash is overwritten.", function()
-                ask("SetCash", { amount = box.Text }, "Set $" .. fmt(box.Text))
+        makeButton(sendGrid, "Set exact balance", PALETTE.Orange, function()
+            showConfirm("Replace balance?", "Their current cash is overwritten.", function()
+                sendAction("SetCash", { amount = amountBox.Text }, "Set $" .. formatNumber(amountBox.Text))
             end)
         end)
-        button(g2, "Give whole lobby", C.Purple, function()
-            confirm("Give cash to everyone?", "Every player gets $" .. fmt(box.Text), function()
-                ask("GiveCash", { amount = box.Text, scope = "lobby" }, "Give lobby $" .. fmt(box.Text))
+        makeButton(sendGrid, "Give whole lobby", PALETTE.Purple, function()
+            showConfirm("Give cash to everyone?", "Every player gets $" .. formatNumber(amountBox.Text), function()
+                sendAction(
+                    "GiveCash",
+                    { amount = amountBox.Text, scope = "lobby" },
+                    "Give lobby $" .. formatNumber(amountBox.Text)
+                )
             end)
         end)
     end
     pages.temple = function()
-        header("Temples", "Plot of the selected player")
-        local sel = selected()
-        if scope == "lobby" or not sel then
-            card(content, "Pick one player first (Me or Selected)", C.Grey)
+        addPageHeader("Temples", "Plot of the selected player")
+        local selectedPlayer = getSelectedPlayer()
+        if scope == "lobby" or not selectedPlayer then
+            makeCard(content, "Pick one player first (Me or Selected)", PALETTE.Grey)
             return
         end
-        local plot = sel.plot
-        local c = card(
+        local plot = selectedPlayer.plot
+        local templeCard = makeCard(
             content,
-            sel.name .. "'s temple",
-            C.Orange,
+            selectedPlayer.name .. "'s temple",
+            PALETTE.Orange,
             plot and ("Level " .. (plot.level or 1) .. "/3  •  " .. (plot.slots or 0) .. " slots") or "No plot"
         )
-        local g = grid(c, 250, 62)
-        button(g, "Upgrade temple", C.Orange, function(b)
-            ask("UpgradeTemple", {}, "Upgrade temple", b)
-            refresh()
+        local templeGrid = makeGrid(templeCard, 250, 62)
+        makeButton(templeGrid, "Upgrade temple", PALETTE.Orange, function(buttonApi)
+            sendAction("UpgradeTemple", {}, "Upgrade temple", buttonApi)
+            refreshSnapshot()
             render()
         end)
-        button(g, "Unlock next slot", C.Yellow, function(b)
-            ask("UnlockSlot", {}, "Unlock slot", b)
-            refresh()
+        makeButton(templeGrid, "Unlock next slot", PALETTE.Yellow, function(buttonApi)
+            sendAction("UnlockSlot", {}, "Unlock slot", buttonApi)
+            refreshSnapshot()
             render()
         end)
-        button(g, "Add incubator", C.Teal, function(b)
-            ask("AddIncubator", {}, "Add incubator", b)
-            refresh()
+        makeButton(templeGrid, "Add incubator", PALETTE.Teal, function(buttonApi)
+            sendAction("AddIncubator", {}, "Add incubator", buttonApi)
+            refreshSnapshot()
             render()
         end)
         if plot and plot.incubators then
-            local ic = card(content, "Incubators", C.Teal)
-            local g2 = grid(ic, 250, 62)
-            for i, lvl in pairs(plot.incubators) do
-                button(g2, ("#%d  Lv %d  ▲"):format(i, lvl), C.Teal, function(b)
-                    ask("UpgradeIncubator", { index = i }, "Upgrade incubator " .. i, b)
-                    refresh()
+            local incubatorCard = makeCard(content, "Incubators", PALETTE.Teal)
+            local incubatorGrid = makeGrid(incubatorCard, 250, 62)
+            for i, level in pairs(plot.incubators) do
+                makeButton(incubatorGrid, ("#%d  Lv %d  ▲"):format(i, level), PALETTE.Teal, function(buttonApi)
+                    sendAction("UpgradeIncubator", { index = i }, "Upgrade incubator " .. i, buttonApi)
+                    refreshSnapshot()
                     render()
-                end).set(lvl < 3)
+                end).set(level < 3)
             end
         end
-        local d = card(content, "Clean-up", C.Red)
-        local g3 = grid(d, 250, 62)
-        button(g3, "Clear inventory", C.Red, function()
-            confirm("Clear held inventory?", "Removes held eggs and characters.", function()
-                ask("ClearInventory", {}, "Clear inventory")
+        local cleanupCard = makeCard(content, "Clean-up", PALETTE.Red)
+        local cleanupGrid = makeGrid(cleanupCard, 250, 62)
+        makeButton(cleanupGrid, "Clear inventory", PALETTE.Red, function()
+            showConfirm("Clear held inventory?", "Removes held eggs and characters.", function()
+                sendAction("ClearInventory", {}, "Clear inventory")
             end)
         end)
-        button(g3, "Clear placed", C.Red, function()
-            confirm("Clear placed characters?", "Removes every placed character on their plot.", function()
-                ask("ClearPlaced", {}, "Clear placed")
+        makeButton(cleanupGrid, "Clear placed", PALETTE.Red, function()
+            showConfirm("Clear placed characters?", "Removes every placed character on their plot.", function()
+                sendAction("ClearPlaced", {}, "Clear placed")
             end)
         end)
-        button(g3, "Reset slots", C.Red, function()
-            confirm("Reset slot unlocks?", "Locks every slot except the first.", function()
-                ask("ResetSlots", {}, "Reset slots")
+        makeButton(cleanupGrid, "Reset slots", PALETTE.Red, function()
+            showConfirm("Reset slot unlocks?", "Locks every slot except the first.", function()
+                sendAction("ResetSlots", {}, "Reset slots")
             end)
         end)
     end
-    local dur = 300
+    -- Event length in seconds picked on the Events page (5 / 10 / 30 min).
+    local eventDuration = 300
     pages.events = function()
-        header("Events", "Start server events for everyone")
-        local d = card(content, "How long?", C.Purple)
-        local g = grid(d, 150, 58)
-        for _, x in ipairs({ { "5 min", 300 }, { "10 min", 600 }, { "30 min", 1800 } }) do
-            local b = button(g, x[1], C.Purple, function()
-                dur = x[2]
+        addPageHeader("Events", "Start server events for everyone")
+        local durationCard = makeCard(content, "How long?", PALETTE.Purple)
+        local durationGrid = makeGrid(durationCard, 150, 58)
+        for _, option in ipairs({ { "5 min", 300 }, { "10 min", 600 }, { "30 min", 1800 } }) do
+            local durationButton = makeButton(durationGrid, option[1], PALETTE.Purple, function()
+                eventDuration = option[2]
                 render()
             end, { h = 46, studs = 1 })
-            b.select(dur == x[2])
+            durationButton.select(eventDuration == option[2])
         end
-        local eg = card(
+        local eventCard = makeCard(
             content,
             "Events",
-            C.Orange,
-            (snap.event and snap.event ~= "None") and ("Running: " .. snap.event) or "Nothing running"
+            PALETTE.Orange,
+            (snapshot.event and snapshot.event ~= "None") and ("Running: " .. snapshot.event) or "Nothing running"
         )
-        local g2 = grid(eg, 250, 110)
-        for _, ev in ipairs({
-            { "rush", "EGG RUSH", "Eggs spawn 2x faster", C.Orange },
-            { "cash", "DOUBLE CASH", "All income doubled", C.Green },
-            { "gold", "GOLDEN HOUR", "Golden sunset", C.Yellow },
+        local eventGrid = makeGrid(eventCard, 250, 110)
+        for _, eventDef in ipairs({
+            { "rush", "EGG RUSH", "Eggs spawn 2x faster", PALETTE.Orange },
+            { "cash", "DOUBLE CASH", "All income doubled", PALETTE.Green },
+            { "gold", "GOLDEN HOUR", "Golden sunset", PALETTE.Yellow },
         }) do
-            local h = make("Frame", { BackgroundTransparency = 1, LayoutOrder = nx() }, g2)
-            vlist(h, 4)
-            button(h, ev[2], ev[4], function(b)
-                ask("StartEvent", { eventId = ev[1], seconds = dur }, "Start " .. ev[2], b)
-                refresh()
+            local eventHolder =
+                make("Frame", { BackgroundTransparency = 1, LayoutOrder = nextLayoutOrder() }, eventGrid)
+            addVerticalList(eventHolder, 4)
+            makeButton(eventHolder, eventDef[2], eventDef[4], function(buttonApi)
+                sendAction(
+                    "StartEvent",
+                    { eventId = eventDef[1], seconds = eventDuration },
+                    "Start " .. eventDef[2],
+                    buttonApi
+                )
+                refreshSnapshot()
             end, { h = 56 })
-            label(h, ev[3] .. "  •  " .. math.floor(dur / 60) .. " min", 14, C.Muted, FB, { LayoutOrder = nx() })
+            makeLabel(
+                eventHolder,
+                eventDef[3] .. "  •  " .. math.floor(eventDuration / 60) .. " min",
+                14,
+                PALETTE.Muted,
+                FONT_BODY,
+                { LayoutOrder = nextLayoutOrder() }
+            )
         end
-        local g3 = grid(eg, 250, 62)
-        button(g3, "EGG SHOWER", C.Teal, function(b)
-            ask("EggShower", { amount = 8 }, "Egg Shower", b)
+        local extraGrid = makeGrid(eventCard, 250, 62)
+        makeButton(extraGrid, "EGG SHOWER", PALETTE.Teal, function(buttonApi)
+            sendAction("EggShower", { amount = 8 }, "Egg Shower", buttonApi)
         end)
-        button(g3, "Stop event", C.Red, function(b)
-            ask("StopEvent", {}, "Stop event", b)
-            refresh()
+        makeButton(extraGrid, "Stop event", PALETTE.Red, function(buttonApi)
+            sendAction("StopEvent", {}, "Stop event", buttonApi)
+            refreshSnapshot()
         end)
-        button(g3, "START NIGHTTIME", C.Purple, function(b)
-            ask("StartNight", { seconds = dur }, "Start Nighttime", b)
+        makeButton(extraGrid, "START NIGHTTIME", PALETTE.Purple, function(buttonApi)
+            sendAction("StartNight", { seconds = eventDuration }, "Start Nighttime", buttonApi)
         end)
-        button(g3, "End Nighttime", C.Grey, function(b)
-            ask("StopNight", {}, "End Nighttime", b)
+        makeButton(extraGrid, "End Nighttime", PALETTE.Grey, function(buttonApi)
+            sendAction("StopNight", {}, "End Nighttime", buttonApi)
         end)
-        local an = card(content, "Announcement", C.Pink, "Shows a banner to players")
-        local box = input(an, "Write a message (optional for update)...", false)
-        local g4 = grid(an, 250, 62)
-        button(g4, "This server only", C.Pink, function(b)
-            ask("Announce", { text = box.Text, color = "pink", allServers = false }, "Announcement", b)
+        local announceCard = makeCard(content, "Announcement", PALETTE.Pink, "Shows a banner to players")
+        local messageBox = makeInput(announceCard, "Write a message (optional for update)...", false)
+        local announceGrid = makeGrid(announceCard, 250, 62)
+        makeButton(announceGrid, "This server only", PALETTE.Pink, function(buttonApi)
+            sendAction(
+                "Announce",
+                { text = messageBox.Text, color = "pink", allServers = false },
+                "Announcement",
+                buttonApi
+            )
         end)
-        button(g4, "ALL SERVERS", C.Purple, function(b)
-            confirm(
+        makeButton(announceGrid, "ALL SERVERS", PALETTE.Purple, function(buttonApi)
+            showConfirm(
                 "Broadcast to ALL servers?",
                 "Send this announcement to every live server across the game universe?",
                 function()
-                    ask("Announce", { text = box.Text, color = "purple", allServers = true }, "Global Announcement", b)
+                    sendAction(
+                        "Announce",
+                        { text = messageBox.Text, color = "purple", allServers = true },
+                        "Global Announcement",
+                        buttonApi
+                    )
                 end
             )
         end)
-        button(g4, "🚨 Update & Rejoin", C.Yellow, function(b)
-            confirm(
+        makeButton(announceGrid, "🚨 Update & Rejoin", PALETTE.Yellow, function(buttonApi)
+            showConfirm(
                 "Trigger Game Update?",
                 "Announce update across ALL servers and make all players safely rejoin to load the new version?",
                 function()
-                    ask("AnnounceUpdate", { text = box.Text ~= "" and box.Text or nil }, "Update & Rejoin", b)
+                    sendAction(
+                        "AnnounceUpdate",
+                        { text = messageBox.Text ~= "" and messageBox.Text or nil },
+                        "Update & Rejoin",
+                        buttonApi
+                    )
                 end
             )
         end)
-        local r = card(content, "River speed", C.Blue, "Seconds between eggs (1.5 - 30)")
-        local rb = input(r, "e.g. 4", false)
-        button(r, "Set river speed", C.Blue, function(b)
-            ask("SetSpawnInterval", { seconds = rb.Text }, "River speed " .. rb.Text .. "s", b)
+        local riverCard = makeCard(content, "River speed", PALETTE.Blue, "Seconds between eggs (1.5 - 30)")
+        local riverBox = makeInput(riverCard, "e.g. 4", false)
+        makeButton(riverCard, "Set river speed", PALETTE.Blue, function(buttonApi)
+            sendAction(
+                "SetSpawnInterval",
+                { seconds = riverBox.Text },
+                "River speed " .. riverBox.Text .. "s",
+                buttonApi
+            )
         end, { w = 250 })
     end
     pages.admins = function()
-        header("Admins", "People who can open the Admin Panel")
-        local c = card(content, "Current admins", C.Blue)
-        if #(snap.admins or {}) == 0 then
-            label(c, "No admins yet.", 16, C.Muted, FB, { LayoutOrder = nx() })
+        addPageHeader("Admins", "People who can open the Admin Panel")
+        local adminsCard = makeCard(content, "Current admins", PALETTE.Blue)
+        if #(snapshot.admins or {}) == 0 then
+            makeLabel(adminsCard, "No admins yet.", 16, PALETTE.Muted, FONT_BODY, { LayoutOrder = nextLayoutOrder() })
         end
-        for _, a in ipairs(snap.admins or {}) do
-            local h, face = brick(c, C.Inset, UDim2.new(1, 0, 0, 66), 5, { LayoutOrder = nx() })
-            local av = make("ImageLabel", {
-                Image = ("rbxthumb://type=AvatarHeadShot&id=%d&w=60&h=60"):format(a.userId),
-                BackgroundColor3 = C.Plate,
+        for _, adminInfo in ipairs(snapshot.admins or {}) do
+            local _holder, face =
+                makeBrick(adminsCard, PALETTE.Inset, UDim2.new(1, 0, 0, 66), 5, { LayoutOrder = nextLayoutOrder() })
+            local avatar = make("ImageLabel", {
+                Image = ("rbxthumb://type=AvatarHeadShot&id=%d&w=60&h=60"):format(adminInfo.userId),
+                BackgroundColor3 = PALETTE.Plate,
                 Position = UDim2.fromOffset(10, 7),
                 Size = UDim2.fromOffset(46, 46),
             }, face)
-            corner(av, 10)
-            stroke(av, 2.5)
-            title(face, a.name, 18, { Position = UDim2.fromOffset(68, 9) })
-            label(
+            addCorner(avatar, 10)
+            addStroke(avatar, 2.5)
+            makeTitle(face, adminInfo.name, 18, { Position = UDim2.fromOffset(68, 9) })
+            makeLabel(
                 face,
-                tostring(a.userId) .. (a.fixed and "  •  set in AdminRoles script" or ""),
+                tostring(adminInfo.userId) .. (adminInfo.fixed and "  •  set in AdminRoles script" or ""),
                 14,
-                C.Muted,
-                FB,
+                PALETTE.Muted,
+                FONT_BODY,
                 { Position = UDim2.fromOffset(68, 35) }
             )
             do
-                local on = game:GetService("Players"):GetPlayerByUserId(tonumber(a.userId) or 0) ~= nil
-                label(
+                local isOnline = game:GetService("Players"):GetPlayerByUserId(tonumber(adminInfo.userId) or 0) ~= nil
+                makeLabel(
                     face,
-                    on and "● ONLINE — can use the panel now" or "○ offline",
+                    isOnline and "● ONLINE — can use the panel now" or "○ offline",
                     14,
-                    on and C.Green or C.Grey,
-                    FB,
+                    isOnline and PALETTE.Green or PALETTE.Grey,
+                    FONT_BODY,
                     { Position = UDim2.fromOffset(68, 53) }
                 )
             end
-            if not a.fixed then
-                local holder = make("Frame", {
+            if not adminInfo.fixed then
+                local removeHolder = make("Frame", {
                     BackgroundTransparency = 1,
                     AnchorPoint = Vector2.new(1, 0.5),
                     Position = UDim2.new(1, -10, 0.5, 0),
                     Size = UDim2.fromOffset(130, 48),
                 }, face)
-                button(holder, "Remove", C.Red, function(b)
-                    ask("SetAdmin", { userId = a.userId, on = false }, "Remove admin", b)
-                    refresh()
+                makeButton(removeHolder, "Remove", PALETTE.Red, function(buttonApi)
+                    sendAction("SetAdmin", { userId = adminInfo.userId, on = false }, "Remove admin", buttonApi)
+                    refreshSnapshot()
                     render()
                 end, { h = 40, studs = false, size = UDim2.fromScale(1, 1), textSize = 16 })
             end
         end
-        local add = card(content, "Add an admin", C.Green, "Saved in the published game")
-        local box = input(add, "User ID", true)
-        button(add, "Add admin", C.Green, function(b)
-            if box.Text ~= "" then
-                ask("SetAdmin", { userId = box.Text, on = true }, "Add admin", b)
-                refresh()
+        local addCard = makeCard(content, "Add an admin", PALETTE.Green, "Saved in the published game")
+        local userIdBox = makeInput(addCard, "User ID", true)
+        makeButton(addCard, "Add admin", PALETTE.Green, function(buttonApi)
+            if userIdBox.Text ~= "" then
+                sendAction("SetAdmin", { userId = userIdBox.Text, on = true }, "Add admin", buttonApi)
+                refreshSnapshot()
                 render()
             end
         end, { w = 250 })
-        local info = card(content, "What admins can do", C.Grey)
-        label(
-            info,
+        local infoCard = makeCard(content, "What admins can do", PALETTE.Grey)
+        makeLabel(
+            infoCard,
             "✓ Join private Staff Server (/staffserver)\n✓ Trigger game update & rejoin (/update)\n✓ Start / stop events, Egg Shower, drop eggs in the river\n✓ Announcements, river speed\n✓ Teleport, send home, respawn, kick normal players\n✕ No money, no giving eggs/characters, no bans, no temple edits",
             16,
-            C.White,
-            FB,
+            PALETTE.White,
+            FONT_BODY,
             {
-                LayoutOrder = nx(),
+                LayoutOrder = nextLayoutOrder(),
                 TextWrapped = true,
                 AutomaticSize = Enum.AutomaticSize.Y,
                 Size = UDim2.new(1, 0, 0, 0),
             }
         )
     end
+    -- Text of the Punish page's player box, kept across re-renders.
     local punishWho = ""
     pages.punish = function()
-        header("Punish", "Take money or wipe a player (online or offline)")
-        local sel = selected()
-        if punishWho == "" and sel and sel.userId ~= ctx.userId then
-            punishWho = sel.user
+        addPageHeader("Punish", "Take money or wipe a player (online or offline)")
+        local selectedPlayer = getSelectedPlayer()
+        if punishWho == "" and selectedPlayer and selectedPlayer.userId ~= context.userId then
+            punishWho = selectedPlayer.user
         end
-        local c = card(content, "Player", C.Red, "Username or User ID")
-        local who = input(c, "Username or User ID", false)
-        who.Text = punishWho
-        who:GetPropertyChangedSignal("Text"):Connect(function()
-            punishWho = who.Text
+        local playerCard = makeCard(content, "Player", PALETTE.Red, "Username or User ID")
+        local whoBox = makeInput(playerCard, "Username or User ID", false)
+        whoBox.Text = punishWho
+        whoBox:GetPropertyChangedSignal("Text"):Connect(function()
+            punishWho = whoBox.Text
         end)
-        local m = card(content, "Take money", C.Orange, "Their cash can't go below $0")
-        local amt = input(m, "Amount to take", true)
-        local prev = title(m, "", 20, { LayoutOrder = nx() })
-        local function upd()
-            local n = tonumber(amt.Text)
-            prev.Text = n and n > 0 and ("Take $" .. fmt(n)) or "Enter an amount"
+        local takeCard = makeCard(content, "Take money", PALETTE.Orange, "Their cash can't go below $0")
+        local amountBox = makeInput(takeCard, "Amount to take", true)
+        local preview = makeTitle(takeCard, "", 20, { LayoutOrder = nextLayoutOrder() })
+        local function updatePreview()
+            local amount = tonumber(amountBox.Text)
+            preview.Text = amount and amount > 0 and ("Take $" .. formatNumber(amount)) or "Enter an amount"
         end
-        amt:GetPropertyChangedSignal("Text"):Connect(upd)
-        upd()
-        local g = grid(m, 130, 58)
-        for _, x in ipairs({ { "1K", 1e3 }, { "100K", 1e5 }, { "1M", 1e6 }, { "1B", 1e9 }, { "1T", 1e12 } }) do
-            button(g, x[1], C.Yellow, function()
-                amt.Text = tostring(x[2])
-            end, { h = 46, studs = 1 })
-        end
-        local g2 = grid(m, 250, 62)
-        button(g2, "Take amount", C.Orange, function()
-            if who.Text == "" or not tonumber(amt.Text) then
-                toast(false, "Enter a player and an amount")
+        amountBox:GetPropertyChangedSignal("Text"):Connect(updatePreview)
+        updatePreview()
+        addAmountPresets(takeCard, amountBox)
+        local takeGrid = makeGrid(takeCard, 250, 62)
+        makeButton(takeGrid, "Take amount", PALETTE.Orange, function()
+            if whoBox.Text == "" or not tonumber(amountBox.Text) then
+                showToast(false, "Enter a player and an amount")
                 return
             end
-            confirm(
-                "Take $" .. fmt(amt.Text) .. " from " .. who.Text .. "?",
+            showConfirm(
+                "Take $" .. formatNumber(amountBox.Text) .. " from " .. whoBox.Text .. "?",
                 "Their cash goes down by this amount (online or offline).",
                 function()
-                    ask(
+                    sendAction(
                         "TakeCash",
-                        { who = who.Text, amount = amt.Text },
-                        "Take $" .. fmt(amt.Text) .. " from " .. who.Text
+                        { who = whoBox.Text, amount = amountBox.Text },
+                        "Take $" .. formatNumber(amountBox.Text) .. " from " .. whoBox.Text
                     )
                 end
             )
         end)
-        button(g2, "Take ALL money", C.Red, function()
-            if who.Text == "" then
-                toast(false, "Enter a player first")
+        makeButton(takeGrid, "Take ALL money", PALETTE.Red, function()
+            if whoBox.Text == "" then
+                showToast(false, "Enter a player first")
                 return
             end
-            confirm(
-                "Take ALL money from " .. who.Text .. "?",
+            showConfirm(
+                "Take ALL money from " .. whoBox.Text .. "?",
                 "Their cash (and money waiting on their stands) is set to $0.",
                 function()
-                    ask("TakeCash", { who = who.Text, amount = "all" }, "Take all from " .. who.Text)
+                    sendAction("TakeCash", { who = whoBox.Text, amount = "all" }, "Take all from " .. whoBox.Text)
                 end
             )
         end)
-        local w = card(content, "Wipe all data", C.Red, "Can't be undone here")
-        label(
-            w,
+        local wipeCard = makeCard(content, "Wipe all data", PALETTE.Red, "Can't be undone here")
+        makeLabel(
+            wipeCard,
             "Resets their save to a brand-new player (cash, eggs, characters, temple, slots, index) and removes them from ALL leaderboards. If they're online they get kicked first. An older save can still be brought back on the Restore page.",
             15,
-            C.Muted,
-            FB,
+            PALETTE.Muted,
+            FONT_BODY,
             {
-                LayoutOrder = nx(),
+                LayoutOrder = nextLayoutOrder(),
                 TextWrapped = true,
                 AutomaticSize = Enum.AutomaticSize.Y,
                 Size = UDim2.new(1, 0, 0, 0),
             }
         )
-        button(w, "WIPE PLAYER", dark(C.Red, 0.25), function(b)
-            if who.Text == "" then
-                toast(false, "Enter a player first")
+        makeButton(wipeCard, "WIPE PLAYER", darken(PALETTE.Red, 0.25), function(buttonApi)
+            if whoBox.Text == "" then
+                showToast(false, "Enter a player first")
                 return
             end
-            confirm(
-                "Wipe " .. who.Text .. "?",
+            showConfirm(
+                "Wipe " .. whoBox.Text .. "?",
                 "Their whole save is reset and they're removed from every leaderboard. Are you sure?",
                 function()
-                    ask("WipePlayer", { who = who.Text }, "Wipe " .. who.Text, b)
+                    sendAction("WipePlayer", { who = whoBox.Text }, "Wipe " .. whoBox.Text, buttonApi)
                 end
             )
         end, { w = 250 })
     end
+    -- Restore page: last searched player and the SaveList reply ({name, userId, online, versions}).
     local saveWho, saveList = "", nil
     pages.saves = function()
-        header("Restore saves", "Bring back a player's stuff from an older save (Roblox keeps ~30 days)")
-        local c = card(content, "Find player", C.Pink)
-        local box = input(c, "Username or User ID", false)
-        box.Text = saveWho
-        button(c, "Show saves", C.Pink, function(b)
-            saveWho = box.Text
+        addPageHeader("Restore saves", "Bring back a player's stuff from an older save (Roblox keeps ~30 days)")
+        local findCard = makeCard(content, "Find player", PALETTE.Pink)
+        local whoBox = makeInput(findCard, "Username or User ID", false)
+        whoBox.Text = saveWho
+        makeButton(findCard, "Show saves", PALETTE.Pink, function(buttonApi)
+            saveWho = whoBox.Text
             if saveWho == "" then
                 return
             end
-            b.set(false, "Loading...")
-            local ok, res, data = pcall(ctx.invoke, "SaveList", { who = saveWho })
-            b.set(true, "Show saves")
-            if ok and res and type(data) == "table" then
+            buttonApi.set(false, "Loading...")
+            local callOk, success, data = pcall(context.invoke, "SaveList", { who = saveWho })
+            buttonApi.set(true, "Show saves")
+            if callOk and success and type(data) == "table" then
                 saveList = data
                 render()
             else
-                toast(false, ok and tostring(data) or "Server didn't respond")
+                showToast(false, callOk and tostring(data) or "Server didn't respond")
             end
         end, { w = 250 })
         if saveList then
-            local l = card(
+            local versionsCard = makeCard(
                 content,
                 "@" .. saveList.name .. "'s saves (newest first)",
-                C.Blue,
+                PALETTE.Blue,
                 saveList.online and "ONLINE: kick them before restoring" or "offline"
             )
             if #saveList.versions == 0 then
-                label(l, "No saves found.", 16, C.Muted, FB, { LayoutOrder = nx() })
+                makeLabel(
+                    versionsCard,
+                    "No saves found.",
+                    16,
+                    PALETTE.Muted,
+                    FONT_BODY,
+                    { LayoutOrder = nextLayoutOrder() }
+                )
             end
-            for i, v in ipairs(saveList.versions) do
-                local h, face =
-                    brick(l, i == 1 and dark(C.Blue, 0.3) or C.Inset, UDim2.new(1, 0, 0, 64), 5, { LayoutOrder = nx() })
-                title(
+            for i, saveVersion in ipairs(saveList.versions) do
+                local _holder, face = makeBrick(
+                    versionsCard,
+                    i == 1 and darken(PALETTE.Blue, 0.3) or PALETTE.Inset,
+                    UDim2.new(1, 0, 0, 64),
+                    5,
+                    { LayoutOrder = nextLayoutOrder() }
+                )
+                makeTitle(
                     face,
-                    os.date("%d %b  %H:%M", v.time) .. (i == 1 and "  (current)" or ""),
+                    os.date("%d %b  %H:%M", saveVersion.time) .. (i == 1 and "  (current)" or ""),
                     18,
                     { Position = UDim2.fromOffset(14, 8) }
                 )
-                label(
+                makeLabel(
                     face,
                     ("$%s  •  %d items  •  %d placed  •  temple %d"):format(
-                        fmt(v.cash),
-                        v.items,
-                        v.placed,
-                        v.temple
+                        formatNumber(saveVersion.cash),
+                        saveVersion.items,
+                        saveVersion.placed,
+                        saveVersion.temple
                     ),
                     15,
-                    C.Muted,
-                    FB,
+                    PALETTE.Muted,
+                    FONT_BODY,
                     { Position = UDim2.fromOffset(14, 36) }
                 )
                 if i > 1 then
-                    local hold = make("Frame", {
+                    local restoreHolder = make("Frame", {
                         BackgroundTransparency = 1,
                         AnchorPoint = Vector2.new(1, 0.5),
                         Position = UDim2.new(1, -10, 0.5, 0),
                         Size = UDim2.fromOffset(140, 46),
                     }, face)
-                    button(hold, "Restore", C.Green, function()
-                        confirm(
+                    makeButton(restoreHolder, "Restore", PALETTE.Green, function()
+                        showConfirm(
                             "Restore @" .. saveList.name .. "?",
                             "Their save goes back to "
-                                .. os.date("%d %b %H:%M", v.time)
+                                .. os.date("%d %b %H:%M", saveVersion.time)
                                 .. " ($"
-                                .. fmt(v.cash)
+                                .. formatNumber(saveVersion.cash)
                                 .. ", "
-                                .. v.items
+                                .. saveVersion.items
                                 .. " items, "
-                                .. v.placed
+                                .. saveVersion.placed
                                 .. " placed). Anything after that is replaced.",
                             function()
-                                ask(
+                                sendAction(
                                     "SaveRestore",
-                                    { who = tostring(saveList.userId), version = v.version },
+                                    { who = tostring(saveList.userId), version = saveVersion.version },
                                     "Restore save"
                                 )
                             end
@@ -1463,137 +1670,144 @@ function M.Build(gui, ctx)
         end
     end
     pages.log = function()
-        header("Activity", "Your last 50 actions this session")
-        local c = card(content, "Log", C.Grey)
+        addPageHeader("Activity", "Your last 50 actions this session")
+        local logCard = makeCard(content, "Log", PALETTE.Grey)
         if #logRows == 0 then
-            label(c, "Nothing yet.", 16, C.Muted, FB, { LayoutOrder = nx() })
+            makeLabel(logCard, "Nothing yet.", 16, PALETTE.Muted, FONT_BODY, { LayoutOrder = nextLayoutOrder() })
         end
-        for _, l in ipairs(logRows) do
-            local h, face = brick(
-                c,
-                l.ok and dark(C.Green, 0.35) or dark(C.Red, 0.3),
+        for _, entry in ipairs(logRows) do
+            local _holder, face = makeBrick(
+                logCard,
+                entry.ok and darken(PALETTE.Green, 0.35) or darken(PALETTE.Red, 0.3),
                 UDim2.new(1, 0, 0, 48),
                 4,
-                { LayoutOrder = nx() }
+                { LayoutOrder = nextLayoutOrder() }
             )
-            title(face, l.time .. "   " .. l.action, 16, { Position = UDim2.fromOffset(14, 11) })
-            label(
+            makeTitle(face, entry.time .. "   " .. entry.action, 16, { Position = UDim2.fromOffset(14, 11) })
+            makeLabel(
                 face,
-                l.msg,
+                entry.msg,
                 14,
-                C.White,
-                FB,
+                PALETTE.White,
+                FONT_BODY,
                 { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 13) }
             )
         end
     end
-    local NAV = isOwner
+
+    -- ----- 5.7 Sidebar nav and scope buttons -----
+    -- { pageId, label, colour } per sidebar tab.
+    local navItems = isOwner
             and {
-                { "home", "Home", C.Red },
-                { "players", "Players", C.Blue },
-                { "eggs", "Eggs", C.Purple },
-                { "money", "Money", C.Green },
-                { "temple", "Temples", C.Orange },
-                { "events", "Events", C.Yellow },
-                { "admins", "Admins", C.Teal },
-                { "saves", "Restore", C.Pink },
-                { "punish", "Punish", dark(C.Red, 0.2) },
-                { "log", "Activity", C.Grey },
+                { "home", "Home", PALETTE.Red },
+                { "players", "Players", PALETTE.Blue },
+                { "eggs", "Eggs", PALETTE.Purple },
+                { "money", "Money", PALETTE.Green },
+                { "temple", "Temples", PALETTE.Orange },
+                { "events", "Events", PALETTE.Yellow },
+                { "admins", "Admins", PALETTE.Teal },
+                { "saves", "Restore", PALETTE.Pink },
+                { "punish", "Punish", darken(PALETTE.Red, 0.2) },
+                { "log", "Activity", PALETTE.Grey },
             }
         or {
-            { "home", "Home", C.Blue },
-            { "players", "Players", C.Purple },
-            { "eggs", "River Eggs", C.Teal },
-            { "events", "Events", C.Yellow },
-            { "log", "Activity", C.Grey },
+            { "home", "Home", PALETTE.Blue },
+            { "players", "Players", PALETTE.Purple },
+            { "eggs", "River Eggs", PALETTE.Teal },
+            { "events", "Events", PALETTE.Yellow },
+            { "log", "Activity", PALETTE.Grey },
         }
     local navBtns = {}
-    for i, n in ipairs(NAV) do
-        local b = button(side, n[2], n[3], function()
-            page = n[1]
+    for i, navItem in ipairs(navItems) do
+        local navButton = makeButton(sidebar, navItem[2], navItem[3], function()
+            currentPage = navItem[1]
             render()
         end, { h = 50, depth = 4, order = i, textSize = 20, nav = true })
-        b.label.TextXAlignment = Enum.TextXAlignment.Left
-        b.label.AnchorPoint = Vector2.new(0, 0.5)
-        b.label.Position = UDim2.new(0, 42, 0.55, 0)
-        b.label.Size = UDim2.new(1, -50, 1, 0)
-        local d = make("Frame", {
+        navButton.label.TextXAlignment = Enum.TextXAlignment.Left
+        navButton.label.AnchorPoint = Vector2.new(0, 0.5)
+        navButton.label.Position = UDim2.new(0, 42, 0.55, 0)
+        navButton.label.Size = UDim2.new(1, -50, 1, 0)
+        local navDot = make("Frame", {
             AnchorPoint = Vector2.new(0, 0.5),
             Position = UDim2.new(0, 16, 0.5, 0),
             Size = UDim2.fromOffset(14, 14),
-            ZIndex = b.face.ZIndex + 1,
-        }, b.face)
-        corner(d, 3)
-        grad(d, n[3])
-        stroke(d, 2, INK)
-        navBtns[n[1]] = b
+            ZIndex = navButton.face.ZIndex + 1,
+        }, navButton.face)
+        addCorner(navDot, 3)
+        applyGradient(navDot, navItem[3])
+        addStroke(navDot, 2, INK)
+        navBtns[navItem[1]] = navButton
     end
-    local scopes = isOwner and { { "me", "Me" }, { "selected", "Selected" }, { "lobby", "Lobby" } }
+    local scopeOptions = isOwner and { { "me", "Me" }, { "selected", "Selected" }, { "lobby", "Lobby" } }
         or { { "me", "Me" }, { "selected", "Selected" } }
-    for i, s in ipairs(scopes) do
-        scopeBtns[s[1]] = button(topRight, s[2], C.Purple, function()
-            scope = s[1]
+    for i, scopeOption in ipairs(scopeOptions) do
+        scopeBtns[scopeOption[1]] = makeButton(topRight, scopeOption[2], PALETTE.Purple, function()
+            scope = scopeOption[1]
             if scope == "me" then
-                selectedId = ctx.userId
+                selectedId = context.userId
             end
             render()
         end, { w = 104, h = 40, depth = 4, studs = 1, order = 1 + i, textSize = 17, nav = true })
     end
-    closeBtn = button(topRight, "X", C.Red, function()
+    _closeButton = makeButton(topRight, "X", PALETTE.Red, function()
         gui.Enabled = false
     end, { w = 60, h = 56, depth = 5, studs = 1, order = 10, textSize = 30 })
+
+    -- ----- 5.8 Render and public API -----
+    -- Rebuild the current page from scratch: clear content, reset LayoutOrder, sync nav/scope highlights.
     render = function()
-        for _, ch in ipairs(content:GetChildren()) do
-            if ch:IsA("GuiObject") then
-                ch:Destroy()
+        for _, child in ipairs(content:GetChildren()) do
+            if child:IsA("GuiObject") then
+                child:Destroy()
             end
         end
-        order = 0
-        for id, b in pairs(navBtns) do
-            b.select(id == page)
+        layoutOrder = 0
+        for pageId, navButton in pairs(navBtns) do
+            navButton.select(pageId == currentPage)
         end
-        for id, b in pairs(scopeBtns) do
-            b.select(id == scope)
+        for scopeId, scopeButton in pairs(scopeBtns) do
+            scopeButton.select(scopeId == scope)
         end
-        local sel = selected()
-        targetText.Text = scope == "lobby" and ("Target: everyone (" .. #snap.players .. ")")
+        local selectedPlayer = getSelectedPlayer()
+        targetText.Text = scope == "lobby" and ("Target: everyone (" .. #snapshot.players .. ")")
             or scope == "me" and "Target: me"
-            or (sel and ("Target: " .. sel.name) or "Target: nobody")
-        pages[page]()
+            or (selectedPlayer and ("Target: " .. selectedPlayer.name) or "Target: nobody")
+        pages[currentPage]()
         content.CanvasPosition = Vector2.zero
     end
-    local api = {}
-    function api.open()
-        refresh()
+    local panelApi = {}
+    function panelApi.open()
+        refreshSnapshot()
         render()
         gui.Enabled = true
-        refit()
-        root.Position = UDim2.new(0.5, 0, 0.5, 30)
-        TweenService:Create(root, TweenInfo.new(0.25, Enum.EasingStyle.Back), { Position = UDim2.fromScale(0.5, 0.5) })
+        refitToViewport()
+        panelRoot.Position = UDim2.new(0.5, 0, 0.5, 30)
+        TweenService
+            :Create(panelRoot, TweenInfo.new(0.25, Enum.EasingStyle.Back), { Position = UDim2.fromScale(0.5, 0.5) })
             :Play()
     end
-    function api.close()
+    function panelApi.close()
         gui.Enabled = false
     end
-    function api.toggle()
+    function panelApi.toggle()
         if gui.Enabled then
-            api.close()
+            panelApi.close()
         else
-            api.open()
+            panelApi.open()
         end
     end
-    function api.refresh()
+    function panelApi.refresh()
         if gui.Enabled then
-            refresh()
+            refreshSnapshot()
             render()
         end
     end
-    function api.show(p)
-        page = p
+    function panelApi.show(pageId)
+        currentPage = pageId
         render()
     end
-    return api
+    return panelApi
 end
-return M
+return StudPanel
 
 -- StudSkin texture is applied by StarterPlayerScripts.StudSkin
