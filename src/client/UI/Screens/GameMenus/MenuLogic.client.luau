@@ -3386,14 +3386,14 @@ RENDER.Plot = function(panel)
     -- Slot i of the 4x3 grid: placed character + income, EMPTY, or locked with its unlock price.
     local function addSlotCell(grid, i, slotsFolder, placed, unlockedCount)
         local column, row = (i - 1) % 4, math.floor((i - 1) / 4)
-        local cell = box(
-            grid,
-            0.14 + column * 0.24,
-            0.27 + row * 0.305,
-            0.21,
-            0.28,
-            { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(46, 36, 92), ZIndex = 8 }
-        )
+        -- Rows span y 0.14..0.97 of the grid card (below the title bar), so no cell sticks out of the card;
+        -- ClipsDescendants keeps the character portrait inside its cell.
+        local cell = box(grid, 0.14 + column * 0.24, 0.27 + row * 0.285, 0.21, 0.26, {
+            BackgroundTransparency = 0,
+            BackgroundColor3 = Color3.fromRGB(46, 36, 92),
+            ZIndex = 8,
+            ClipsDescendants = true,
+        })
         create("UICorner", { CornerRadius = UDim.new(0.08, 0) }, cell)
         create(
             "UIStroke",
@@ -3585,6 +3585,45 @@ RENDER.Plot = function(panel)
     create("UICorner", { CornerRadius = UDim.new(0.03, 0) }, grid)
     create("UIStroke", { Color = Color3.fromRGB(60, 60, 70), Thickness = 2 }, grid)
     plotText(grid, "SLOTS", 0.04, 0.02, 0.4, 0.08, 20)
+    -- EQUIP BEST: the server (GameMenu action EquipBest -> InventoryService PlaceBest) places the
+    -- highest-income characters on the unlocked slots and replies with the toast message.
+    local equipBestButton = create("TextButton", {
+        Name = "EquipBestButton",
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.fromScale(0.96, 0.025),
+        Size = UDim2.fromScale(0.36, 0.09),
+        BackgroundColor3 = Color3.fromRGB(40, 110, 230),
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 9,
+    }, grid)
+    create("UICorner", { CornerRadius = UDim.new(0.2, 0) }, equipBestButton)
+    create(
+        "UIStroke",
+        { Color = PLOT_BLACK, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+        equipBestButton
+    )
+    create("ImageLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.fromScale(1, 1),
+        Image = "rbxassetid://132561191216691",
+        ScaleType = Enum.ScaleType.Tile,
+        TileSize = UDim2.fromOffset(22, 22),
+        ImageTransparency = 0.45,
+        ZIndex = 9,
+    }, equipBestButton)
+    plotText(equipBestButton, "EQUIP BEST", 0.06, 0.12, 0.88, 0.76, 20, Color3.new(1, 1, 1), Enum.TextXAlignment.Center)
+    equipBestButton.MouseEnter:Connect(function()
+        UISound.Play("Hover")
+        TweenService:Create(equipBestButton, TweenInfo.new(0.1), { Size = UDim2.fromScale(0.38, 0.095) }):Play()
+    end)
+    equipBestButton.MouseLeave:Connect(function()
+        TweenService:Create(equipBestButton, TweenInfo.new(0.1), { Size = UDim2.fromScale(0.36, 0.09) }):Play()
+    end)
+    equipBestButton.Activated:Connect(function()
+        UISound.Play("Click")
+        runAction("EquipBest")
+    end)
     local slotsFolder = plot and plot:FindFirstChild("Slots")
     for i = 1, 12 do
         addSlotCell(grid, i, slotsFolder, placed, unlockedCount)
