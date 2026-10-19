@@ -1,19 +1,55 @@
--- TrailerDuoV3: Jen1sen + Jacobo6I9 step out of two Summon Gates by the temple, look around, peek at the temple,
--- an egg drops from the sky into the river, both sprint and fight over it. /trailer opens the version picker.
--- Recording only, runs on the owner's screen only. Test hook: player attribute TrailerGo3.
+--[[ StarterPlayerScripts.TrailerDuoV3  (LocalScript)
+Trailer v3 "Summon gates + egg drop": Jen1sen + Jacobo6I9 (ACTORS) step out of two local Summon Gates by the temple,
+look around, peek at the temple, an egg falls from the sky into the river with a splash, both sprint to it and
+tug-of-war until it bursts in a flash; end card "HATCH AN ANIME / OUT NOW".
+Recording only: everything is client-side (folder Workspace.TrailerDuoFX + local ScreenGuis), nothing is replicated
+or saved. Sibling of TrailerCinematic (v1) and TrailerDuoV2; see TrailerCinematic's header for the shared conventions.
+
+Who can run it: only Config.OwnerIds (ReplicatedStorage.TrailerConfig); everyone else returns right after the
+requires (TrailerConfig, Portal.PortalBuilder, Portal.PortalConfig - these WaitForChild calls run for every player).
+
+_G contracts (keep exactly)
+  _G.TrailerPicker = togglePicker   defined here; TrailerCinematic's start command calls it to show the picker
+  _G.TrailerDuoStartV3              defined here; picker entry v3 + TrailerGo3 test hook
+  _G.TrailerStartV1, _G.TrailerDuoStartV2   read only (picker entries, guarded)
+  _G.PortalRipple                   read only, optional (guarded); nothing in src defines it at the moment
+
+Test hook: setting player attribute "TrailerGo3" to a truthy value starts the take.
+Attributes written (debug / one-shot flags): fxFolder "T" (elapsed time), "splash", "burst"; each actor model
+"Anim"; each gate "SurgeLevel" (no script in src reads it today; the vortex is drawn by PortalClient via the tag).
+
+How a take runs
+  _G.TrailerDuoStartV3(): builds the gates (PortalBuilder.Build), rigs, egg and FX parts, counts down 3 s (task.wait,
+  yields the caller), hides UI / billboards / players, then drives everything from one RenderStepped connection keyed
+  on t = seconds since the countdown ended. There is no cancel: the take always runs to t > 18, then cleans up
+  (restore callbacks in reverse order, camera type + FOV reset, running = false).
+
+Timeline (t in seconds; all values are contracts)
+  gates         surge up 0 - 0.8, down 2.6 - 3.6
+  actors        behind the gate < 0.8, walk out 0.8 - 2.6 (fade through the gate surface), look around 2.6 - 3.6,
+                turn to temple 3.6 - 4.3, peek 4.3 - 5.0, turn back 5.0 - 5.9, shocked 5.9 - 6.5,
+                sprint to egg 6.5 - 9.0, dive 9.0 - 9.4, tug-of-war 9.4 - 13.4, blown back 13.4+
+  egg           hidden < 5.3, falls 5.3 - 6.3 with spark trail, splash at 6.3, bobs 6.3 - 13.4,
+                shakes + glows 9.4 - 13.4, burst + flash ball at 13.4 (egg moved away)
+  camera        shots 0-7 (see the if-chain), 9.0 - 13.4 cuts every 1.1 s between egg / Jen / Jac, final 99
+  end card      white flash 13.5 - 13.9, title 14.2 - 14.7, tagline 14.6 - 15.1, cleanup at t > 18
+]]
+-- ===== 1. Services, dependencies and owner gate =====
 local Players = game:GetService("Players")
-local RS = game:GetService("RunService")
-local SG = game:GetService("StarterGui")
-local TS = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+local TweenService = game:GetService("TweenService")
 local Config = require(game.ReplicatedStorage:WaitForChild("TrailerConfig"))
-local Builder = require(game.ReplicatedStorage:WaitForChild("Portal"):WaitForChild("PortalBuilder"))
-local PC = require(game.ReplicatedStorage.Portal.PortalConfig)
+local PortalBuilder = require(game.ReplicatedStorage:WaitForChild("Portal"):WaitForChild("PortalBuilder"))
+local PortalConfig = require(game.ReplicatedStorage.Portal.PortalConfig)
 local player = Players.LocalPlayer
 if not Config.OwnerIds[player.UserId] then
     return
 end
-local pg = player:WaitForChild("PlayerGui")
+local playerGui = player:WaitForChild("PlayerGui")
 
+-- ===== 2. Trailer picker (_G.TrailerPicker) =====
+-- Entries call the per-version _G start functions; v1 / v2 are optional (guarded).
 local VERSIONS = {
     {
         name = "v1 · Rift trailer (solo)",
@@ -41,194 +77,210 @@ local VERSIONS = {
         end,
     },
 }
-local function picker()
-    local old = pg:FindFirstChild("TrailerPicker")
-    if old then
-        old:Destroy()
+-- Toggles the picker: destroys an open one, otherwise builds it. The last (newest) entry is highlighted red.
+local function togglePicker()
+    local oldPicker = playerGui:FindFirstChild("TrailerPicker")
+    if oldPicker then
+        oldPicker:Destroy()
         return
     end
-    local g = Instance.new("ScreenGui")
-    g.Name = "TrailerPicker"
-    g.ResetOnSpawn = false
-    g.DisplayOrder = 1001
-    local f = Instance.new("Frame", g)
-    f.AnchorPoint = Vector2.new(0.5, 0.5)
-    f.Position = UDim2.fromScale(0.5, 0.5)
-    f.Size = UDim2.fromOffset(420, 70 + #VERSIONS * 62)
-    f.BackgroundColor3 = Color3.fromRGB(29, 20, 32)
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
-    local t = Instance.new("TextLabel", f)
-    t.BackgroundTransparency = 1
-    t.Size = UDim2.new(1, 0, 0, 46)
-    t.Font = Enum.Font.FredokaOne
-    t.TextSize = 24
-    t.TextColor3 = Color3.fromRGB(255, 211, 107)
-    t.Text = "Pick a trailer"
-    for i, v in VERSIONS do
-        local b = Instance.new("TextButton", f)
-        b.Size = UDim2.new(1, -24, 0, 52)
-        b.Position = UDim2.fromOffset(12, 46 + (i - 1) * 62)
-        b.BackgroundColor3 = i == #VERSIONS and Color3.fromRGB(200, 60, 60) or Color3.fromRGB(70, 52, 80)
-        b.Font = Enum.Font.FredokaOne
-        b.TextSize = 19
-        b.TextColor3 = Color3.new(1, 1, 1)
-        b.Text = v.name .. "   ·   " .. v.date
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
-        b.Activated:Connect(function()
-            g:Destroy()
-            v.run()
+    local pickerGui = Instance.new("ScreenGui")
+    pickerGui.Name = "TrailerPicker"
+    pickerGui.ResetOnSpawn = false
+    pickerGui.DisplayOrder = 1001
+    local frame = Instance.new("Frame", pickerGui)
+    frame.AnchorPoint = Vector2.new(0.5, 0.5)
+    frame.Position = UDim2.fromScale(0.5, 0.5)
+    frame.Size = UDim2.fromOffset(420, 70 + #VERSIONS * 62)
+    frame.BackgroundColor3 = Color3.fromRGB(29, 20, 32)
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+    local titleLabel = Instance.new("TextLabel", frame)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Size = UDim2.new(1, 0, 0, 46)
+    titleLabel.Font = Enum.Font.FredokaOne
+    titleLabel.TextSize = 24
+    titleLabel.TextColor3 = Color3.fromRGB(255, 211, 107)
+    titleLabel.Text = "Pick a trailer"
+    for i, version in VERSIONS do
+        local versionButton = Instance.new("TextButton", frame)
+        versionButton.Size = UDim2.new(1, -24, 0, 52)
+        versionButton.Position = UDim2.fromOffset(12, 46 + (i - 1) * 62)
+        versionButton.BackgroundColor3 = i == #VERSIONS and Color3.fromRGB(200, 60, 60) or Color3.fromRGB(70, 52, 80)
+        versionButton.Font = Enum.Font.FredokaOne
+        versionButton.TextSize = 19
+        versionButton.TextColor3 = Color3.new(1, 1, 1)
+        versionButton.Text = version.name .. "   ·   " .. version.date
+        Instance.new("UICorner", versionButton).CornerRadius = UDim.new(0, 8)
+        versionButton.Activated:Connect(function()
+            pickerGui:Destroy()
+            version.run()
         end)
     end
-    g.Parent = pg
+    pickerGui.Parent = playerGui
 end
-_G.TrailerPicker = picker
+_G.TrailerPicker = togglePicker
 
+-- ===== 3. Scene constants =====
 local ACTORS = { { id = 168774222, gateX = -232 }, { id = 353101613, gateX = -200 } }
 local GATE_Z, GROUND = -48, 25.9
-local EGG_AT = Vector3.new(-216, 24.3, 24)
+local EGG_POS = Vector3.new(-216, 24.3, 24)
 local TEMPLE_LOOK = Vector3.new(-206, 42, -82)
-local ANIM = { walk = "rbxassetid://913402848", run = "rbxassetid://913376220", idle = "rbxassetid://507766388" }
-local A = CFrame.Angles
-local V = Vector3.new
-local L = CFrame.lookAt
-local function lerp(a, b, k)
-    return a + (b - a) * k
+local ANIM_IDS = { walk = "rbxassetid://913402848", run = "rbxassetid://913376220", idle = "rbxassetid://507766388" }
+
+-- ===== 4. Math helpers =====
+local angles = CFrame.Angles
+local vec3 = Vector3.new
+local lookAt = CFrame.lookAt
+local function lerp(from, to, alpha)
+    return from + (to - from) * alpha
 end
 local clamp = math.clamp
-local function seg(t, a, b)
-    return clamp((t - a) / (b - a), 0, 1)
+-- 0..1 progress of t through [startT, endT], clamped.
+local function segment(t, startT, endT)
+    return clamp((t - startT) / (endT - startT), 0, 1)
 end
-local function ease(x)
-    x = clamp(x, 0, 1)
-    return x * x * (3 - 2 * x)
+-- Smoothstep.
+local function ease(alpha)
+    alpha = clamp(alpha, 0, 1)
+    return alpha * alpha * (3 - 2 * alpha)
 end
-local function yawFacing(dir)
-    return math.atan2(-dir.X, -dir.Z)
+-- Y rotation that makes a rig's LookVector point along `direction`.
+local function yawFacing(direction)
+    return math.atan2(-direction.X, -direction.Z)
 end
 
-local function build(id, parent)
-    local m
-    local ok = pcall(function()
-        m = Players:CreateHumanoidModelFromDescription(
-            Players:GetHumanoidDescriptionFromUserId(id),
+-- ===== 5. Actor rigs and poses =====
+-- Builds an anchored, non-colliding R15 clone of a user's avatar. AnimationConstraints are swapped for Motor6Ds so
+-- applyPose can drive C0 directly. Returns nil when the avatar cannot be fetched.
+-- Actor table: m = model, tr = animation tracks, mot / base = Motor6Ds and their rest C0, parts = BaseParts +
+-- Decals (gate fade), off = root height above the ground, cur = current animation name.
+local function buildActor(userId, parent)
+    local model
+    local _ok = pcall(function()
+        model = Players:CreateHumanoidModelFromDescription(
+            Players:GetHumanoidDescriptionFromUserId(userId),
             Enum.HumanoidRigType.R15
         )
     end)
-    if not m then
+    if not model then
         return nil
     end
-    for _, c in m:GetDescendants() do
-        if c:IsA("AnimationConstraint") and c.Attachment0 and c.Attachment1 then
-            local j = Instance.new("Motor6D")
-            j.Name = c.Name
-            j.Part0 = c.Attachment0.Parent
-            j.Part1 = c.Attachment1.Parent
-            j.C0 = c.Attachment0.CFrame
-            j.C1 = c.Attachment1.CFrame
-            j.Parent = c.Parent
-            c:Destroy()
-        elseif c:IsA("BallSocketConstraint") or c:IsA("HingeConstraint") or c:IsA("BaseScript") then
-            c:Destroy()
-        elseif c:IsA("BasePart") then
-            c.CanCollide = false
-            c.CanQuery = false
-            c.CanTouch = false
+    for _, desc in model:GetDescendants() do
+        if desc:IsA("AnimationConstraint") and desc.Attachment0 and desc.Attachment1 then
+            local motor = Instance.new("Motor6D")
+            motor.Name = desc.Name
+            motor.Part0 = desc.Attachment0.Parent
+            motor.Part1 = desc.Attachment1.Parent
+            motor.C0 = desc.Attachment0.CFrame
+            motor.C1 = desc.Attachment1.CFrame
+            motor.Parent = desc.Parent
+            desc:Destroy()
+        elseif desc:IsA("BallSocketConstraint") or desc:IsA("HingeConstraint") or desc:IsA("BaseScript") then
+            desc:Destroy()
+        elseif desc:IsA("BasePart") then
+            desc.CanCollide = false
+            desc.CanQuery = false
+            desc.CanTouch = false
         end
     end
-    local h = m:FindFirstChildOfClass("Humanoid")
-    h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-    h.PlatformStand = true
-    m.HumanoidRootPart.Anchored = true
-    m.Parent = parent
-    local an = h:FindFirstChildOfClass("Animator") or Instance.new("Animator", h)
-    local tr = {}
-    for k, idx in ANIM do
-        local a = Instance.new("Animation")
-        a.AnimationId = idx
-        tr[k] = an:LoadAnimation(a)
-        tr[k].Priority = Enum.AnimationPriority.Action
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+    humanoid.PlatformStand = true
+    model.HumanoidRootPart.Anchored = true
+    model.Parent = parent
+    local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
+    local tracks = {}
+    for animName, animId in ANIM_IDS do
+        local animation = Instance.new("Animation")
+        animation.AnimationId = animId
+        tracks[animName] = animator:LoadAnimation(animation)
+        tracks[animName].Priority = Enum.AnimationPriority.Action
     end
-    local mot, base, parts = {}, {}, {}
-    for _, j in m:GetDescendants() do
-        if j:IsA("Motor6D") then
-            mot[j.Name] = j
-            base[j.Name] = j.C0
-        elseif j:IsA("BasePart") or j:IsA("Decal") then
-            table.insert(parts, j)
+    local motors, baseC0, parts = {}, {}, {}
+    for _, child in model:GetDescendants() do
+        if child:IsA("Motor6D") then
+            motors[child.Name] = child
+            baseC0[child.Name] = child.C0
+        elseif child:IsA("BasePart") or child:IsA("Decal") then
+            table.insert(parts, child)
         end
     end
     return {
-        m = m,
-        tr = tr,
-        mot = mot,
-        base = base,
+        m = model,
+        tr = tracks,
+        mot = motors,
+        base = baseC0,
         parts = parts,
-        off = h.HipHeight + m.HumanoidRootPart.Size.Y / 2,
+        off = humanoid.HipHeight + model.HumanoidRootPart.Size.Y / 2,
         cur = nil,
     }
 end
-local function play(a, name, speed)
-    if a.cur ~= name then
-        for k, t in a.tr do
-            if k ~= name and t.IsPlaying then
-                t:Stop(0.12)
+-- Cross-fades to animation `name` (nil = stop all) and sets its speed every call.
+local function playAnim(actor, name, speed)
+    if actor.cur ~= name then
+        for trackName, track in actor.tr do
+            if trackName ~= name and track.IsPlaying then
+                track:Stop(0.12)
             end
         end
-        if name and a.tr[name] then
-            a.tr[name]:Play(0.12)
+        if name and actor.tr[name] then
+            actor.tr[name]:Play(0.12)
         end
-        a.cur = name
+        actor.cur = name
     end
-    if name and a.tr[name] then
-        a.tr[name]:AdjustSpeed(speed or 1)
-    end
-end
-local function pose(a, p)
-    for n, b in a.base do
-        local r = p and p[n]
-        a.mot[n].C0 = r and b * r or b
+    if name and actor.tr[name] then
+        actor.tr[name]:AdjustSpeed(speed or 1)
     end
 end
-local function tug(k)
+-- Sets every Motor6D to rest C0 * poseOffsets[joint] (rest pose when the table / entry is nil).
+local function applyPose(actor, poseOffsets)
+    for jointName, restC0 in actor.base do
+        local offset = poseOffsets and poseOffsets[jointName]
+        actor.mot[jointName].C0 = offset and restC0 * offset or restC0
+    end
+end
+-- Tug-of-war pose; pull (-1..1) leans the waist / neck back and forth.
+local function tugPose(pull)
     return {
-        Waist = A(0.35 * k, 0, 0),
-        Neck = A(0.15 + 0.12 * k, 0, 0),
-        LeftShoulder = A(1.45, 0, 0.3),
-        RightShoulder = A(1.45, 0, -0.3),
-        LeftElbow = A(0.25, 0, 0),
-        RightElbow = A(0.25, 0, 0),
-        LeftHip = A(0.65, 0, 0),
-        LeftKnee = A(-0.9, 0, 0),
-        RightHip = A(-0.45, 0, 0),
-        RightKnee = A(-0.3, 0, 0),
+        Waist = angles(0.35 * pull, 0, 0),
+        Neck = angles(0.15 + 0.12 * pull, 0, 0),
+        LeftShoulder = angles(1.45, 0, 0.3),
+        RightShoulder = angles(1.45, 0, -0.3),
+        LeftElbow = angles(0.25, 0, 0),
+        RightElbow = angles(0.25, 0, 0),
+        LeftHip = angles(0.65, 0, 0),
+        LeftKnee = angles(-0.9, 0, 0),
+        RightHip = angles(-0.45, 0, 0),
+        RightKnee = angles(-0.3, 0, 0),
     }
 end
-local SHOCK = {
-    Neck = A(0.2, 0, 0),
-    LeftShoulder = A(2.3, 0, 0.25),
-    RightShoulder = A(2.3, 0, -0.25),
-    LeftElbow = A(0.5, 0, 0),
-    RightElbow = A(0.5, 0, 0),
-    Waist = A(0.12, 0, 0),
+local SHOCK_POSE = {
+    Neck = angles(0.2, 0, 0),
+    LeftShoulder = angles(2.3, 0, 0.25),
+    RightShoulder = angles(2.3, 0, -0.25),
+    LeftElbow = angles(0.5, 0, 0),
+    RightElbow = angles(0.5, 0, 0),
+    Waist = angles(0.12, 0, 0),
 }
-local DIVE = {
-    Waist = A(-0.7, 0, 0),
-    LeftShoulder = A(2.7, 0, 0),
-    RightShoulder = A(2.7, 0, 0),
-    LeftHip = A(-0.5, 0, 0),
-    RightHip = A(-0.9, 0, 0),
+local DIVE_POSE = {
+    Waist = angles(-0.7, 0, 0),
+    LeftShoulder = angles(2.7, 0, 0),
+    RightShoulder = angles(2.7, 0, 0),
+    LeftHip = angles(-0.5, 0, 0),
+    RightHip = angles(-0.9, 0, 0),
 }
-local BLOWN = {
-    Waist = A(0.6, 0, 0),
-    Neck = A(0.5, 0, 0),
-    LeftShoulder = A(0.6, 0, -1.7),
-    RightShoulder = A(0.6, 0, 1.7),
-    LeftHip = A(0.7, 0, 0),
-    RightHip = A(0.7, 0, 0),
-    LeftKnee = A(-0.9, 0, 0),
-    RightKnee = A(-0.9, 0, 0),
+local BLOWN_POSE = {
+    Waist = angles(0.6, 0, 0),
+    Neck = angles(0.5, 0, 0),
+    LeftShoulder = angles(0.6, 0, -1.7),
+    RightShoulder = angles(0.6, 0, 1.7),
+    LeftHip = angles(0.7, 0, 0),
+    RightHip = angles(0.7, 0, 0),
+    LeftKnee = angles(-0.9, 0, 0),
+    RightKnee = angles(-0.9, 0, 0),
 }
 
+-- ===== 6. Trailer take (_G.TrailerDuoStartV3) =====
 local running = false
 function _G.TrailerDuoStartV3()
     if running then
@@ -236,66 +288,68 @@ function _G.TrailerDuoStartV3()
     end
     running = true
     local restore = {}
-    local fx = Instance.new("Folder")
-    fx.Name = "TrailerDuoFX"
-    fx.Parent = workspace
-    local status = Instance.new("ScreenGui")
-    status.Name = "TrailerDuoStatus"
-    status.DisplayOrder = 1000
-    status.ResetOnSpawn = false
-    local sl = Instance.new("TextLabel", status)
-    sl.AnchorPoint = Vector2.new(0.5, 0)
-    sl.Position = UDim2.new(0.5, 0, 0, 70)
-    sl.Size = UDim2.fromOffset(460, 40)
-    sl.BackgroundColor3 = Color3.fromRGB(29, 20, 32)
-    sl.TextColor3 = Color3.new(1, 1, 1)
-    sl.Font = Enum.Font.FredokaOne
-    sl.TextSize = 20
-    sl.Text = "Loading actors…"
-    status.Parent = pg
+    local fxFolder = Instance.new("Folder")
+    fxFolder.Name = "TrailerDuoFX"
+    fxFolder.Parent = workspace
+    local statusGui = Instance.new("ScreenGui")
+    statusGui.Name = "TrailerDuoStatus"
+    statusGui.DisplayOrder = 1000
+    statusGui.ResetOnSpawn = false
+    local statusLabel = Instance.new("TextLabel", statusGui)
+    statusLabel.AnchorPoint = Vector2.new(0.5, 0)
+    statusLabel.Position = UDim2.new(0.5, 0, 0, 70)
+    statusLabel.Size = UDim2.fromOffset(460, 40)
+    statusLabel.BackgroundColor3 = Color3.fromRGB(29, 20, 32)
+    statusLabel.TextColor3 = Color3.new(1, 1, 1)
+    statusLabel.Font = Enum.Font.FredokaOne
+    statusLabel.TextSize = 20
+    statusLabel.Text = "Loading actors…"
+    statusGui.Parent = playerGui
     -- gates (local only; PortalClient draws the vortex because of the tag)
     local gates = {}
     for i, info in ACTORS do
-        local base = L(V(info.gateX, GROUND, GATE_Z), V(info.gateX, GROUND, GATE_Z + 10))
-        gates[i] = Builder.Build(base, fx)
+        local gateCF = lookAt(vec3(info.gateX, GROUND, GATE_Z), vec3(info.gateX, GROUND, GATE_Z + 10))
+        gates[i] = PortalBuilder.Build(gateCF, fxFolder)
         gates[i]:SetAttribute("SurgeLevel", 0)
     end
+    -- Actor 1 (Jen) uses the gate at x = -232 (side -1), actor 2 (Jac) the gate at x = -200 (side 1).
     local actors = {}
     for i, info in ACTORS do
-        local a = build(info.id, fx)
-        if a then
-            a.info = info
-            a.side = i == 1 and -1 or 1
-            a.gate = gates[i]
-            a.m.Parent = fx
-            actors[i] = a
+        local actor = buildActor(info.id, fxFolder)
+        if actor then
+            actor.info = info
+            actor.side = i == 1 and -1 or 1
+            actor.gate = gates[i]
+            actor.m.Parent = fxFolder
+            actors[i] = actor
         end
     end
     -- egg
     local egg = game.ReplicatedStorage.GameMenu.EggPreviews:FindFirstChild("MenuEgg_Pirate"):Clone()
-    for _, p in egg:GetDescendants() do
-        if p:IsA("BasePart") then
-            p.Anchored = true
-            p.CanCollide = false
+    for _, part in egg:GetDescendants() do
+        if part:IsA("BasePart") then
+            part.Anchored = true
+            part.CanCollide = false
         end
     end
-    local _, es = egg:GetBoundingBox()
-    egg:ScaleTo(egg:GetScale() * 4 / es.Y)
-    local ecf, esz = egg:GetBoundingBox()
-    egg.WorldPivot = CFrame.new(ecf.Position - V(0, esz.Y / 2, 0))
-    egg.Parent = fx
+    local _, eggSize = egg:GetBoundingBox()
+    egg:ScaleTo(egg:GetScale() * 4 / eggSize.Y)
+    local eggBoxCF, eggBoxSize = egg:GetBoundingBox()
+    egg.WorldPivot = CFrame.new(eggBoxCF.Position - vec3(0, eggBoxSize.Y / 2, 0))
+    egg.Parent = fxFolder
     local glow = Instance.new("Highlight", egg)
     glow.FillColor = Color3.fromRGB(255, 240, 180)
     glow.FillTransparency = 1
     glow.OutlineTransparency = 1
-    local eggFx = Instance.new("Part", fx)
-    eggFx.Size = V(1, 1, 1)
-    eggFx.Transparency = 1
-    eggFx.Anchored = true
-    eggFx.CanCollide = false
-    eggFx.CFrame = CFrame.new(EGG_AT)
-    local splashAt = Instance.new("Attachment", eggFx)
-    local spray = Instance.new("ParticleEmitter", splashAt)
+    -- Invisible anchor at the egg's landing point: splash spray + burst sparks (emitted on cue).
+    local eggFxPart = Instance.new("Part", fxFolder)
+    eggFxPart.Size = vec3(1, 1, 1)
+    eggFxPart.Transparency = 1
+    eggFxPart.Anchored = true
+    eggFxPart.CanCollide = false
+    eggFxPart.CFrame = CFrame.new(EGG_POS)
+    local splashAttachment = Instance.new("Attachment", eggFxPart)
+    local spray = Instance.new("ParticleEmitter", splashAttachment)
     spray.Texture = "rbxasset://textures/particles/sparkles_main.dds"
     spray.Rate = 0
     spray.Speed = NumberRange.new(14, 24)
@@ -304,8 +358,8 @@ function _G.TrailerDuoStartV3()
     spray.Color = ColorSequence.new(Color3.fromRGB(200, 235, 255))
     spray.LightEmission = 0.6
     spray.Size = NumberSequence.new(0.8, 0)
-    spray.Acceleration = V(0, -30, 0)
-    local sparks = Instance.new("ParticleEmitter", splashAt)
+    spray.Acceleration = vec3(0, -30, 0)
+    local sparks = Instance.new("ParticleEmitter", splashAttachment)
     sparks.Texture = "rbxasset://textures/particles/sparkles_main.dds"
     sparks.Rate = 0
     sparks.Speed = NumberRange.new(10, 22)
@@ -314,186 +368,194 @@ function _G.TrailerDuoStartV3()
     sparks.Color = ColorSequence.new(Color3.fromRGB(255, 220, 120))
     sparks.LightEmission = 1
     sparks.Size = NumberSequence.new(0.9, 0)
-    local trail = Instance.new("Part", fx)
-    trail.Size = V(0.5, 0.5, 0.5)
-    trail.Transparency = 1
-    trail.Anchored = true
-    trail.CanCollide = false
-    local ta = Instance.new("Attachment", trail)
-    local tail = Instance.new("ParticleEmitter", ta)
-    tail.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-    tail.Rate = 0
-    tail.Speed = NumberRange.new(1, 3)
-    tail.Lifetime = NumberRange.new(0.4, 0.8)
-    tail.Color = ColorSequence.new(Color3.fromRGB(255, 200, 90))
-    tail.LightEmission = 1
-    tail.Size = NumberSequence.new(0.7, 0)
-    tail.SpreadAngle = Vector2.new(180, 180)
-    local flashPart = Instance.new("Part", fx)
+    -- Spark trail that follows the falling egg.
+    local trailPart = Instance.new("Part", fxFolder)
+    trailPart.Size = vec3(0.5, 0.5, 0.5)
+    trailPart.Transparency = 1
+    trailPart.Anchored = true
+    trailPart.CanCollide = false
+    local trailAttachment = Instance.new("Attachment", trailPart)
+    local trailEmitter = Instance.new("ParticleEmitter", trailAttachment)
+    trailEmitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    trailEmitter.Rate = 0
+    trailEmitter.Speed = NumberRange.new(1, 3)
+    trailEmitter.Lifetime = NumberRange.new(0.4, 0.8)
+    trailEmitter.Color = ColorSequence.new(Color3.fromRGB(255, 200, 90))
+    trailEmitter.LightEmission = 1
+    trailEmitter.Size = NumberSequence.new(0.7, 0)
+    trailEmitter.SpreadAngle = Vector2.new(180, 180)
+    -- Neon ball tweened open at the burst.
+    local flashPart = Instance.new("Part", fxFolder)
     flashPart.Shape = Enum.PartType.Ball
     flashPart.Material = Enum.Material.Neon
     flashPart.Color = Color3.new(1, 1, 1)
     flashPart.Anchored = true
     flashPart.CanCollide = false
     flashPart.Transparency = 1
-    flashPart.Size = V(1, 1, 1)
-    flashPart.CFrame = CFrame.new(EGG_AT + V(0, 2, 0))
+    flashPart.Size = vec3(1, 1, 1)
+    flashPart.CFrame = CFrame.new(EGG_POS + vec3(0, 2, 0))
+    -- Countdown: yields 3 s so the recorder can be started.
     for i = 3, 1, -1 do
-        sl.Text = "Trailer v3 starts in " .. i .. " — start recording"
+        statusLabel.Text = "Trailer v3 starts in " .. i .. " — start recording"
         task.wait(1)
     end
-    status:Destroy()
-    -- hide UI + players
-    local white = Instance.new("ScreenGui")
-    white.Name = "TrailerDuoCard"
-    white.IgnoreGuiInset = true
-    white.DisplayOrder = 1002
-    local wf = Instance.new("Frame", white)
-    wf.Size = UDim2.fromScale(1, 1)
-    wf.BackgroundColor3 = Color3.new(1, 1, 1)
-    wf.BackgroundTransparency = 1
-    wf.BorderSizePixel = 0
-    local function txt(t, y, h, c)
-        local l = Instance.new("TextLabel", wf)
-        l.BackgroundTransparency = 1
-        l.AnchorPoint = Vector2.new(0.5, 0.5)
-        l.Position = UDim2.fromScale(0.5, y)
-        l.Size = UDim2.fromScale(0.9, h)
-        l.TextScaled = true
-        l.Font = Enum.Font.FredokaOne
-        l.Text = t
-        l.TextColor3 = c
-        l.TextTransparency = 1
-        local s = Instance.new("UIStroke", l)
-        s.Thickness = 4
-        s.Color = Color3.fromRGB(40, 24, 18)
-        s.Transparency = 1
-        return l, s
+    statusGui:Destroy()
+    -- End card, then hide UI + players for recording (each change registers a restore callback).
+    local cardGui = Instance.new("ScreenGui")
+    cardGui.Name = "TrailerDuoCard"
+    cardGui.IgnoreGuiInset = true
+    cardGui.DisplayOrder = 1002
+    local flashFrame = Instance.new("Frame", cardGui)
+    flashFrame.Size = UDim2.fromScale(1, 1)
+    flashFrame.BackgroundColor3 = Color3.new(1, 1, 1)
+    flashFrame.BackgroundTransparency = 1
+    flashFrame.BorderSizePixel = 0
+    local function makeCardText(text, posY, heightScale, color)
+        local label = Instance.new("TextLabel", flashFrame)
+        label.BackgroundTransparency = 1
+        label.AnchorPoint = Vector2.new(0.5, 0.5)
+        label.Position = UDim2.fromScale(0.5, posY)
+        label.Size = UDim2.fromScale(0.9, heightScale)
+        label.TextScaled = true
+        label.Font = Enum.Font.FredokaOne
+        label.Text = text
+        label.TextColor3 = color
+        label.TextTransparency = 1
+        local stroke = Instance.new("UIStroke", label)
+        stroke.Thickness = 4
+        stroke.Color = Color3.fromRGB(40, 24, 18)
+        stroke.Transparency = 1
+        return label, stroke
     end
-    local t1, s1 = txt("HATCH AN ANIME", 0.44, 0.12, Color3.fromRGB(255, 190, 40))
-    local t2, s2 = txt("OUT NOW", 0.58, 0.09, Color3.fromRGB(235, 60, 50))
-    white.Parent = pg
-    for _, g in pg:GetChildren() do
-        if g:IsA("ScreenGui") and g ~= white and g.Enabled then
-            g.Enabled = false
+    local titleLabel, titleStroke = makeCardText("HATCH AN ANIME", 0.44, 0.12, Color3.fromRGB(255, 190, 40))
+    local taglineLabel, taglineStroke = makeCardText("OUT NOW", 0.58, 0.09, Color3.fromRGB(235, 60, 50))
+    cardGui.Parent = playerGui
+    for _, screenGui in playerGui:GetChildren() do
+        if screenGui:IsA("ScreenGui") and screenGui ~= cardGui and screenGui.Enabled then
+            screenGui.Enabled = false
             table.insert(restore, function()
-                g.Enabled = true
+                screenGui.Enabled = true
             end)
         end
     end
-    pcall(SG.SetCoreGuiEnabled, SG, Enum.CoreGuiType.All, false)
+    pcall(StarterGui.SetCoreGuiEnabled, StarterGui, Enum.CoreGuiType.All, false)
     table.insert(restore, function()
-        pcall(SG.SetCoreGuiEnabled, SG, Enum.CoreGuiType.All, true)
+        pcall(StarterGui.SetCoreGuiEnabled, StarterGui, Enum.CoreGuiType.All, true)
     end)
-    for _, d in workspace:GetDescendants() do
-        if d:IsA("BillboardGui") and d.Enabled and not d:IsDescendantOf(fx) then
-            d.Enabled = false
+    for _, desc in workspace:GetDescendants() do
+        if desc:IsA("BillboardGui") and desc.Enabled and not desc:IsDescendantOf(fxFolder) then
+            desc.Enabled = false
             table.insert(restore, function()
-                d.Enabled = true
+                desc.Enabled = true
             end)
         end
     end
     local hidden = {}
-    for _, p in Players:GetPlayers() do
-        if p.Character then
-            for _, d in p.Character:GetDescendants() do
-                if d:IsA("BasePart") or d:IsA("Decal") then
-                    table.insert(hidden, d)
+    for _, otherPlayer in Players:GetPlayers() do
+        if otherPlayer.Character then
+            for _, desc in otherPlayer.Character:GetDescendants() do
+                if desc:IsA("BasePart") or desc:IsA("Decal") then
+                    table.insert(hidden, desc)
                 end
             end
         end
     end
-    local cam = workspace.CurrentCamera
-    local ct, fov0 = cam.CameraType, cam.FieldOfView
-    cam.CameraType = Enum.CameraType.Scriptable
-    local rp = RaycastParams.new()
-    rp.FilterType = Enum.RaycastFilterType.Exclude
-    rp.FilterDescendantsInstances = { fx }
-    rp.IgnoreWater = false
-    local function ground(p, gateX)
-        if p.Z < -40.5 and gateX and math.abs(p.X - gateX) < 8.5 then
-            return GROUND + PC.GroundY
+    local camera = workspace.CurrentCamera
+    local savedCameraType, savedFov = camera.CameraType, camera.FieldOfView
+    camera.CameraType = Enum.CameraType.Scriptable
+    -- Ground height under a point (ignores the FX folder, hits water); inside a gate footprint the gate floor
+    -- height is used instead; GROUND when nothing is hit.
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = { fxFolder }
+    rayParams.IgnoreWater = false
+    local function groundY(pos, gateX)
+        if pos.Z < -40.5 and gateX and math.abs(pos.X - gateX) < 8.5 then
+            return GROUND + PortalConfig.GroundY
         end
-        local r = workspace:Raycast(V(p.X, 60, p.Z), V(0, -100, 0), rp)
-        return r and r.Position.Y or GROUND
+        local hit = workspace:Raycast(vec3(pos.X, 60, pos.Z), vec3(0, -100, 0), rayParams)
+        return hit and hit.Position.Y or GROUND
     end
-    for i, a in actors do
-        a.walkOut = V(a.info.gateX, GROUND + PC.GroundY, GATE_Z + PC.WalkOut)
-        a.startPos = V(a.info.gateX, GROUND + PC.GroundY, GATE_Z - PC.StartBehind)
-        a.grab = V(EGG_AT.X + a.side * 3.6, EGG_AT.Y, EGG_AT.Z - 2)
-        a.surf = a.gate:FindFirstChild("Surface")
-        a.crossed = false
+    for _i, actor in actors do
+        actor.walkOut = vec3(actor.info.gateX, GROUND + PortalConfig.GroundY, GATE_Z + PortalConfig.WalkOut)
+        actor.startPos = vec3(actor.info.gateX, GROUND + PortalConfig.GroundY, GATE_Z - PortalConfig.StartBehind)
+        actor.grab = vec3(EGG_POS.X + actor.side * 3.6, EGG_POS.Y, EGG_POS.Z - 2)
+        actor.surf = actor.gate:FindFirstChild("Surface")
+        actor.crossed = false
     end
-    local yawRiver = yawFacing(V(0, 0, 1))
-    local yawTemple = yawFacing(V(0, 0, -1))
-    local bbOff = {}
-    local lastShot, camCF = -1, L(V(-216, 30, -22), V(-216, 31, -48))
-    local t0 = os.clock()
-    local shakeAmt = 0
-    local conn
-    conn = RS.RenderStepped:Connect(function(dt)
-        local t = os.clock() - t0
-        fx:SetAttribute("T", t)
-        for _, d in hidden do
-            d.LocalTransparencyModifier = 1
+    local yawRiver = yawFacing(vec3(0, 0, 1))
+    local yawTemple = yawFacing(vec3(0, 0, -1))
+    -- PlayerGui BillboardGuis already given a restore callback (they are re-disabled every frame).
+    local disabledBillboards = {}
+    local lastShot, camCF = -1, lookAt(vec3(-216, 30, -22), vec3(-216, 31, -48))
+    local startTime = os.clock()
+    local impactShake = 0
+    local renderConn
+    -- Per-frame driver. Re-hides streamed-in river eggs, newly enabled ScreenGuis and PlayerGui billboards.
+    renderConn = RunService.RenderStepped:Connect(function(dt)
+        local t = os.clock() - startTime
+        fxFolder:SetAttribute("T", t)
+        for _, hiddenPart in hidden do
+            hiddenPart.LocalTransparencyModifier = 1
         end
-        cam.CameraType = Enum.CameraType.Scriptable
-        for _, fn in { "WaterfallEggs", "LocalRiverEggs" } do
-            local we = workspace:FindFirstChild(fn)
-            if we then
-                for _, d in we:GetDescendants() do
-                    if d:IsA("BasePart") or d:IsA("Decal") then
-                        d.LocalTransparencyModifier = 1
-                    elseif d:IsA("BillboardGui") then
-                        d.Enabled = false
+        camera.CameraType = Enum.CameraType.Scriptable
+        for _, folderName in { "WaterfallEggs", "LocalRiverEggs" } do
+            local eggFolder = workspace:FindFirstChild(folderName)
+            if eggFolder then
+                for _, desc in eggFolder:GetDescendants() do
+                    if desc:IsA("BasePart") or desc:IsA("Decal") then
+                        desc.LocalTransparencyModifier = 1
+                    elseif desc:IsA("BillboardGui") then
+                        desc.Enabled = false
                     end
                 end
             end
         end
-        for _, g in pg:GetChildren() do
-            if g:IsA("ScreenGui") and g ~= white and g.Enabled then
-                g.Enabled = false
+        for _, screenGui in playerGui:GetChildren() do
+            if screenGui:IsA("ScreenGui") and screenGui ~= cardGui and screenGui.Enabled then
+                screenGui.Enabled = false
                 table.insert(restore, function()
-                    g.Enabled = true
+                    screenGui.Enabled = true
                 end)
             end
         end
-        for _, g in pg:GetDescendants() do
-            if g:IsA("BillboardGui") and g.Enabled then
-                g.Enabled = false
-                if not bbOff[g] then
-                    bbOff[g] = true
+        for _, billboard in playerGui:GetDescendants() do
+            if billboard:IsA("BillboardGui") and billboard.Enabled then
+                billboard.Enabled = false
+                if not disabledBillboards[billboard] then
+                    disabledBillboards[billboard] = true
                     table.insert(restore, function()
-                        if g.Parent then
-                            g.Enabled = true
+                        if billboard.Parent then
+                            billboard.Enabled = true
                         end
                     end)
                 end
             end
         end
         -- gates surge
-        local surge = ease(seg(t, 0, 0.8)) * (1 - ease(seg(t, 2.6, 3.6)))
-        for _, g in gates do
-            g:SetAttribute("SurgeLevel", surge)
+        local surge = ease(segment(t, 0, 0.8)) * (1 - ease(segment(t, 2.6, 3.6)))
+        for _, gate in gates do
+            gate:SetAttribute("SurgeLevel", surge)
         end
         -- egg
-        local ey
-        local eggVis = t >= 5.3
+        local eggHeight
+        local eggVisible = t >= 5.3
         if t < 5.3 then
-            ey = 80
+            eggHeight = 80
         elseif t < 6.3 then
-            ey = lerp(60, 0, seg(t, 5.3, 6.3) ^ 2)
+            eggHeight = lerp(60, 0, segment(t, 5.3, 6.3) ^ 2)
         else
-            ey = 0
+            eggHeight = 0
         end
-        local tugK = seg(t, 9.4, 13.3)
-        local shake = t > 9.4 and t < 13.4 and (0.03 + 0.15 * tugK) or 0
+        local tugProgress = segment(t, 9.4, 13.3)
+        local shake = t > 9.4 and t < 13.4 and (0.03 + 0.15 * tugProgress) or 0
         local nudge = t > 9.4 and t < 13.4 and math.sin(t * 7) * 0.45 or 0
         local bob = t > 6.3 and t < 13.4 and -0.6 + 0.15 * math.sin(t * 3) or 0
-        if eggVis and t < 13.4 then
+        -- The last two branches are identical (selene if_same_then_else, pre-existing; harmless, kept as-is).
+        if eggVisible and t < 13.4 then
             egg:PivotTo(
-                CFrame.new(EGG_AT + V(nudge, ey + bob, 0))
-                    * A(math.sin(t * 37) * shake, t < 6.3 and t * 4 or 0, math.cos(t * 31) * shake)
+                CFrame.new(EGG_POS + vec3(nudge, eggHeight + bob, 0))
+                    * angles(math.sin(t * 37) * shake, t < 6.3 and t * 4 or 0, math.cos(t * 31) * shake)
             )
         elseif t >= 13.4 then
             egg:PivotTo(CFrame.new(0, -500, 0))
@@ -501,222 +563,226 @@ function _G.TrailerDuoStartV3()
             egg:PivotTo(CFrame.new(0, -500, 0))
         end
         if t >= 5.3 and t < 6.3 then
-            trail.CFrame = CFrame.new(EGG_AT + V(0, ey + 2, 0))
-            tail:Emit(3)
+            trailPart.CFrame = CFrame.new(EGG_POS + vec3(0, eggHeight + 2, 0))
+            trailEmitter:Emit(3)
         end
-        if t >= 6.3 and not fx:GetAttribute("splash") then
-            fx:SetAttribute("splash", true)
+        if t >= 6.3 and not fxFolder:GetAttribute("splash") then
+            fxFolder:SetAttribute("splash", true)
             spray:Emit(60)
-            shakeAmt = 0.6
-            local ring = Instance.new("Part", fx)
-            ring.Shape = Enum.PartType.Cylinder
-            ring.Material = Enum.Material.Neon
-            ring.Color = Color3.fromRGB(220, 245, 255)
-            ring.Anchored = true
-            ring.CanCollide = false
-            ring.Size = V(0.2, 2, 2)
-            ring.CFrame = CFrame.new(EGG_AT + V(0, 0.1, 0)) * A(0, 0, math.pi / 2)
-            ring.Transparency = 0.2
-            TS:Create(
-                ring,
+            impactShake = 0.6
+            local splashRing = Instance.new("Part", fxFolder)
+            splashRing.Shape = Enum.PartType.Cylinder
+            splashRing.Material = Enum.Material.Neon
+            splashRing.Color = Color3.fromRGB(220, 245, 255)
+            splashRing.Anchored = true
+            splashRing.CanCollide = false
+            splashRing.Size = vec3(0.2, 2, 2)
+            splashRing.CFrame = CFrame.new(EGG_POS + vec3(0, 0.1, 0)) * angles(0, 0, math.pi / 2)
+            splashRing.Transparency = 0.2
+            TweenService:Create(
+                splashRing,
                 TweenInfo.new(0.7, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                { Size = V(0.2, 16, 16), Transparency = 1 }
+                { Size = vec3(0.2, 16, 16), Transparency = 1 }
             ):Play()
         end
-        glow.FillTransparency = 1 - 0.35 * tugK
-        glow.OutlineTransparency = 1 - 0.9 * tugK
+        glow.FillTransparency = 1 - 0.35 * tugProgress
+        glow.OutlineTransparency = 1 - 0.9 * tugProgress
         glow.OutlineColor = Color3.fromRGB(255, 220, 120)
-        if t >= 13.4 and not fx:GetAttribute("burst") then
-            fx:SetAttribute("burst", true)
+        if t >= 13.4 and not fxFolder:GetAttribute("burst") then
+            fxFolder:SetAttribute("burst", true)
             sparks:Emit(80)
-            shakeAmt = 0.9
+            impactShake = 0.9
             flashPart.Transparency = 0
-            TS:Create(
+            TweenService:Create(
                 flashPart,
                 TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                { Size = V(18, 18, 18), Transparency = 0.4 }
+                { Size = vec3(18, 18, 18), Transparency = 0.4 }
             ):Play()
         end
-        -- actors
-        for i, a in actors do
-            local gx = a.info.gateX
-            local pos, yaw, anim, spd, p = a.walkOut, yawRiver, "idle", 1, nil
-            local vis = true
+        -- actors (timeline in the header)
+        for i, actor in actors do
+            local gateX = actor.info.gateX
+            local pos, yaw, anim, animSpeed, poseOffsets = actor.walkOut, yawRiver, "idle", 1, nil
+            local visible = true
             if t < 0.8 then
-                pos = a.startPos
-                vis = false
+                pos = actor.startPos
+                visible = false
             elseif t < 2.6 then
-                local u = seg(t, 0.8, 2.6)
-                local along = u < 0.85 and u or 0.85 + (1 - (1 - (u - 0.85) / 0.15) ^ 2) * 0.15
-                pos = a.startPos:Lerp(a.walkOut, along)
+                local walkAlpha = segment(t, 0.8, 2.6)
+                local walkProgress = walkAlpha < 0.85 and walkAlpha
+                    or 0.85 + (1 - (1 - (walkAlpha - 0.85) / 0.15) ^ 2) * 0.15
+                pos = actor.startPos:Lerp(actor.walkOut, walkProgress)
                 anim = "walk"
-                spd = 1.15
+                animSpeed = 1.15
             elseif t < 3.6 then
-                p = {
-                    Neck = A(0.02, math.sin((t - 2.6) * 5.5 + i * 1.3) * 0.75, 0),
-                    Waist = A(0, math.sin((t - 2.6) * 5.5 + i * 1.3) * 0.2, 0),
+                poseOffsets = {
+                    Neck = angles(0.02, math.sin((t - 2.6) * 5.5 + i * 1.3) * 0.75, 0),
+                    Waist = angles(0, math.sin((t - 2.6) * 5.5 + i * 1.3) * 0.2, 0),
                 }
             elseif t < 4.3 then
-                yaw = lerp(yawRiver, yawTemple, ease(seg(t, 3.6, 4.1)))
-                p = { Neck = A(0.35 * seg(t, 4.0, 4.3), 0, 0) }
+                yaw = lerp(yawRiver, yawTemple, ease(segment(t, 3.6, 4.1)))
+                poseOffsets = { Neck = angles(0.35 * segment(t, 4.0, 4.3), 0, 0) }
             elseif t < 5.0 then
                 yaw = yawTemple
-                p = { Neck = A(0.4, 0.15 * math.sin((t - 4.3) * 4), 0) }
+                poseOffsets = { Neck = angles(0.4, 0.15 * math.sin((t - 4.3) * 4), 0) }
             elseif t < 5.9 then
-                yaw = lerp(yawTemple, yawRiver, ease(seg(t, 5.0, 5.45)))
+                yaw = lerp(yawTemple, yawRiver, ease(segment(t, 5.0, 5.45)))
             elseif t < 6.5 then
-                p = SHOCK
+                poseOffsets = SHOCK_POSE
             elseif t < 9.0 then
-                local k = seg(t, 6.5, 9.0)
-                pos = a.walkOut:Lerp(a.grab, k ^ 1.15)
-                pos = V(pos.X, ground(pos, gx), pos.Z)
-                yaw = yawFacing(a.grab - a.walkOut)
+                local alpha = segment(t, 6.5, 9.0)
+                pos = actor.walkOut:Lerp(actor.grab, alpha ^ 1.15)
+                pos = vec3(pos.X, groundY(pos, gateX), pos.Z)
+                yaw = yawFacing(actor.grab - actor.walkOut)
                 anim = "run"
-                spd = 1.5
+                animSpeed = 1.5
             elseif t < 9.4 then
-                pos = a.grab + V(0, 0.35, 0)
-                yaw = yawFacing(V(-a.side, 0, 0))
-                p = DIVE
+                pos = actor.grab + vec3(0, 0.35, 0)
+                yaw = yawFacing(vec3(-actor.side, 0, 0))
+                poseOffsets = DIVE_POSE
                 anim = nil
             elseif t < 13.4 then
-                local k = math.sin(t * 7 + i * math.pi)
-                pos = a.grab + V(a.side * 0.45 * k, 0, 0)
-                yaw = yawFacing(V(-a.side, 0, 0))
-                p = tug(k)
+                local pull = math.sin(t * 7 + i * math.pi)
+                pos = actor.grab + vec3(actor.side * 0.45 * pull, 0, 0)
+                yaw = yawFacing(vec3(-actor.side, 0, 0))
+                poseOffsets = tugPose(pull)
                 anim = nil
             else
-                local k = seg(t, 13.4, 14.0)
-                pos = a.grab + V(a.side * 5 * k, 1.4 * math.sin(k * math.pi), 0)
-                yaw = yawFacing(V(-a.side, 0, 0))
-                p = BLOWN
+                local alpha = segment(t, 13.4, 14.0)
+                pos = actor.grab + vec3(actor.side * 5 * alpha, 1.4 * math.sin(alpha * math.pi), 0)
+                yaw = yawFacing(vec3(-actor.side, 0, 0))
+                poseOffsets = BLOWN_POSE
                 anim = nil
             end
-            play(a, anim, spd)
-            pose(a, p)
-            a.m:SetAttribute("Anim", anim or "pose")
-            a.m.HumanoidRootPart.CFrame = CFrame.new(pos + V(0, a.off, 0)) * A(0, yaw, 0)
+            playAnim(actor, anim, animSpeed)
+            applyPose(actor, poseOffsets)
+            actor.m:SetAttribute("Anim", anim or "pose")
+            actor.m.HumanoidRootPart.CFrame = CFrame.new(pos + vec3(0, actor.off, 0)) * angles(0, yaw, 0)
             -- gate crossing fade
-            if not vis then
-                for _, pt in a.parts do
-                    pt.LocalTransparencyModifier = 1
+            if not visible then
+                for _, part in actor.parts do
+                    part.LocalTransparencyModifier = 1
                 end
             elseif t < 3.6 then
-                local n, o = a.surf.CFrame.LookVector, a.surf.Position
-                for _, pt in a.parts do
-                    if pt:IsA("BasePart") then
-                        local dd = (pt.Position - o):Dot(n)
-                        pt.LocalTransparencyModifier = clamp(0.5 - dd / PC.FadeBand, 0, 1)
+                local surfaceNormal, surfaceOrigin = actor.surf.CFrame.LookVector, actor.surf.Position
+                for _, part in actor.parts do
+                    if part:IsA("BasePart") then
+                        local depth = (part.Position - surfaceOrigin):Dot(surfaceNormal)
+                        part.LocalTransparencyModifier = clamp(0.5 - depth / PortalConfig.FadeBand, 0, 1)
                     else
-                        pt.LocalTransparencyModifier = 0
+                        part.LocalTransparencyModifier = 0
                     end
                 end
-                local chest = a.m:FindFirstChild("UpperTorso")
-                if chest and not a.crossed and (chest.Position - o):Dot(n) > 0 then
-                    a.crossed = true
+                local chest = actor.m:FindFirstChild("UpperTorso")
+                if chest and not actor.crossed and (chest.Position - surfaceOrigin):Dot(surfaceNormal) > 0 then
+                    actor.crossed = true
                     if _G.PortalRipple then
-                        _G.PortalRipple(a.gate, chest.Position)
+                        _G.PortalRipple(actor.gate, chest.Position)
                     end
                 end
             else
-                for _, pt in a.parts do
-                    pt.LocalTransparencyModifier = 0
+                for _, part in actor.parts do
+                    part.LocalTransparencyModifier = 0
                 end
             end
-            a.head = a.m.Head.Position
+            actor.head = actor.m.Head.Position
         end
-        -- camera
-        local jen, jac = actors[1].head, actors[2].head
-        local mid = (jen + jac) / 2
-        local e = EGG_AT + V(0, ey + 2, 0)
-        local target, fv, sid
+        -- camera: pick this frame's target shot (cut ids below)
+        -- Known issue (not fixed): errors every frame if either rig failed to build (no nil fallback as in v2).
+        local jenHead, jacHead = actors[1].head, actors[2].head
+        local mid = (jenHead + jacHead) / 2
+        local _eggFocus = EGG_POS + vec3(0, eggHeight + 2, 0)
+        local target, targetFov, shotId
         if t < 0.8 then
-            sid = 0
-            target = L(V(-216, 31, -14 + 3 * seg(t, 0, 0.8)), V(-216, 34, -50))
-            fv = 66
+            shotId = 0
+            target = lookAt(vec3(-216, 31, -14 + 3 * segment(t, 0, 0.8)), vec3(-216, 34, -50))
+            targetFov = 66
         elseif t < 2.6 then
-            sid = 1
-            target = L(V(-216, 29, -24 + 2 * seg(t, 0.8, 2.6)), mid)
-            fv = 64
+            shotId = 1
+            target = lookAt(vec3(-216, 29, -24 + 2 * segment(t, 0.8, 2.6)), mid)
+            targetFov = 64
         elseif t < 3.1 then
-            sid = 2
-            target = L(jen + V(0, 0.3, 5.5), jen)
-            fv = 40
+            shotId = 2
+            target = lookAt(jenHead + vec3(0, 0.3, 5.5), jenHead)
+            targetFov = 40
         elseif t < 3.6 then
-            sid = 3
-            target = L(jac + V(0, 0.3, 5.5), jac)
-            fv = 40
+            shotId = 3
+            target = lookAt(jacHead + vec3(0, 0.3, 5.5), jacHead)
+            targetFov = 40
         elseif t < 5.0 then
-            sid = 4
-            local k = ease(seg(t, 3.75, 4.35))
-            target = L(V(-216, 29 + 4 * k, -30), mid:Lerp(TEMPLE_LOOK, k))
-            fv = 62
+            shotId = 4
+            local k = ease(segment(t, 3.75, 4.35))
+            target = lookAt(vec3(-216, 29 + 4 * k, -30), mid:Lerp(TEMPLE_LOOK, k))
+            targetFov = 62
         elseif t < 5.9 then
-            sid = 5
-            target = L(V(-216, 29, -26), mid + V(0, 0.5, 0))
-            fv = 60
+            shotId = 5
+            target = lookAt(vec3(-216, 29, -26), mid + vec3(0, 0.5, 0))
+            targetFov = 60
         elseif t < 6.6 then
-            sid = 6
-            target = L(V(-236, 30, 6), EGG_AT + V(0, ey * 0.6 + 2, 0))
-            fv = 50
+            shotId = 6
+            target = lookAt(vec3(-236, 30, 6), EGG_POS + vec3(0, eggHeight * 0.6 + 2, 0))
+            targetFov = 50
         elseif t < 9.0 then
-            sid = 7
-            target = L(V(mid.X, 28.5, mid.Z + 16), mid + V(0, 1, 0))
-            fv = 62
+            shotId = 7
+            target = lookAt(vec3(mid.X, 28.5, mid.Z + 16), mid + vec3(0, 1, 0))
+            targetFov = 62
         elseif t < 13.4 then
             local cut = math.floor((t - 9.0) / 1.1) % 3
-            sid = 8 + math.floor((t - 9.0) / 1.1)
+            shotId = 8 + math.floor((t - 9.0) / 1.1)
             if cut == 0 then
-                target = L(EGG_AT + V(0, 4.5, -11), EGG_AT + V(0, 2, 0))
-                fv = 50
+                target = lookAt(EGG_POS + vec3(0, 4.5, -11), EGG_POS + vec3(0, 2, 0))
+                targetFov = 50
             elseif cut == 1 then
-                target = L(jen + V(4, 0.3, -2.5), jen)
-                fv = 42
+                target = lookAt(jenHead + vec3(4, 0.3, -2.5), jenHead)
+                targetFov = 42
             else
-                target = L(jac + V(-4, 0.3, -2.5), jac)
-                fv = 42
+                target = lookAt(jacHead + vec3(-4, 0.3, -2.5), jacHead)
+                targetFov = 42
             end
         else
-            sid = 99
-            target = L(EGG_AT + V(0, 2.5, -9), EGG_AT + V(0, 1.5, 0))
-            fv = 52
+            shotId = 99
+            target = lookAt(EGG_POS + vec3(0, 2.5, -9), EGG_POS + vec3(0, 1.5, 0))
+            targetFov = 52
         end
-        if sid ~= lastShot then
-            lastShot = sid
+        -- Hard cut when the shot id changes, otherwise ease towards the shot's target.
+        if shotId ~= lastShot then
+            lastShot = shotId
             camCF = target
         else
             camCF = camCF:Lerp(target, 0.14)
         end
-        shakeAmt = math.max(0, shakeAmt - dt * 1.6)
-        local sh = shakeAmt + shake * 2.2
-        cam.CFrame = camCF
-            * CFrame.new(math.noise(t * 22, 1) * sh, math.noise(t * 22, 5) * sh, 0)
-            * A(0, 0, math.noise(t * 18, 9) * sh * 0.05)
-        cam.FieldOfView = lerp(cam.FieldOfView, fv, 0.2)
-        -- white card
-        wf.BackgroundTransparency = 1 - seg(t, 13.5, 13.9)
-        local tt = 1 - seg(t, 14.2, 14.7)
-        t1.TextTransparency = tt
-        s1.Transparency = tt
-        local t2t = 1 - seg(t, 14.6, 15.1)
-        t2.TextTransparency = t2t
-        s2.Transparency = t2t
+        impactShake = math.max(0, impactShake - dt * 1.6)
+        local shakeStrength = impactShake + shake * 2.2
+        camera.CFrame = camCF
+            * CFrame.new(math.noise(t * 22, 1) * shakeStrength, math.noise(t * 22, 5) * shakeStrength, 0)
+            * angles(0, 0, math.noise(t * 18, 9) * shakeStrength * 0.05)
+        camera.FieldOfView = lerp(camera.FieldOfView, targetFov, 0.2)
+        -- white card / end titles
+        flashFrame.BackgroundTransparency = 1 - segment(t, 13.5, 13.9)
+        local titleTransparency = 1 - segment(t, 14.2, 14.7)
+        titleLabel.TextTransparency = titleTransparency
+        titleStroke.Transparency = titleTransparency
+        local taglineTransparency = 1 - segment(t, 14.6, 15.1)
+        taglineLabel.TextTransparency = taglineTransparency
+        taglineStroke.Transparency = taglineTransparency
+        -- Cleanup (the only exit): runs once, then the connection is gone.
         if t > 18 then
-            conn:Disconnect()
-            fx:Destroy()
-            white:Destroy()
-            for _, d in hidden do
-                if d.Parent then
-                    d.LocalTransparencyModifier = 0
+            renderConn:Disconnect()
+            fxFolder:Destroy()
+            cardGui:Destroy()
+            for _, hiddenPart in hidden do
+                if hiddenPart.Parent then
+                    hiddenPart.LocalTransparencyModifier = 0
                 end
             end
-            for _, fn in { "WaterfallEggs", "LocalRiverEggs" } do
-                local we2 = workspace:FindFirstChild(fn)
-                if we2 then
-                    for _, d in we2:GetDescendants() do
-                        if d:IsA("BasePart") or d:IsA("Decal") then
-                            d.LocalTransparencyModifier = 0
-                        elseif d:IsA("BillboardGui") then
-                            d.Enabled = true
+            for _, folderName in { "WaterfallEggs", "LocalRiverEggs" } do
+                local eggFolder = workspace:FindFirstChild(folderName)
+                if eggFolder then
+                    for _, desc in eggFolder:GetDescendants() do
+                        if desc:IsA("BasePart") or desc:IsA("Decal") then
+                            desc.LocalTransparencyModifier = 0
+                        elseif desc:IsA("BillboardGui") then
+                            desc.Enabled = true
                         end
                     end
                 end
@@ -724,12 +790,14 @@ function _G.TrailerDuoStartV3()
             for i = #restore, 1, -1 do
                 restore[i]()
             end
-            cam.CameraType = ct
-            cam.FieldOfView = fov0
+            camera.CameraType = savedCameraType
+            camera.FieldOfView = savedFov
             running = false
         end
     end)
 end
+
+-- ===== 7. Test hook =====
 player:GetAttributeChangedSignal("TrailerGo3"):Connect(function()
     if player:GetAttribute("TrailerGo3") then
         _G.TrailerDuoStartV3()

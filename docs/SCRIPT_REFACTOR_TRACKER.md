@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 46 |
+| Pending | 42 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 138 |
+| Refactored | 142 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -251,10 +251,10 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Cinematics/CineCamClient.client.luau` | LocalScript | 405 | 541 | Pending | — | — |
-| `client/Cinematics/TrailerDuoV2.client.luau` | LocalScript | 140 | 549 | Pending | — | — |
-| `client/Cinematics/TrailerDuoV3.client.luau` | LocalScript | 178 | 737 | Pending | — | — |
-| `server/Cinematics/CineCamServer.server.luau` | Script | 78 | 121 | Pending | — | — |
+| `client/Cinematics/CineCamClient.client.luau` | LocalScript | 405 | 587 | Refactored | SAME | Renamed locals, header documenting CineCamOpen/CineCamRemote contract + owner gate, section banners, comments |
+| `client/Cinematics/TrailerDuoV2.client.luau` | LocalScript | 140 | 633 | Refactored | SAME | Renamed locals/services/constants, split angles/lerp/clamp decl, header with _G contracts + full timeline, section banners, comments; known issues documented |
+| `client/Cinematics/TrailerDuoV3.client.luau` | LocalScript | 178 | 805 | Refactored | SAME | Renamed locals/services/constants, header with _G + attribute contracts and timeline, section banners, comments; if_same_then_else documented, not fixed |
+| `server/Cinematics/CineCamServer.server.luau` | Script | 78 | 149 | Refactored | SAME | Renamed open->openEvent, allowed->isAllowed, n->component; header documents remote contract, owner gating and validation; banners |
 
 ## Batch 20 — Admin and cross-server
 
@@ -1606,39 +1606,39 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Cinematics/CineCamClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 19 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 19 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Hatch An Anime CineCam: place in StarterPlayerScripts as CineCamClient.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×7, OnClientEvent×1, RunService×2
-- **Readability problems:** 44 dense one-line statements; 8 one-letter locals
+- **Readability problems:** Generic names (open, label, button, field, say, clean, keys, speed), single-letter spline vars, no remote contract docs
 
 ### `client/Cinematics/TrailerDuoV2.client.luau`
 
-- **Type:** LocalScript · **Batch:** 19 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 19 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** TrailerDuo (v2): two players drop from a portal, look around, see their temples, fight over a river egg. /trailer opens a picker with every trailer version. Recording only, local only.
 - **Dependencies:** TrailerConfig
 - **Public functions:** _G.TrailerDuoStartV2
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 22 dense one-line statements; 23 lines >160 chars; 16 one-letter locals
+- **Readability problems:** Cryptic locals (A, V, L, RS, SG, pg, a, p, g, d, k, sl, wf, ey, sid, sh), multi-assign helper line, duplicate lastShot local, dead picker, no header/timeline docs
 
 ### `client/Cinematics/TrailerDuoV3.client.luau`
 
-- **Type:** LocalScript · **Batch:** 19 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 19 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** TrailerDuoV3: Jen1sen + Jacobo6I9 step out of two Summon Gates by the temple, look around, peek at the temple, an egg drops from the sky into the river, both sprint and fight over it. /trailer opens t
 - **Dependencies:** PortalBuilder, PortalConfig, TrailerConfig
 - **Public functions:** _G.TrailerDuoStartV3
 - **Events:** Connect×3, RunService×1
-- **Readability problems:** 30 dense one-line statements; 33 lines >160 chars; 16 one-letter locals
+- **Readability problems:** Cryptic locals (A, V, L, PC, TS, a, p, g, k, n, o, dd, fn, we, sid), undocumented _G/attribute contracts, if_same_then_else (pre-existing)
 
 ### `server/Cinematics/CineCamServer.server.luau`
 
-- **Type:** Script · **Batch:** 19 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 19 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Hatch An Anime CineCam: place in ServerScriptService as CineCamServer.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×1, OnServerInvoke×1
-- **Readability problems:** 17 dense one-line statements
+- **Readability problems:** Minimal header; remote contract and validation rules undocumented; names open/allowed/n
 
 ### `client/Admin/AdminTerminal.client.luau`
 

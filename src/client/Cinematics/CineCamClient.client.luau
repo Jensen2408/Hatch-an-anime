@@ -1,4 +1,26 @@
--- Hatch An Anime CineCam: place in StarterPlayerScripts as CineCamClient.
+--[[ StarterPlayerScripts.CineCamClient  (LocalScript)
+CineCam: an owner-only camera tool for recording trailer shots. A side panel (ScreenGui "CineCamUI", F6) lets you
+free-fly the camera, drop up to 40 camera points (CFrame + FOV), save up to 25 named shots, and replay a shot as a
+Catmull-Rom spline (optionally tracking a clicked model and optionally starting a Roblox CaptureService video capture).
+F7 stops everything and restores the camera and UI.
+
+Who can run it: UserId 168774222 (same id as CineCamServer.OWNER_ID; hard-coded here, NOT TrailerConfig.OwnerIds),
+or UserId 0 in Studio. Everyone else returns before the remotes are awaited. The server re-checks on every call.
+
+Remote contract (created by CineCamServer in ReplicatedStorage; payload shapes are contracts)
+  CineCamOpen   RemoteEvent, server -> client, no payload. Fired when an allowed player types /film. The client then
+                loads its shots and shows the panel.
+  CineCamRemote RemoteFunction, client -> server:
+    InvokeServer("load")         -> { ok = true, shots = { Shot } } | { ok = false, error = string }
+    InvokeServer("save", shots)  -> { ok = true } | { ok = false, error = string }
+    Shot  = { name = string (1-40), duration = number (1-29 s), points = { Point } (2-40) }
+    Point = { cf = { 12 numbers from CFrame:GetComponents() }, fov = number (20-100) }
+  The client applies the same limits before saving; a failed save keeps the shot for this session only.
+
+State: points = the path being edited, shots = the saved shot list, playToken = generation counter that cancels a
+running preview (stopAll / a new preview bump it), uiHidden = recording-mode hiding is active.
+]]
+-- ===== 1. Services and owner gate =====
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -10,8 +32,10 @@ local player = Players.LocalPlayer
 if player.UserId ~= 168774222 and not (RunService:IsStudio() and player.UserId == 0) then
     return
 end
+
+-- ===== 2. Remotes and panel GUI =====
 local remote = ReplicatedStorage:WaitForChild("CineCamRemote")
-local open = ReplicatedStorage:WaitForChild("CineCamOpen")
+local openEvent = ReplicatedStorage:WaitForChild("CineCamOpen")
 local camera = workspace.CurrentCamera
 local gui = Instance.new("ScreenGui")
 gui.Name = "CineCamUI"
@@ -35,16 +59,17 @@ Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
 local layout = Instance.new("UIListLayout", panel)
 layout.Padding = UDim.new(0, 5)
 layout.SortOrder = Enum.SortOrder.LayoutOrder
-local pad = Instance.new("UIPadding", panel)
-pad.PaddingTop = UDim.new(0, 10)
-pad.PaddingLeft = UDim.new(0, 10)
-pad.PaddingRight = UDim.new(0, 10)
+local padding = Instance.new("UIPadding", panel)
+padding.PaddingTop = UDim.new(0, 10)
+padding.PaddingLeft = UDim.new(0, 10)
+padding.PaddingRight = UDim.new(0, 10)
 
-local order = 0
-local function label(message, height)
-    order += 1
+-- ===== 3. Panel widget builders (appended in LayoutOrder) =====
+local layoutOrder = 0
+local function addLabel(message, height)
+    layoutOrder += 1
     local item = Instance.new("TextLabel")
-    item.LayoutOrder = order
+    item.LayoutOrder = layoutOrder
     item.Size = UDim2.new(1, 0, 0, height or 24)
     item.BackgroundTransparency = 1
     item.TextColor3 = Color3.fromRGB(235, 239, 245)
@@ -56,10 +81,10 @@ local function label(message, height)
     item.Parent = panel
     return item
 end
-local function button(message, callback)
-    order += 1
+local function addButton(message, callback)
+    layoutOrder += 1
     local item = Instance.new("TextButton")
-    item.LayoutOrder = order
+    item.LayoutOrder = layoutOrder
     item.Size = UDim2.new(1, 0, 0, 34)
     item.BackgroundColor3 = Color3.fromRGB(38, 57, 75)
     item.TextColor3 = Color3.new(1, 1, 1)
@@ -73,10 +98,10 @@ local function button(message, callback)
     end)
     return item
 end
-local function field(title, default)
-    order += 1
+local function addField(title, default)
+    layoutOrder += 1
     local box = Instance.new("TextBox")
-    box.LayoutOrder = order
+    box.LayoutOrder = layoutOrder
     box.Size = UDim2.new(1, 0, 0, 30)
     box.BackgroundColor3 = Color3.fromRGB(28, 37, 49)
     box.TextColor3 = Color3.new(1, 1, 1)
@@ -90,15 +115,16 @@ local function field(title, default)
     return box
 end
 
-label("CINECAM  •  /film  •  F6 panel  •  F7 stop", 26)
-local status = label("Ready. Use Studio Play or join the game as owner.", 40)
-local function say(message)
-    status.Text = message
+-- ===== 4. Panel header, input fields and state =====
+addLabel("CINECAM  •  /film  •  F6 panel  •  F7 stop", 26)
+local statusLabel = addLabel("Ready. Use Studio Play or join the game as owner.", 40)
+local function setStatus(message)
+    statusLabel.Text = message
 end
-local nameBox = field("Shot name", "River Reveal")
-local durationBox = field("Duration in seconds (max 29)", "18")
-local countdownBox = field("Countdown in seconds", "5")
-local fovBox = field("Camera zoom / field of view (20 to 100)", "70")
+local nameBox = addField("Shot name", "River Reveal")
+local durationBox = addField("Duration in seconds (max 29)", "18")
+local countdownBox = addField("Countdown in seconds", "5")
+local fovBox = addField("Camera zoom / field of view (20 to 100)", "70")
 local points = {}
 local shots = {}
 local target = nil
@@ -106,9 +132,9 @@ local pickingTarget = false
 local flying = false
 local playing = false
 local recording = false
-local clean = false
-local speed = 30
-local keys = {}
+local uiHidden = false
+local flySpeed = 30
+local heldKeys = {}
 local rightMouse = false
 local originalCamera = nil
 local hiddenGui = {}
@@ -119,6 +145,8 @@ local guideMode = "Off"
 local playToken = 0
 local captureRunning = false
 
+-- ===== 5. Recording mode: UI hiding and camera takeover =====
+-- Hides (true) or restores (false) every CoreGui type, remembering each one's previous state.
 local function setCoreHidden(shouldHide)
     for _, coreType in ipairs(Enum.CoreGuiType:GetEnumItems()) do
         if coreType ~= Enum.CoreGuiType.All then
@@ -137,11 +165,13 @@ local function setCoreHidden(shouldHide)
         table.clear(hiddenCore)
     end
 end
+-- Disables every ScreenGui / BillboardGui / SurfaceGui (except the panel) in PlayerGui and Workspace, including ones
+-- added while hidden (DescendantAdded), and hides the panel. restoreVisualUI undoes it.
 local function hideVisualUI()
-    if clean then
+    if uiHidden then
         return
     end
-    clean = true
+    uiHidden = true
     local function hideItem(item)
         if (item:IsA("ScreenGui") or item:IsA("BillboardGui") or item:IsA("SurfaceGui")) and item ~= gui then
             if hiddenGui[item] == nil then
@@ -160,10 +190,10 @@ local function hideVisualUI()
     gui.Enabled = false
 end
 local function restoreVisualUI()
-    if not clean then
+    if not uiHidden then
         return
     end
-    clean = false
+    uiHidden = false
     for _, connection in ipairs(hiddenConnections) do
         connection:Disconnect()
     end
@@ -177,6 +207,7 @@ local function restoreVisualUI()
     setCoreHidden(false)
     gui.Enabled = true
 end
+-- Makes the camera Scriptable, remembering the original type / subject / FOV the first time.
 local function enterCamera()
     camera = workspace.CurrentCamera
     if not originalCamera then
@@ -189,6 +220,7 @@ local function enterCamera()
     end
     camera.CameraType = Enum.CameraType.Scriptable
 end
+-- Note: originalCamera.cf is recorded but never restored (pre-existing).
 local function exitCamera()
     if originalCamera then
         camera.CameraType = originalCamera.cameraType
@@ -197,6 +229,7 @@ local function exitCamera()
         originalCamera = nil
     end
 end
+-- F7 / Stop button: cancels a preview, stops capture, restores UI + camera.
 local function stopAll()
     playToken += 1
     playing = false
@@ -207,15 +240,17 @@ local function stopAll()
     end
     restoreVisualUI()
     exitCamera()
-    say("Stopped. Camera and UI restored.")
+    setStatus("Stopped. Camera and UI restored.")
 end
 
-local function cfArray(cf)
-    return { cf:GetComponents() }
+-- ===== 6. Path math and persistence =====
+local function cfArray(cframe)
+    return { cframe:GetComponents() }
 end
 local function pointCF(point)
     return CFrame.new(table.unpack(point.cf))
 end
+-- Position of the tracked model / part; clears the target once it is destroyed.
 local function targetPosition()
     if not target or not target.Parent then
         target = nil
@@ -229,106 +264,111 @@ local function targetPosition()
     end
     return nil
 end
-local function lerp(a, b, t)
-    return a + (b - a) * t
+local function lerp(from, to, alpha)
+    return from + (to - from) * alpha
 end
-local function catmull(a, b, c, d, t)
+-- Catmull-Rom spline point between p1 and p2.
+local function catmull(p0, p1, p2, p3, t)
     local t2, t3 = t * t, t * t * t
-    return 0.5 * ((b * 2) + (c - a) * t + (a * 2 - b * 5 + c * 4 - d) * t2 + (-a + b * 3 - c * 3 + d) * t3)
+    return 0.5 * ((p1 * 2) + (p2 - p0) * t + (p0 * 2 - p1 * 5 + p2 * 4 - p3) * t2 + (-p0 + p1 * 3 - p2 * 3 + p3) * t3)
 end
+-- Places the camera at progress alpha (0..1) along the points, smoothstepped per segment. Looks at the tracked
+-- target when there is one, otherwise slerps between the two neighbouring points' rotations.
 local function cameraAt(path, alpha)
-    local n = #path
-    local scaled = math.clamp(alpha, 0, 1) * (n - 1)
-    local i = math.min(math.floor(scaled) + 1, n - 1)
-    local t = scaled - (i - 1)
-    t = t * t * (3 - 2 * t)
-    local a = pointCF(path[math.max(i - 1, 1)])
-    local b = pointCF(path[i])
-    local c = pointCF(path[i + 1])
-    local d = pointCF(path[math.min(i + 2, n)])
-    local pos = catmull(a.Position, b.Position, c.Position, d.Position, t)
+    local count = #path
+    local scaled = math.clamp(alpha, 0, 1) * (count - 1)
+    local segIndex = math.min(math.floor(scaled) + 1, count - 1)
+    local localT = scaled - (segIndex - 1)
+    localT = localT * localT * (3 - 2 * localT)
+    local cf0 = pointCF(path[math.max(segIndex - 1, 1)])
+    local cf1 = pointCF(path[segIndex])
+    local cf2 = pointCF(path[segIndex + 1])
+    local cf3 = pointCF(path[math.min(segIndex + 2, count)])
+    local pos = catmull(cf0.Position, cf1.Position, cf2.Position, cf3.Position, localT)
     local aim = targetPosition()
     if aim and (aim - pos).Magnitude > 0.1 then
         camera.CFrame = CFrame.lookAt(pos, aim)
     else
-        local orientation = b:Lerp(c, t)
+        local orientation = cf1:Lerp(cf2, localT)
         camera.CFrame = CFrame.new(pos) * orientation.Rotation
     end
-    camera.FieldOfView = lerp(path[i].fov, path[i + 1].fov, t)
+    camera.FieldOfView = lerp(path[segIndex].fov, path[segIndex + 1].fov, localT)
     camera.Focus = CFrame.new(aim or (pos + camera.CFrame.LookVector * 100))
 end
+-- Sends the whole shot list to the server (see the remote contract in the header).
 local function saveShots()
     local ok, response = pcall(function()
         return remote:InvokeServer("save", shots)
     end)
     if not ok or not response or not response.ok then
-        say("Shot kept this session; cloud save failed: " .. tostring(response and response.error or response))
+        setStatus("Shot kept this session; cloud save failed: " .. tostring(response and response.error or response))
     else
-        say("Saved " .. #shots .. " shot(s).")
+        setStatus("Saved " .. #shots .. " shot(s).")
     end
 end
 
-button("Free fly  •  WASD / Q E / right mouse", function()
+-- ===== 7. Panel buttons (created in display order) =====
+addButton("Free fly  •  WASD / Q E / right mouse", function()
     if playing then
         return
     end
     enterCamera()
     flying = not flying
-    say(flying and "Flying. Shift = faster, mouse wheel = speed." or "Fly paused. Add a point or replay.")
+    setStatus(flying and "Flying. Shift = faster, mouse wheel = speed." or "Fly paused. Add a point or replay.")
 end)
-button("Apply camera zoom", function()
+addButton("Apply camera zoom", function()
     local value = tonumber(fovBox.Text)
     if not value or value < 20 or value > 100 then
-        say("Zoom value must be 20 to 100.")
+        setStatus("Zoom value must be 20 to 100.")
         return
     end
     enterCamera()
     camera.FieldOfView = value
-    say("Camera field of view set to " .. value .. ". Add a point to save it.")
+    setStatus("Camera field of view set to " .. value .. ". Add a point to save it.")
 end)
-button("Set camera point", function()
+addButton("Set camera point", function()
     if playing then
         return
     end
     if #points >= 40 then
-        say("Maximum 40 points.")
+        setStatus("Maximum 40 points.")
         return
     end
-    local cf = camera.CFrame
-    table.insert(points, { cf = cfArray(cf), fov = camera.FieldOfView })
-    say("Point " .. #points .. " saved with position, direction, and zoom.")
+    local cameraCF = camera.CFrame
+    table.insert(points, { cf = cfArray(cameraCF), fov = camera.FieldOfView })
+    setStatus("Point " .. #points .. " saved with position, direction, and zoom.")
 end)
-button("Track object under mouse / clear tracking", function()
+addButton("Track object under mouse / clear tracking", function()
     if target then
         target = nil
-        say("Tracking cleared.")
+        setStatus("Tracking cleared.")
         return
     end
     pickingTarget = true
-    say("Click an egg, player, or model in the world to track it.")
+    setStatus("Click an egg, player, or model in the world to track it.")
 end)
-button("Undo last point", function()
+addButton("Undo last point", function()
     if playing then
         return
     end
     if #points > 0 then
         table.remove(points)
-        say(#points .. " points remain.")
+        setStatus(#points .. " points remain.")
     end
 end)
-button("Save current shot", function()
+addButton("Save current shot", function()
     if #points < 2 then
-        say("Add at least two camera points.")
+        setStatus("Add at least two camera points.")
         return
     end
     local duration = tonumber(durationBox.Text)
     if not duration or duration < 1 or duration > 29 then
-        say("Duration must be 1 to 29 seconds.")
+        setStatus("Duration must be 1 to 29 seconds.")
         return
     end
     local name = nameBox.Text:sub(1, 40)
     if name == "" then
-        say("Enter a shot name.")
+        setStatus("Enter a shot name.")
         return
     end
     for index, shot in ipairs(shots) do
@@ -338,26 +378,28 @@ button("Save current shot", function()
         end
     end
     if #shots >= 25 then
-        say("Maximum 25 saved shots.")
+        setStatus("Maximum 25 saved shots.")
         return
     end
     table.insert(shots, { name = name, duration = duration, points = table.clone(points) })
     saveShots()
 end)
-button("Load named shot", function()
+addButton("Load named shot", function()
     for _, shot in ipairs(shots) do
         if shot.name == nameBox.Text then
             points = table.clone(shot.points)
             durationBox.Text = tostring(shot.duration)
-            say("Loaded " .. shot.name .. " with " .. #points .. " points.")
+            setStatus("Loaded " .. shot.name .. " with " .. #points .. " points.")
             return
         end
     end
-    say("No saved shot with that exact name.")
+    setStatus("No saved shot with that exact name.")
 end)
-button("Preview saved path", function()
+-- Countdown, optional video capture, then replays the path for `duration` seconds. Every wait checks the
+-- token so stopAll / a newer preview cancels this one.
+addButton("Preview saved path", function()
     if #points < 2 or playing then
-        say("Set or load at least two points.")
+        setStatus("Set or load at least two points.")
         return
     end
     local duration = math.clamp(tonumber(durationBox.Text) or 18, 1, 29)
@@ -372,7 +414,7 @@ button("Preview saved path", function()
             if token ~= playToken then
                 return
             end
-            say("Starting in " .. second .. "…")
+            setStatus("Starting in " .. second .. "…")
             task.wait(1)
         end
         if token ~= playToken then
@@ -395,7 +437,7 @@ button("Preview saved path", function()
             end)
             captureRunning = ok and result == Enum.VideoCaptureStartedResult.Success
             if not captureRunning then
-                say("Capture unavailable here; replaying for screen recording.")
+                setStatus("Capture unavailable here; replaying for screen recording.")
             end
         end
         hideVisualUI()
@@ -415,16 +457,16 @@ button("Preview saved path", function()
             end
             playing = false
             restoreVisualUI()
-            say("Replay complete. Edit points or run it again.")
+            setStatus("Replay complete. Edit points or run it again.")
         end
     end)
 end)
-button("Recording: OFF", function(item)
+addButton("Recording: OFF", function(item)
     recording = not recording
     item.Text = recording and "Recording: ON (Roblox capture)" or "Recording: OFF"
-    say(recording and "Replay will request a video capture." or "Replay can be screen recorded externally.")
+    setStatus(recording and "Replay will request a video capture." or "Replay can be screen recorded externally.")
 end)
-button("Framing: OFF", function(item)
+addButton("Framing: OFF", function(item)
     guideMode = guideMode == "Off" and "Vertical 9:16" or (guideMode == "Vertical 9:16" and "Wide 16:9" or "Off")
     item.Text = "Framing: " .. guideMode
     if frameGuide then
@@ -444,13 +486,15 @@ button("Framing: OFF", function(item)
         frameGuide.Size = UDim2.fromOffset(width, width / ratio)
         frameGuide.Parent = gui
     end
-    say("Guide is for composition; set the recording window or crop in your editor.")
+    setStatus("Guide is for composition; set the recording window or crop in your editor.")
 end)
-button("Stop and restore camera/UI", function()
+addButton("Stop and restore camera/UI", function()
     stopAll()
 end)
-label("F6: panel   F7: stop   Shift: fast fly", 23)
+addLabel("F6: panel   F7: stop   Shift: fast fly", 23)
 
+-- ===== 8. Input and free-fly =====
+-- F6 / F7 work even while typing (checked before `processed`).
 UserInputService.InputBegan:Connect(function(input, processed)
     if input.KeyCode == Enum.KeyCode.F6 then
         gui.Enabled = not gui.Enabled
@@ -467,75 +511,77 @@ UserInputService.InputBegan:Connect(function(input, processed)
         local hit = player:GetMouse().Target
         pickingTarget = false
         if not hit then
-            say("No object selected. Try again.")
+            setStatus("No object selected. Try again.")
             return
         end
         target = hit:FindFirstAncestorOfClass("Model") or hit
-        say("Tracking " .. target.Name .. " while it exists.")
+        setStatus("Tracking " .. target.Name .. " while it exists.")
         return
     end
     if input.UserInputType == Enum.UserInputType.MouseButton2 then
         rightMouse = true
     end
-    keys[input.KeyCode] = true
+    heldKeys[input.KeyCode] = true
 end)
 UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton2 then
         rightMouse = false
     end
-    keys[input.KeyCode] = nil
+    heldKeys[input.KeyCode] = nil
 end)
 UserInputService.InputChanged:Connect(function(input)
     if not flying or playing then
         return
     end
     if input.UserInputType == Enum.UserInputType.MouseWheel then
-        speed = math.clamp(speed * (input.Position.Z > 0 and 1.2 or 1 / 1.2), 2, 400)
+        flySpeed = math.clamp(flySpeed * (input.Position.Z > 0 and 1.2 or 1 / 1.2), 2, 400)
     elseif input.UserInputType == Enum.UserInputType.MouseMovement and rightMouse then
         local yaw = CFrame.Angles(0, -input.Delta.X * 0.003, 0)
         local pitch = CFrame.Angles(-input.Delta.Y * 0.003, 0, 0)
         camera.CFrame = CFrame.new(camera.CFrame.Position) * yaw * camera.CFrame.Rotation * pitch
     end
 end)
+-- Free-fly movement in camera space; Shift = 3x.
 RunService.RenderStepped:Connect(function(dt)
     if not flying or playing then
         return
     end
-    local v = Vector3.zero
-    if keys[Enum.KeyCode.W] then
-        v += Vector3.new(0, 0, -1)
+    local moveDir = Vector3.zero
+    if heldKeys[Enum.KeyCode.W] then
+        moveDir += Vector3.new(0, 0, -1)
     end
-    if keys[Enum.KeyCode.S] then
-        v += Vector3.new(0, 0, 1)
+    if heldKeys[Enum.KeyCode.S] then
+        moveDir += Vector3.new(0, 0, 1)
     end
-    if keys[Enum.KeyCode.A] then
-        v += Vector3.new(-1, 0, 0)
+    if heldKeys[Enum.KeyCode.A] then
+        moveDir += Vector3.new(-1, 0, 0)
     end
-    if keys[Enum.KeyCode.D] then
-        v += Vector3.new(1, 0, 0)
+    if heldKeys[Enum.KeyCode.D] then
+        moveDir += Vector3.new(1, 0, 0)
     end
-    if keys[Enum.KeyCode.E] then
-        v += Vector3.new(0, 1, 0)
+    if heldKeys[Enum.KeyCode.E] then
+        moveDir += Vector3.new(0, 1, 0)
     end
-    if keys[Enum.KeyCode.Q] then
-        v += Vector3.new(0, -1, 0)
+    if heldKeys[Enum.KeyCode.Q] then
+        moveDir += Vector3.new(0, -1, 0)
     end
-    if v.Magnitude > 0 then
-        local boost = keys[Enum.KeyCode.LeftShift] and 3 or 1
-        camera.CFrame += camera.CFrame:VectorToWorldSpace(v.Unit) * speed * boost * dt
+    if moveDir.Magnitude > 0 then
+        local boost = heldKeys[Enum.KeyCode.LeftShift] and 3 or 1
+        camera.CFrame += camera.CFrame:VectorToWorldSpace(moveDir.Unit) * flySpeed * boost * dt
     end
     camera.Focus = CFrame.new(camera.CFrame.Position + camera.CFrame.LookVector * 100)
 end)
 
-open.OnClientEvent:Connect(function()
+-- ===== 9. Open (/film) =====
+openEvent.OnClientEvent:Connect(function()
     local ok, response = pcall(function()
         return remote:InvokeServer("load")
     end)
     if not ok or not response or not response.ok then
-        say("Opened. Cloud shots unavailable; this session still works.")
+        setStatus("Opened. Cloud shots unavailable; this session still works.")
     else
         shots = response.shots
-        say("Opened. " .. #shots .. " saved shot(s). F6 toggles panel.")
+        setStatus("Opened. " .. #shots .. " saved shot(s). F6 toggles panel.")
     end
     gui.Enabled = true
 end)

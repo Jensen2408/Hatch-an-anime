@@ -1,4 +1,27 @@
--- Hatch An Anime CineCam: place in ServerScriptService as CineCamServer.
+--[[ ServerScriptService.CineCamServer  (Script)
+Server side of CineCam (the owner-only trailer camera tool, see CineCamClient). Creates the remotes and the /film
+chat command, and stores the owner's saved shots.
+
+Remote contract (both created here in ReplicatedStorage, reused if they already exist; payload shapes are contracts)
+  CineCamOpen   RemoteEvent, server -> client, no payload. Fired to the speaker when an allowed player types /film
+                (TextChatCommand TextChatService.CineCamCommand).
+  CineCamRemote RemoteFunction, client -> server: OnServerInvoke(player, action, payload)
+    "load"          -> { ok = true, shots = { Shot } } | { ok = false, error = string }
+                       Studio: the shots saved this session, else the library. Live: DataStore "CineCamShots_v1" key
+                       "owner_" .. OWNER_ID, or the library when nothing is saved.
+    "save", shots   -> { ok = true } | { ok = false, error = string }
+                       Studio: kept in memory only (sessionShots). Live: SetAsync on the same key.
+    other actions   -> { ok = false, error = "Unknown action" }
+
+What the server validates (the client is never trusted)
+  - isAllowed(player) on every invoke and on /film: UserId == OWNER_ID, or UserId 0 in Studio. Otherwise
+    { ok = false, error = "Owner only" } and no CineCamOpen.
+  - save: payload is a table with at most 25 array entries, and every entry passes validShot:
+    name string of 1-40 bytes, duration 1-29, 2-40 points; each point has cf = 12 numbers (no NaN, |n| <= 1e6)
+    and fov 20-100.
+  - Library shots (ReplicatedStorage.CineCamShotLibrary StringValues, JSON) go through the same validShot.
+]]
+-- ===== 1. Services, constants and remotes =====
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local DataStoreService = game:GetService("DataStoreService")
@@ -12,20 +35,22 @@ local sessionShots = nil
 local remote = ReplicatedStorage:FindFirstChild("CineCamRemote") or Instance.new("RemoteFunction")
 remote.Name = "CineCamRemote"
 remote.Parent = ReplicatedStorage
-local open = ReplicatedStorage:FindFirstChild("CineCamOpen") or Instance.new("RemoteEvent")
-open.Name = "CineCamOpen"
-open.Parent = ReplicatedStorage
+local openEvent = ReplicatedStorage:FindFirstChild("CineCamOpen") or Instance.new("RemoteEvent")
+openEvent.Name = "CineCamOpen"
+openEvent.Parent = ReplicatedStorage
 
-local function allowed(player)
+-- ===== 2. Validation =====
+local function isAllowed(player)
     return player.UserId == OWNER_ID or (RunService:IsStudio() and player.UserId == 0)
 end
 
+-- n ~= n rejects NaN.
 local function validPoint(point)
     if type(point) ~= "table" or type(point.cf) ~= "table" or #point.cf ~= 12 then
         return false
     end
-    for _, n in ipairs(point.cf) do
-        if type(n) ~= "number" or n ~= n or math.abs(n) > 1000000 then
+    for _, component in ipairs(point.cf) do
+        if type(component) ~= "number" or component ~= component or math.abs(component) > 1000000 then
             return false
         end
     end
@@ -50,6 +75,7 @@ local function validShot(shot)
     return true
 end
 
+-- ===== 3. Shot library (fallback when nothing is saved) =====
 local function libraryShots()
     local result = {}
     local folder = ReplicatedStorage:FindFirstChild("CineCamShotLibrary")
@@ -67,8 +93,9 @@ local function libraryShots()
     return result
 end
 
+-- ===== 4. Remote handler =====
 remote.OnServerInvoke = function(player, action, payload)
-    if not allowed(player) then
+    if not isAllowed(player) then
         return { ok = false, error = "Owner only" }
     end
     if action == "load" then
@@ -106,6 +133,7 @@ remote.OnServerInvoke = function(player, action, payload)
     return { ok = false, error = "Unknown action" }
 end
 
+-- ===== 5. /film chat command =====
 local command = TextChatService:FindFirstChild("CineCamCommand") or Instance.new("TextChatCommand")
 command.Name = "CineCamCommand"
 command.PrimaryAlias = "/film"
@@ -115,7 +143,7 @@ command.Triggered:Connect(function(source)
         return
     end
     local player = Players:GetPlayerByUserId(source.UserId)
-    if player and allowed(player) then
-        open:FireClient(player)
+    if player and isAllowed(player) then
+        openEvent:FireClient(player)
     end
 end)
