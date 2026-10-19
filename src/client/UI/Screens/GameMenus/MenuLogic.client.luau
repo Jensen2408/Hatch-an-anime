@@ -3454,6 +3454,12 @@ RENDER.Plot = function(panel)
             0.145,
             { BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(40, 30, 80), ZIndex = 7 }
         )
+        -- FirstHatchTutorial (tour steps 11 / 12) highlights these rows by name.
+        if rowDef[6] == "UpgradeTemple" then
+            rowFrame.Name = "TempleUpgrades"
+        elseif rowDef[6] == "AddIncubator" then
+            rowFrame.Name = "IncubatorUpgrades"
+        end
         create("UICorner", { CornerRadius = UDim.new(0.08, 0) }, rowFrame)
         create(
             "UIStroke",

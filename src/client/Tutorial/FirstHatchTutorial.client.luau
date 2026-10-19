@@ -581,7 +581,9 @@ local function updateTour()
         coachBody.Text = "You can add more upgrades to your plot. Press Plot to find them."
     elseif currentStep == 9 then
         acknowledge("PlotOpened")
-    elseif currentPage ~= "upgrades" then
+    elseif currentPage ~= "upgrades" and currentPage ~= "figma" then
+        -- Only the legacy tabbed Plot panel has an Upgrades tab; the current "figma" layout shows the
+        -- upgrade rows on the same page, so it counts as the Upgrades page already being open.
         wantedTarget = livePanel and livePanel:FindFirstChild("UpgradesTab", true)
         coachBody.Text = "Press Upgrades to see your temple and incubator upgrades."
     elseif currentStep == 10 then

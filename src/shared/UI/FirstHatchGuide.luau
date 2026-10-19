@@ -54,7 +54,7 @@ Guide.Steps = {
     { title = "Go to Upgrades", body = "Choose Upgrades in your Plot menu.", marker = "" },
     {
         title = "Grow your temple",
-        body = "Unlock all slots on your current floor, then upgrade your temple to add another floor.",
+        body = "This is where you unlock slots and add temple floors. Take a look, then press NEXT.",
         marker = "",
     },
     {
