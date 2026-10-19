@@ -29,9 +29,19 @@ local function layoutMoney()
     baseScale = compact and 0.46 or 0.68
     panelScale.Scale = baseScale
     local portrait = compact and viewportSize.X < viewportSize.Y
-    moneyFrame.AnchorPoint = Vector2.new(compact and 1 or 0.5, 0)
-    moneyFrame.Position = compact and UDim2.new(1, portrait and -10 or -184, 0, 0)
-        or UDim2.new(0.5, 0, 0, 64 - moneyFrame.Size.Y.Offset * (1 - baseScale) / 2)
+    if compact then
+        -- phones: top-right (bottom-left belongs to the thumbstick)
+        moneyFrame.AnchorPoint = Vector2.new(1, 0)
+        moneyFrame.Position = UDim2.new(1, portrait and -10 or -184, 0, 0)
+    else
+        -- desktop: bottom-left, 16 px margins. Anchored at its centre so the UIScale shrink can't shift the
+        -- visible (scaled) panel away from the corner.
+        local size = moneyFrame.Size
+        local scaledWidth = (size.X.Scale * viewportSize.X + size.X.Offset) * baseScale
+        local scaledHeight = (size.Y.Scale * viewportSize.Y + size.Y.Offset) * baseScale
+        moneyFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+        moneyFrame.Position = UDim2.new(0, 16 + scaledWidth / 2, 1, -(16 + scaledHeight / 2))
+    end
 end
 
 screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutMoney)

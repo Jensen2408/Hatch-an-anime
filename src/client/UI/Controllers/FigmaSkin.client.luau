@@ -11,7 +11,7 @@ Table of contents (section banners below are "-- ===== N. ... =====")
   3. HUD pieces (art buttons, money pill, night banner) + the per-ScreenGui hook
   4. Left menu grid: Figma art for Plot / Index / Quests / Shop buttons
   5. Imported Figma art: HOME bar, FEEDBACK button, money panel
-  6. FIGMA HUD LAYOUT: night banner top-left, Backpack + Settings row, quest tracker + daily button
+  6. FIGMA HUD LAYOUT: night banner top-centre, Settings row under the grid (Backpack left of the hotbar on desktop), quest tracker + daily button
   7. Size + smoothness pass (grid cell size, hover/press tweens)
 
 Instance-name contracts (looked up by name; renaming them in the owning script breaks the skin silently):
@@ -623,7 +623,7 @@ task.spawn(function()
 end)
 
 -- ===== 6. FIGMA HUD LAYOUT =====
--- night top-left, money top-centre, small Backpack/Settings under the grid, quests + daily on the right
+-- night top-centre, money bottom-left (MoneyLogic), Settings under the grid, Backpack left of the hotbar, quests + daily on the right
 local IMG_DAILY, IMG_QUEST = "rbxassetid://77807427401832", "rbxassetid://76790067314566"
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
 local function createLabel(parent, text, size, color, props)
@@ -644,7 +644,7 @@ local function createLabel(parent, text, size, color, props)
     label.Parent = parent
     return label
 end
--- night banner -> top-left (keep its own up/down animation)
+-- night banner -> top-centre (keep its own up/down animation)
 task.spawn(function()
     local nightBar = playerGui:WaitForChild("NightBar")
     task.wait(1)
@@ -660,8 +660,9 @@ task.spawn(function()
     local function pinX()
         local compact = math.min(nightBar.AbsoluteSize.X, nightBar.AbsoluteSize.Y) < 600
         nightBar.ScreenInsets = compact and Enum.ScreenInsets.CoreUISafeInsets or Enum.ScreenInsets.None
-        local wantedPosition = compact and UDim2.new(0, 10 + banner.AbsoluteSize.X / 2, 0, banner.AbsoluteSize.Y)
-            or UDim2.new(0, 16 + banner.AbsoluteSize.X / 2, banner.Position.Y.Scale, banner.Position.Y.Offset)
+        -- horizontally centred (the banner's AnchorPoint X is 0.5); Y keeps the banner's own up/down animation
+        local wantedPosition = compact and UDim2.new(0.5, 0, 0, banner.AbsoluteSize.Y)
+            or UDim2.new(0.5, 0, banner.Position.Y.Scale, banner.Position.Y.Offset)
         if banner.Position ~= wantedPosition then
             banner.Position = wantedPosition
         end
@@ -672,7 +673,7 @@ task.spawn(function()
     banner:GetPropertyChangedSignal("Position"):Connect(pinX)
 end)
 -- MoneyLogic owns cash positioning so the skin cannot fight safe-area layout.
--- small Backpack + Settings row under the 2x2 grid
+-- small Backpack + Settings row under the 2x2 grid; on desktop the Backpack button moves next to the hotbar
 task.spawn(function()
     local gameMenus = playerGui:WaitForChild("GameMenus")
     local sideButtons = gameMenus:WaitForChild("SideButtons")
@@ -689,9 +690,38 @@ task.spawn(function()
     local rowScale = Instance.new("UIScale")
     rowScale.Name = "ResponsiveScale"
     rowScale.Parent = row
+    local gameHud = playerGui:WaitForChild("GameHUD")
+    -- Desktop only: the Backpack button sits in its own slot just left of the hotbar (bottoms lined up with
+    -- the hotbar slots; the hotbar has 8 px bottom padding and grows with the item count). On phones it stays
+    -- in the row under the grid, because the bottom of the screen belongs to the thumbstick / hotbar.
+    local bagSlot = Instance.new("Frame")
+    bagSlot.Name = "HotbarBagSlot"
+    bagSlot.BackgroundTransparency = 1
+    bagSlot.Size = UDim2.fromOffset(62, 65)
+    bagSlot.Parent = gameMenus
+    local bag -- GameHUD.RightButtons.BagButton once it has been found (below)
     local function placeRow()
         local compact = math.min(gameMenus.AbsoluteSize.X, gameMenus.AbsoluteSize.Y) < 600
         local sidePosition, sideSize = sideButtons.AbsolutePosition, sideButtons.AbsoluteSize
+        local hotbar = gameHud:FindFirstChild("Hotbar")
+        local bagNextToHotbar = not compact and hotbar ~= nil
+        if bag then
+            local wantedParent = bagNextToHotbar and bagSlot or row
+            if bag.Parent ~= wantedParent then
+                bag.Parent = wantedParent
+            end
+        end
+        if bagNextToHotbar then
+            local hotbarPosition, hotbarSize = hotbar.AbsolutePosition, hotbar.AbsoluteSize
+            bagSlot.Position = UDim2.fromOffset(
+                hotbarPosition.X - gameMenus.AbsolutePosition.X - 62 - 12,
+                hotbarPosition.Y - gameMenus.AbsolutePosition.Y + hotbarSize.Y - 8 - 65
+            )
+            if bag then
+                bag.Size = UDim2.fromOffset(62, 65)
+            end
+        end
+        -- the row (Settings, plus Backpack on phones) stays under the 2x2 grid
         row.Position = UDim2.fromOffset(
             sidePosition.X - gameMenus.AbsolutePosition.X,
             sidePosition.Y - gameMenus.AbsolutePosition.Y + sideSize.Y + (compact and 6 or 10)
@@ -716,20 +746,30 @@ task.spawn(function()
     sideButtons:GetPropertyChangedSignal("AbsolutePosition"):Connect(placeRow)
     sideButtons:GetPropertyChangedSignal("AbsoluteSize"):Connect(placeRow)
     placeRow()
-    local bag = playerGui:WaitForChild("GameHUD"):WaitForChild("RightButtons"):WaitForChild("BagButton", 15)
-    if bag then
-        bag.Parent = row
-        bag.LayoutOrder = 1
-        bag.Size = UDim2.fromOffset(62, 65)
-        setFigmaArt(bag, MENU_ART.BagButton, { Badge = true })
-        for _, child in bag:GetChildren() do
+    task.spawn(function()
+        local hotbar = gameHud:WaitForChild("Hotbar", 30)
+        if hotbar then
+            hotbar:GetPropertyChangedSignal("AbsolutePosition"):Connect(placeRow)
+            hotbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(placeRow)
+            placeRow()
+        end
+    end)
+    local bagButton = playerGui:WaitForChild("GameHUD"):WaitForChild("RightButtons"):WaitForChild("BagButton", 15)
+    if bagButton then
+        bagButton.Parent = row
+        bagButton.LayoutOrder = 1
+        bagButton.Size = UDim2.fromOffset(62, 65)
+        setFigmaArt(bagButton, MENU_ART.BagButton, { Badge = true })
+        for _, child in bagButton:GetChildren() do
             if child:IsA("TextLabel") and child.Text ~= "BACKPACK" then
                 child.Name = "Badge"
                 child.ZIndex = 30
                 child.Visible = child.Visible
             end
         end
-        bag.ZIndex = 20
+        bagButton.ZIndex = 20
+        bag = bagButton
+        placeRow() -- desktop: move it next to the hotbar
     end
     local musicSettings = playerGui:WaitForChild("MusicSettingsUI")
     for _, hold in musicSettings:GetChildren() do
