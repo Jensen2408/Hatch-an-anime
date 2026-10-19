@@ -1,7 +1,14 @@
--- Pixel-art icons (CC0 packs: OwlishMedia "RPG UI icons", Bonsaiheldin "Gold treasure icons") are drawn with
--- nearest-neighbour scaling so they stay crisp instead of blurry.
-local PX = {}
-for _, id in
+--[[ StarterPlayerScripts.PixelIconSharpener (LocalScript)
+Pixel-art icons (CC0 packs: OwlishMedia "RPG UI icons", Bonsaiheldin "Gold treasure icons") are drawn with
+nearest-neighbour scaling so they stay crisp instead of blurry.
+Any ImageLabel / ImageButton anywhere in PlayerGui whose Image is one of the asset ids below gets
+ResampleMode = Pixelated (existing descendants now, new ones via DescendantAdded). The check runs only when
+an instance is added: an image swapped to a pixel-art id later is not re-checked.
+]]
+
+-- set of "rbxassetid://<id>" strings
+local PIXEL_ART_IMAGES = {}
+for _, assetId in
     {
         "123121531396779",
         "115300000098827",
@@ -24,17 +31,18 @@ for _, id in
         "108893717182985",
     }
 do
-    PX["rbxassetid://" .. id] = true
+    PIXEL_ART_IMAGES["rbxassetid://" .. assetId] = true
 end
-local function fix(o)
-    if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-        if PX[o.Image] then
-            o.ResampleMode = Enum.ResamplerMode.Pixelated
+
+local function makePixelated(image)
+    if image:IsA("ImageLabel") or image:IsA("ImageButton") then
+        if PIXEL_ART_IMAGES[image.Image] then
+            image.ResampleMode = Enum.ResamplerMode.Pixelated
         end
     end
 end
-local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-for _, d in pg:GetDescendants() do
-    fix(d)
+local playerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+for _, descendant in playerGui:GetDescendants() do
+    makePixelated(descendant)
 end
-pg.DescendantAdded:Connect(fix)
+playerGui.DescendantAdded:Connect(makePixelated)

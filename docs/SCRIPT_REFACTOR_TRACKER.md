@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 65 |
+| Pending | 59 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 119 |
+| Refactored | 125 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -212,12 +212,12 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Plot/PromptCards.client.luau` | LocalScript | 399 | 822 | Pending | — | — |
-| `client/UI/Controllers/FeedbackClient.client.luau` | LocalScript | 101 | 316 | Pending | — | — |
-| `client/UI/Controllers/FigmaSkin.client.luau` | LocalScript | 396 | 884 | Pending | — | — |
-| `client/UI/Controllers/PixelIconSharpener.client.luau` | LocalScript | 10 | 40 | Pending | — | — |
-| `client/UI/Controllers/SharpUI.client.luau` | LocalScript | 84 | 164 | Pending | — | — |
-| `server/Services/FeedbackService.server.luau` | Script | 36 | 81 | Pending | — | — |
+| `client/Plot/PromptCards.client.luau` | LocalScript | 399 | 872 | Refactored | SAME | Header extended (TOC, remotes/bindables, prompt/instance names, attributes, created prompts); 6 numbered banners; ~480 locals renamed (e.g. d -> details, bb -> billboard); unused loop vars prefixed _ |
+| `client/UI/Controllers/FeedbackClient.client.luau` | LocalScript | 101 | 347 | Refactored | CHANGED | Header (remote contract, server authority), 6 banners, locals renamed, shadowing removed; 3 identical ZIndex loops consolidated into setZIndexDeep (strcheck OK, extcheck no PARAM_WRITES) |
+| `client/UI/Controllers/FigmaSkin.client.luau` | LocalScript | 396 | 937 | Refactored | SAME | Header with TOC, name contracts (GameMenus/GameHUD/MoneyDisplay/NightBar/FeedbackUI), attributes, remotes; 7 numbered banners; ~730 locals renamed; unused locals prefixed _ |
+| `client/UI/Controllers/PixelIconSharpener.client.luau` | LocalScript | 10 | 48 | Refactored | SAME | Header (location, behaviour, add-time-only check); PX -> PIXEL_ART_IMAGES, fix -> makePixelated, other locals renamed |
+| `client/UI/Controllers/SharpUI.client.luau` | LocalScript | 84 | 186 | Refactored | SAME | Header (targets, KeepRound/image exceptions, SlotUnlockLabel pop + stroke scaling), 2 banners, comments on the per-frame loop; locals renamed |
+| `server/Services/FeedbackService.server.luau` | Script | 36 | 102 | Refactored | SAME | Header documents remote contract, validation, 60 s per-player cooldown, text filtering, mention suppression; 3 banners; locals renamed; perServer -> _perServer |
 
 ## Batch 16 — Client UI — leaderboards
 
@@ -1435,57 +1435,57 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Plot/PromptCards.client.luau`
 
-- **Type:** LocalScript · **Batch:** 15 · **Priority:** High · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 15 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.PromptCards
 - **Dependencies:** UISound
 - **Public functions:** —
 - **Events:** Connect×20, OnClientEvent×1
-- **Readability problems:** 47 dense one-line statements; 21 lines >160 chars; 13 one-letter locals
+- **Readability problems:** Abbreviated service aliases (PPS, UIS, RS), cryptic locals (d, bb, nd, cv, ls, fb, inv, p, c, k, m, inc, v), dash-line banners, header lacked remotes/name contracts, unused loop vars
 
 ### `client/UI/Controllers/FeedbackClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 15 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 15 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Feedback button (right side) + window. Sends to ReplicatedStorage.SendFeedback.
 - **Dependencies:** UISound
 - **Public functions:** —
 - **Events:** Connect×12
-- **Readability problems:** 13 dense one-line statements; 14 lines >160 chars; 6 one-letter locals
+- **Readability problems:** One-line header, cryptic helpers/locals (new, round, ink, txt, btn3d, F, TS, dim, win, fit, kb, x, sendL), ZIndex-propagation loop copied 3x, inner pg shadowed outer pg
 
 ### `client/UI/Controllers/FigmaSkin.client.luau`
 
-- **Type:** LocalScript · **Batch:** 15 · **Priority:** High · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 15 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** FigmaSkin: restyles the code-built menu content to the Figma "Hatch an Anime – Game UI" design. Only colours/decoration change (no layout, no click logic): dark teal rows -> night purple studded block
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×22, OnClientEvent×1
-- **Readability problems:** 107 dense one-line statements; 12 lines >160 chars; 14 one-letter locals
+- **Readability problems:** Cryptic locals (pg, f, sz, c, g, im, cr, st, m, tab, nb, gm, ll, ts, val, q, r, om, TS), banners unnumbered, header did not list the many instance-name contracts it relies on or the instances it creates/moves, unused skinBag/skinGear/thumb/face
 
 ### `client/UI/Controllers/PixelIconSharpener.client.luau`
 
-- **Type:** LocalScript · **Batch:** 15 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 15 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Pixel-art icons (CC0 packs: OwlishMedia "RPG UI icons", Bonsaiheldin "Gold treasure icons") are drawn with nearest-neighbour scaling so they stay crisp instead of blurry.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×1
-- **Readability problems:** 1 dense one-line statements; 1 lines >160 chars
+- **Readability problems:** Short names (PX, fix, o, pg, d), no runtime location / limitation note
 
 ### `client/UI/Controllers/SharpUI.client.luau`
 
-- **Type:** LocalScript · **Batch:** 15 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 15 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** SharpUI: house style = sharp corners + solid black outlines on all game menus. Strips UICorner, forces UIStroke black/mitred, removes thin white highlight lines. Image art (torii, side buttons) is lef
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×5, RunService×1
-- **Readability problems:** 14 dense one-line statements; 1 lines >160 chars; 4 one-letter locals
+- **Readability problems:** Short names (pg, fix, d, p, b, a, s, t, h, tw, sc, TS, pops), header did not explain the two parts (menus vs world signs), KeepRound contract undocumented
 
 ### `server/Services/FeedbackService.server.luau`
 
-- **Type:** Script · **Batch:** 15 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 15 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Player feedback -> private Discord #feedback (via webhook relay, because Discord blocks Roblox servers). Paste the Discord webhook link into ServerStorage.FeedbackConfig attribute "WebhookUrl" (never 
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×1, OnServerInvoke×1, PlayerRemoving×1
-- **Readability problems:** 6 dense one-line statements; 1 lines >160 chars
+- **Readability problems:** No network-authority / rate-limit documentation, cryptic names (Http, cfg, remote, last, p, ok, filtered), unused perServer
 
 ### `client/UI/Controllers/LeaderboardClientStart.client.luau`
 

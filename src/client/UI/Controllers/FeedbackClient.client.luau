@@ -1,102 +1,129 @@
--- Feedback button (right side) + window. Sends to ReplicatedStorage.SendFeedback.
+--[[ StarterPlayerScripts.FeedbackClient (LocalScript)
+Feedback button (right side) + window. Builds the "FeedbackUI" ScreenGui in PlayerGui:
+  FeedbackButton   opens the window (FigmaSkin hides its drawn children and lays Figma art over it)
+  dimmer (TextButton, full screen) > window: header, close X, BUG / IDEA / OTHER picker, text box, SEND, status line
+Remote: ReplicatedStorage.SendFeedback (RemoteFunction, server: FeedbackService)
+  InvokeServer(kind, text) -> ok, message. The server re-validates, trims to 500 characters, filters the text and
+  enforces the cooldown; the 500-character limit here is only for the player's benefit.
+Sounds: UISound "Open" / "Close" (the dimmer is UISoundMuted so its click does not play the default sound).
+]]
+
+-- ===== 1. Services, remotes, constants =====
 local Players = game:GetService("Players")
-local TS = game:GetService("TweenService")
+local TweenService = game:GetService("TweenService")
 local UISound = require(game:GetService("ReplicatedStorage"):WaitForChild("UISound"))
-local remote = game.ReplicatedStorage:WaitForChild("SendFeedback")
-local pg = Players.LocalPlayer:WaitForChild("PlayerGui")
-local F = Font.new("rbxasset://fonts/families/FredokaOne.json")
+local sendFeedbackRemote = game.ReplicatedStorage:WaitForChild("SendFeedback")
+local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
 local INK = Color3.fromRGB(17, 23, 26)
 local STUDS = "rbxassetid://132561191216691"
-local function new(c, p, par)
-    local o = Instance.new(c)
-    for k, v in pairs(p) do
-        o[k] = v
+
+-- ===== 2. UI primitives =====
+local function create(className, props, parent)
+    local instance = Instance.new(className)
+    for key, value in pairs(props) do
+        instance[key] = value
     end
-    o.Parent = par
-    return o
+    instance.Parent = parent
+    return instance
 end
-local function round(o, r)
-    new("UICorner", { CornerRadius = UDim.new(0, r) }, o)
+local function addCorner(target, radius)
+    create("UICorner", { CornerRadius = UDim.new(0, radius) }, target)
 end
-local function ink(o, t)
-    new("UIStroke", { Color = INK, Thickness = t or 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, o)
+local function addInkStroke(target, thickness)
+    create(
+        "UIStroke",
+        { Color = INK, Thickness = thickness or 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
+        target
+    )
 end
-local function txt(par, s, size, props)
-    local l = new("TextLabel", {
+local function createLabel(parent, text, size, props)
+    local label = create("TextLabel", {
         BackgroundTransparency = 1,
-        Text = s,
-        FontFace = F,
+        Text = text,
+        FontFace = FONT,
         TextSize = size,
         TextColor3 = Color3.new(1, 1, 1),
         TextWrapped = true,
         Size = UDim2.fromScale(1, 1),
-    }, par)
-    new("UIStroke", { Color = INK, Thickness = size >= 20 and 2.5 or 1.6 }, l)
+    }, parent)
+    create("UIStroke", { Color = INK, Thickness = size >= 20 and 2.5 or 1.6 }, label)
     if props then
-        for k, v in pairs(props) do
-            l[k] = v
+        for key, value in pairs(props) do
+            label[key] = value
         end
     end
-    return l
+    return label
 end
-local function btn3d(par, label, col, size, pos, anchor)
-    local b = new("TextButton", {
+local function createButton3D(parent, labelText, color, size, position, anchorPoint)
+    local button = create("TextButton", {
         Text = "",
         AutoButtonColor = false,
-        BackgroundColor3 = col,
+        BackgroundColor3 = color,
         Size = size,
-        Position = pos,
-        AnchorPoint = anchor or Vector2.new(0.5, 0.5),
-    }, par)
-    round(b, 10)
-    ink(b, 3)
-    local st = new("ImageLabel", {
+        Position = position,
+        AnchorPoint = anchorPoint or Vector2.new(0.5, 0.5),
+    }, parent)
+    addCorner(button, 10)
+    addInkStroke(button, 3)
+    local studs = create("ImageLabel", {
         BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1),
         Image = STUDS,
         ScaleType = Enum.ScaleType.Tile,
         TileSize = UDim2.fromOffset(22, 22),
-    }, b)
-    round(st, 10)
-    local bv = new("Frame", {
+    }, button)
+    addCorner(studs, 10)
+    local bevel = create("Frame", {
         BackgroundColor3 = Color3.new(),
         BackgroundTransparency = 0.5,
         BorderSizePixel = 0,
         AnchorPoint = Vector2.new(0, 1),
         Position = UDim2.fromScale(0, 1),
         Size = UDim2.new(1, 0, 0, 6),
-    }, b)
-    round(bv, 10)
-    local gl = new("Frame", {
+    }, button)
+    addCorner(bevel, 10)
+    local gloss = create("Frame", {
         BackgroundColor3 = Color3.new(1, 1, 1),
         BackgroundTransparency = 0.7,
         BorderSizePixel = 0,
         Position = UDim2.new(0, 8, 0, 4),
         Size = UDim2.new(1, -16, 0, 4),
-    }, b)
-    round(gl, 99)
-    local l = txt(b, label, 18, { Size = UDim2.new(1, -8, 1, -6) })
-    local sc = new("UIScale", {}, b)
-    b.MouseEnter:Connect(function()
-        TS:Create(sc, TweenInfo.new(0.08), { Scale = 1.06 }):Play()
+    }, button)
+    addCorner(gloss, 99)
+    local label = createLabel(button, labelText, 18, { Size = UDim2.new(1, -8, 1, -6) })
+    local hoverScale = create("UIScale", {}, button)
+    button.MouseEnter:Connect(function()
+        TweenService:Create(hoverScale, TweenInfo.new(0.08), { Scale = 1.06 }):Play()
     end)
-    b.MouseLeave:Connect(function()
-        TS:Create(sc, TweenInfo.new(0.08), { Scale = 1 }):Play()
+    button.MouseLeave:Connect(function()
+        TweenService:Create(hoverScale, TweenInfo.new(0.08), { Scale = 1 }):Play()
     end)
-    b.MouseButton1Down:Connect(function()
-        TS:Create(sc, TweenInfo.new(0.05), { Scale = 0.94 }):Play()
+    button.MouseButton1Down:Connect(function()
+        TweenService:Create(hoverScale, TweenInfo.new(0.05), { Scale = 0.94 }):Play()
     end)
-    b.MouseButton1Up:Connect(function()
-        TS:Create(sc, TweenInfo.new(0.1), { Scale = 1 }):Play()
+    button.MouseButton1Up:Connect(function()
+        TweenService:Create(hoverScale, TweenInfo.new(0.1), { Scale = 1 }):Play()
     end)
-    return b, l
+    return button, label
 end
-local gui = new(
+-- raise a button and everything drawn inside it to the same ZIndex
+local function setZIndexDeep(root, zIndex)
+    root.ZIndex = zIndex
+    for _, descendant in ipairs(root:GetDescendants()) do
+        if descendant:IsA("GuiObject") then
+            descendant.ZIndex = zIndex
+        end
+    end
+end
+
+-- ===== 3. Feedback button =====
+local gui = create(
     "ScreenGui",
     { Name = "FeedbackUI", ResetOnSpawn = false, DisplayOrder = 55, ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets },
-    pg
+    playerGui
 )
-local open, openLabel = btn3d(
+local openButton, openLabel = createButton3D(
     gui,
     "💬 FEEDBACK",
     Color3.fromRGB(88, 101, 242),
@@ -104,7 +131,7 @@ local open, openLabel = btn3d(
     UDim2.new(1, -12, 0.5, 90),
     Vector2.new(1, 0.5)
 )
-open.Name = "FeedbackButton"
+openButton.Name = "FeedbackButton"
 local function layoutFeedbackButton()
     local view = gui.AbsoluteSize
     if view.X <= 0 or view.Y <= 0 then
@@ -113,21 +140,21 @@ local function layoutFeedbackButton()
     local compact = math.min(view.X, view.Y) < 600
     if compact then
         -- Keep the lower-right touch-control area free in either orientation.
-        open.AnchorPoint = Vector2.new(1, 0)
-        open.Size = UDim2.fromOffset(100, 40)
-        open.Position = UDim2.new(1, -10, 0, view.X >= view.Y and 8 or 150)
+        openButton.AnchorPoint = Vector2.new(1, 0)
+        openButton.Size = UDim2.fromOffset(100, 40)
+        openButton.Position = UDim2.new(1, -10, 0, view.X >= view.Y and 8 or 150)
         openLabel.TextSize = 14
     else
-        open.AnchorPoint = Vector2.new(1, 0)
-        open.Size = UDim2.fromOffset(168, 53)
-        open.Position = UDim2.new(1, -12, 0, 16)
+        openButton.AnchorPoint = Vector2.new(1, 0)
+        openButton.Size = UDim2.fromOffset(168, 53)
+        openButton.Position = UDim2.new(1, -12, 0, 16)
         openLabel.TextSize = 18
     end
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutFeedbackButton)
 layoutFeedbackButton()
--- window
-local dim = new("TextButton", {
+-- ===== 4. Window =====
+local dimmer = create("TextButton", {
     Text = "",
     AutoButtonColor = false,
     BackgroundColor3 = Color3.new(),
@@ -136,17 +163,17 @@ local dim = new("TextButton", {
     Visible = false,
     ZIndex = 5,
 }, gui)
-dim:SetAttribute("UISoundMuted", true)
-local win = new("Frame", {
+dimmer:SetAttribute("UISoundMuted", true)
+local window = create("Frame", {
     BackgroundColor3 = Color3.fromRGB(59, 88, 102),
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.fromScale(0.5, 0.5),
     Size = UDim2.fromOffset(460, 400),
     ZIndex = 6,
-}, dim)
-round(win, 22)
-ink(win, 3.5)
-new("ImageLabel", {
+}, dimmer)
+addCorner(window, 22)
+addInkStroke(window, 3.5)
+create("ImageLabel", {
     BackgroundTransparency = 1,
     Size = UDim2.fromScale(1, 1),
     Image = STUDS,
@@ -154,22 +181,23 @@ new("ImageLabel", {
     TileSize = UDim2.fromOffset(30, 30),
     ImageTransparency = 0.35,
     ZIndex = 6,
-}, win)
-local fit = new("UIScale", {}, win)
-local function refit()
-    local v = gui.AbsoluteSize
-    fit.Scale = math.max(0.1, math.min((v.X - 24) / 460, (v.Y - 24) / 400, 1.1))
+}, window)
+local windowScale = create("UIScale", {}, window)
+local function refitWindow()
+    local viewport = gui.AbsoluteSize
+    windowScale.Scale = math.max(0.1, math.min((viewport.X - 24) / 460, (viewport.Y - 24) / 400, 1.1))
 end
-gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(refit)
-refit()
-local head = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(1, 0, 0, 62), ZIndex = 7 }, win)
-round(head, 20)
-new(
+gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(refitWindow)
+refitWindow()
+local header =
+    create("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(1, 0, 0, 62), ZIndex = 7 }, window)
+addCorner(header, 20)
+create(
     "UIGradient",
     { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(120, 135, 255), Color3.fromRGB(70, 80, 220)) },
-    head
+    header
 )
-new("ImageLabel", {
+create("ImageLabel", {
     BackgroundTransparency = 1,
     Size = UDim2.fromScale(1, 1),
     Image = STUDS,
@@ -177,58 +205,57 @@ new("ImageLabel", {
     TileSize = UDim2.fromOffset(26, 26),
     ImageTransparency = 0.1,
     ZIndex = 7,
-}, head)
-txt(head, "FEEDBACK", 30, { ZIndex = 8 })
-new("Frame", {
+}, header)
+createLabel(header, "FEEDBACK", 30, { ZIndex = 8 })
+create("Frame", {
     BackgroundColor3 = Color3.new(),
     BorderSizePixel = 0,
     Position = UDim2.new(0, 0, 0, 62),
     Size = UDim2.new(1, 0, 0, 3),
     ZIndex = 7,
-}, win)
-local x = btn3d(win, "X", Color3.fromRGB(255, 40, 70), UDim2.fromOffset(40, 40), UDim2.new(1, -30, 0, 31))
-x.ZIndex = 9
-for _, d in ipairs(x:GetDescendants()) do
-    if d:IsA("GuiObject") then
-        d.ZIndex = 9
-    end
-end
-txt(
-    win,
+}, window)
+local closeButton =
+    createButton3D(window, "X", Color3.fromRGB(255, 40, 70), UDim2.fromOffset(40, 40), UDim2.new(1, -30, 0, 31))
+setZIndexDeep(closeButton, 9)
+createLabel(
+    window,
     "Found a bug or have an idea? Tell the devs!",
     17,
     { Position = UDim2.fromOffset(16, 74), Size = UDim2.new(1, -32, 0, 24), ZIndex = 7 }
 )
-local kind = "Bug"
-local kb = {}
-for i, k in ipairs({
+-- ===== 5. Kind picker, text box, SEND =====
+-- the selected kind's button gets a white outline, the others ink
+local selectedKind = "Bug"
+local kindButtons = {}
+for i, kindDef in ipairs({
     { "Bug", "🐞 BUG", Color3.fromRGB(237, 66, 69) },
     { "Idea", "💡 IDEA", Color3.fromRGB(87, 242, 135) },
     { "Other", "💬 OTHER", Color3.fromRGB(255, 184, 40) },
 }) do
-    local b = btn3d(win, k[2], k[3], UDim2.new(1 / 3, -14, 0, 42), UDim2.new((i - 0.5) / 3, 0, 0, 128))
-    b.ZIndex = 7
-    for _, d in ipairs(b:GetDescendants()) do
-        if d:IsA("GuiObject") then
-            d.ZIndex = 7
-        end
-    end
-    kb[k[1]] = b
-    b.Activated:Connect(function()
-        kind = k[1]
-        for n, bb in pairs(kb) do
-            bb:FindFirstChildOfClass("UIStroke").Color = n == kind and Color3.new(1, 1, 1) or INK
+    local button = createButton3D(
+        window,
+        kindDef[2],
+        kindDef[3],
+        UDim2.new(1 / 3, -14, 0, 42),
+        UDim2.new((i - 0.5) / 3, 0, 0, 128)
+    )
+    setZIndexDeep(button, 7)
+    kindButtons[kindDef[1]] = button
+    button.Activated:Connect(function()
+        selectedKind = kindDef[1]
+        for kindName, kindButton in pairs(kindButtons) do
+            kindButton:FindFirstChildOfClass("UIStroke").Color = kindName == selectedKind and Color3.new(1, 1, 1) or INK
         end
     end)
 end
-kb.Bug:FindFirstChildOfClass("UIStroke").Color = Color3.new(1, 1, 1)
-local box = new("TextBox", {
+kindButtons.Bug:FindFirstChildOfClass("UIStroke").Color = Color3.new(1, 1, 1)
+local textBox = create("TextBox", {
     BackgroundColor3 = Color3.fromRGB(26, 44, 52),
     Text = "",
     PlaceholderText = "Write here (max 500 letters)…",
     PlaceholderColor3 = Color3.fromRGB(150, 170, 180),
     TextColor3 = Color3.new(1, 1, 1),
-    FontFace = F,
+    FontFace = FONT,
     TextSize = 18,
     TextWrapped = true,
     MultiLine = true,
@@ -238,79 +265,83 @@ local box = new("TextBox", {
     Position = UDim2.fromOffset(16, 160),
     Size = UDim2.new(1, -32, 0, 150),
     ZIndex = 7,
-}, win)
-round(box, 12)
-ink(box, 2.5)
-new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 8) }, box)
-box:GetPropertyChangedSignal("Text"):Connect(function()
-    if #box.Text > 500 then
-        box.Text = box.Text:sub(1, 500)
+}, window)
+addCorner(textBox, 12)
+addInkStroke(textBox, 2.5)
+create(
+    "UIPadding",
+    { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 8) },
+    textBox
+)
+textBox:GetPropertyChangedSignal("Text"):Connect(function()
+    if #textBox.Text > 500 then
+        textBox.Text = textBox.Text:sub(1, 500)
     end
 end)
-local send, sendL =
-    btn3d(win, "SEND", Color3.fromRGB(92, 192, 70), UDim2.fromOffset(200, 52), UDim2.new(0.5, 0, 1, -40))
-send.ZIndex = 7
-for _, d in ipairs(send:GetDescendants()) do
-    if d:IsA("GuiObject") then
-        d.ZIndex = 7
+local sendButton, sendLabel =
+    createButton3D(window, "SEND", Color3.fromRGB(92, 192, 70), UDim2.fromOffset(200, 52), UDim2.new(0.5, 0, 1, -40))
+setZIndexDeep(sendButton, 7)
+local statusLabel =
+    createLabel(window, "", 15, { Position = UDim2.new(0, 16, 1, -96), Size = UDim2.new(1, -32, 0, 20), ZIndex = 7 })
+
+-- ===== 6. Open / close and sending =====
+local function setWindowOpen(isOpen)
+    if dimmer.Visible ~= isOpen then
+        UISound.Play(isOpen and "Open" or "Close")
+    end
+    dimmer.Visible = isOpen
+    if isOpen then
+        statusLabel.Text = ""
+        -- leftover: refitWindow overwrites this scale immediately, so the * 0.9 has no visible effect
+        windowScale.Scale = windowScale.Scale * 0.9
+        refitWindow()
     end
 end
-local status = txt(win, "", 15, { Position = UDim2.new(0, 16, 1, -96), Size = UDim2.new(1, -32, 0, 20), ZIndex = 7 })
-local function show(on)
-    if dim.Visible ~= on then
-        UISound.Play(on and "Open" or "Close")
-    end
-    dim.Visible = on
-    if on then
-        status.Text = ""
-        fit.Scale = fit.Scale * 0.9
-        refit()
-    end
-end
-open.Activated:Connect(function()
-    show(true)
+openButton.Activated:Connect(function()
+    setWindowOpen(true)
 end)
-x.Activated:Connect(function()
-    show(false)
+closeButton.Activated:Connect(function()
+    setWindowOpen(false)
 end)
 local function __clickOnPanel(dimObj, input)
     -- true if the click landed on any visible part of a panel (anything in this ScreenGui that isn't the dim)
     if not (input and input.Position) then
         return false
     end
-    local pg = game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local localPlayerGui = game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
     local root = dimObj:FindFirstAncestorWhichIsA("LayerCollector")
-    for _, o in pg:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y) do
-        if o ~= dimObj and root and o:IsDescendantOf(root) and not o:IsDescendantOf(dimObj) then
+    for _, guiObject in localPlayerGui:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y) do
+        if guiObject ~= dimObj and root and guiObject:IsDescendantOf(root) and not guiObject:IsDescendantOf(dimObj) then
             return true
         end
     end
     return false
 end
-dim.Activated:Connect(function(input)
-    if __clickOnPanel(dim, input) then
+dimmer.Activated:Connect(function(input)
+    if __clickOnPanel(dimmer, input) then
         return
     end
-    show(false)
+    setWindowOpen(false)
 end)
-win.Active = true
-local busy = false
-send.Activated:Connect(function()
-    if busy then
+window.Active = true
+local isSending = false
+sendButton.Activated:Connect(function()
+    if isSending then
         return
     end
-    busy = true
-    sendL.Text = "..."
-    local ok, res, msg = pcall(remote.InvokeServer, remote, kind, box.Text)
-    busy = false
-    sendL.Text = "SEND"
-    if ok and res then
-        box.Text = ""
-        status.Text = msg
+    isSending = true
+    sendLabel.Text = "..."
+    -- ok = the invoke itself did not error; success / message come from FeedbackService
+    local ok, success, message = pcall(sendFeedbackRemote.InvokeServer, sendFeedbackRemote, selectedKind, textBox.Text)
+    isSending = false
+    sendLabel.Text = "SEND"
+    if ok and success then
+        textBox.Text = ""
+        statusLabel.Text = message
         task.delay(1.5, function()
-            show(false)
+            setWindowOpen(false)
         end)
     else
-        status.Text = ok and tostring(msg) or "Couldn't send. Try again."
+        statusLabel.Text = ok and tostring(message) or "Couldn't send. Try again."
     end
 end)
