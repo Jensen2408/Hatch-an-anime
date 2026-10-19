@@ -10,7 +10,11 @@ bronze medals for the top three, and a crimson-and-gold YOUR RANK card pinned be
 Motion: tabs press down onto their lip, rows lift slightly on hover, and values count up from 0
 to the server's number when you switch tab or scope (then hold exactly). Rows are pooled and only
 their text changes on data updates; the scroll position is kept per tab + scope.
+
+Pure UI: owns no data and talks to no remote; input goes out through the callbacks table
+({ onTab(statId), onScope(scope), onClose() }) passed to View.new.
 ]]
+-- ===== 1. Setup and constants =====
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
@@ -18,16 +22,20 @@ local Players = game:GetService("Players")
 local Config = require(script.Parent.LeaderboardConfig)
 local Format = require(script.Parent.LeaderboardFormat)
 
-local T = Config.Theme
-local HEAD = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local BODY = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local BOLD = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local HEAVY = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local QUICK = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local PRESS = TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local RELEASE = TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local PULSE = TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-local COUNT_TIME = 0.6
+local Theme = Config.Theme
+-- Four font roles; they currently all use Fredoka One but stay separate so each can be restyled.
+local HEAD_FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
+local BODY_FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
+local BOLD_FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
+local HEAVY_FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
+local QUICK_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local PRESS_TWEEN = TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local RELEASE_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local PULSE_TWEEN = TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+local COUNT_TIME = 0.6 -- seconds for the count-up animation
+
+-- Pixel metrics per view mode. Board = in-world SurfaceGui, Screen = expanded panel,
+-- Compact = expanded panel on small viewports (no column labels, meta line or cloud scrolls when 0).
 
 local METRICS = {
     Board = {
@@ -120,22 +128,22 @@ local METRICS = {
 local View = {}
 View.__index = View
 
----------------------------------------------------------------- helpers
-local function make(class, props, parent)
-    local inst = Instance.new(class)
-    for k, v in props do
-        inst[k] = v
+-- ===== 2. Private builders =====
+local function create(className, props, parent)
+    local instance = Instance.new(className)
+    for key, value in props do
+        instance[key] = value
     end
-    inst.Parent = parent
-    return inst
+    instance.Parent = parent
+    return instance
 end
 
-local function corner(parent, radius)
-    return make("UICorner", { CornerRadius = UDim.new(0, radius) }, parent)
+local function addCorner(parent, radius)
+    return create("UICorner", { CornerRadius = UDim.new(0, radius) }, parent)
 end
 
-local function stroke(parent, color, thickness, transparency, contextual)
-    return make("UIStroke", {
+local function addStroke(parent, color, thickness, transparency, contextual)
+    return create("UIStroke", {
         Color = color,
         Thickness = thickness or 1,
         Transparency = transparency or 0,
@@ -143,58 +151,58 @@ local function stroke(parent, color, thickness, transparency, contextual)
     }, parent)
 end
 
-local function gradient(parent, top, bottom, rotation)
-    return make("UIGradient", { Rotation = rotation or 90, Color = ColorSequence.new(top, bottom) }, parent)
+local function addGradient(parent, top, bottom, rotation)
+    return create("UIGradient", { Rotation = rotation or 90, Color = ColorSequence.new(top, bottom) }, parent)
 end
 
-local function label(parent, props)
-    local base = {
+local function createLabel(parent, props)
+    local merged = {
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        TextColor3 = T.Ink,
-        FontFace = BODY,
+        TextColor3 = Theme.Ink,
+        FontFace = BODY_FONT,
         TextSize = 14,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Center,
         TextTruncate = Enum.TextTruncate.AtEnd,
     }
-    for k, v in props do
-        base[k] = v
+    for key, value in props do
+        merged[key] = value
     end
-    return make("TextLabel", base, parent)
+    return create("TextLabel", merged, parent)
 end
 
 -- Embossed gold lettering: white text tinted by a gold gradient, with a dark-brown outline.
-local function goldText(parent, props, outline)
-    local t = label(parent, props)
-    t.TextColor3 = Color3.new(1, 1, 1)
-    make("UIGradient", {
+local function createGoldText(parent, props, outline)
+    local textLabel = createLabel(parent, props)
+    textLabel.TextColor3 = Color3.new(1, 1, 1)
+    create("UIGradient", {
         Rotation = 90,
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 244, 200)),
-            ColorSequenceKeypoint.new(0.35, T.GoldLight),
-            ColorSequenceKeypoint.new(0.62, T.Gold),
-            ColorSequenceKeypoint.new(1, T.GoldDeep),
+            ColorSequenceKeypoint.new(0.35, Theme.GoldLight),
+            ColorSequenceKeypoint.new(0.62, Theme.Gold),
+            ColorSequenceKeypoint.new(1, Theme.GoldDeep),
         }),
-    }, t)
-    stroke(t, T.GoldInk, outline or 2, 0, true)
-    return t
+    }, textLabel)
+    addStroke(textLabel, Theme.GoldInk, outline or 2, 0, true)
+    return textLabel
 end
 
 -- A pressable button: a darker lip with the face on top; pressing pushes the face onto the lip.
-local function lipButton(parent, props, lip, selectable)
-    local holder = make("Frame", {
+local function createLipButton(parent, props, lip, selectable)
+    local holder = create("Frame", {
         Name = props.Name or "Button",
         AnchorPoint = props.AnchorPoint or Vector2.zero,
         Position = props.Position,
         Size = props.Size,
-        BackgroundColor3 = props.Lip or T.CharcoalLip,
+        BackgroundColor3 = props.Lip or Theme.CharcoalLip,
         BorderSizePixel = 0,
         LayoutOrder = props.LayoutOrder or 0,
     }, parent)
-    corner(holder, props.Radius or 10)
-    local scale = make("UIScale", {}, holder)
-    local face = make("TextButton", {
+    addCorner(holder, props.Radius or 10)
+    local scale = create("UIScale", {}, holder)
+    local face = create("TextButton", {
         Name = "Face",
         Size = UDim2.new(1, 0, 1, -lip),
         BackgroundColor3 = Color3.new(1, 1, 1),
@@ -204,315 +212,341 @@ local function lipButton(parent, props, lip, selectable)
         Selectable = selectable,
         ClipsDescendants = true,
     }, holder)
-    corner(face, props.Radius or 10)
-    local fill = gradient(face, props.Top or T.Charcoal, props.Bottom or T.CharcoalLow)
-    local edge = stroke(face, props.Edge or T.CharcoalLip, props.EdgeWidth or 1.5)
+    addCorner(face, props.Radius or 10)
+    local fill = addGradient(face, props.Top or Theme.Charcoal, props.Bottom or Theme.CharcoalLow)
+    local edge = addStroke(face, props.Edge or Theme.CharcoalLip, props.EdgeWidth or 1.5)
     local pressed = false
-    local function down()
-        TweenService:Create(face, PRESS, { Position = UDim2.fromOffset(0, lip - 1) }):Play()
-        TweenService:Create(scale, PRESS, { Scale = 0.98 }):Play()
+    local function playPress()
+        TweenService:Create(face, PRESS_TWEEN, { Position = UDim2.fromOffset(0, lip - 1) }):Play()
+        TweenService:Create(scale, PRESS_TWEEN, { Scale = 0.98 }):Play()
     end
-    local function up()
-        TweenService:Create(face, RELEASE, { Position = UDim2.fromOffset(0, 0) }):Play()
-        TweenService:Create(scale, RELEASE, { Scale = 1 }):Play()
+    local function playRelease()
+        TweenService:Create(face, RELEASE_TWEEN, { Position = UDim2.fromOffset(0, 0) }):Play()
+        TweenService:Create(scale, RELEASE_TWEEN, { Scale = 1 }):Play()
     end
     face.InputBegan:Connect(function(input)
-        local kind = input.UserInputType
-        if kind == Enum.UserInputType.MouseButton1 or kind == Enum.UserInputType.Touch then
+        local inputType = input.UserInputType
+        if inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.Touch then
             pressed = true
-            down()
+            playPress()
         end
     end)
     face.InputEnded:Connect(function(input)
-        local kind = input.UserInputType
-        if kind == Enum.UserInputType.MouseButton1 or kind == Enum.UserInputType.Touch then
+        local inputType = input.UserInputType
+        if inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.Touch then
             pressed = false
-            up()
+            playRelease()
         end
     end)
     face.Activated:Connect(function()
         if not pressed then
-            down()
-            task.delay(0.07, up)
+            playPress()
+            task.delay(0.07, playRelease)
         end -- gamepad / keyboard: the same press, played through
     end)
     return holder, face, fill, edge
 end
 
 -- Small gold cloud scroll (three rounded bars) that frames the title.
-local function cloud(parent, width, mirror)
-    local f = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(width, width * 0.36) }, parent)
-    local h = math.max(3, math.floor(width * 0.07))
-    local bars = { { 0.0, 0.62, 0.55 }, { 0.22, 1.0, 0.70 }, { 0.5, 0.22, 0.45 } } -- x, y (0..1), width share
-    for _, b in bars do
-        local x = mirror and (1 - b[1] - b[3]) or b[1]
-        local bar = make("Frame", {
-            BackgroundColor3 = T.Accent,
+local function createCloudScroll(parent, width, mirror)
+    local holder = create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(width, width * 0.36) }, parent)
+    local barHeight = math.max(3, math.floor(width * 0.07))
+    local barSpecs = { { 0.0, 0.62, 0.55 }, { 0.22, 1.0, 0.70 }, { 0.5, 0.22, 0.45 } } -- x, y (0..1), width share
+    for _, spec in barSpecs do
+        local x = mirror and (1 - spec[1] - spec[3]) or spec[1]
+        local bar = create("Frame", {
+            BackgroundColor3 = Theme.Accent,
             BorderSizePixel = 0,
             AnchorPoint = Vector2.new(0, 0.5),
-            Position = UDim2.new(x, 0, b[2] * 0.8 + 0.1, 0),
-            Size = UDim2.new(b[3], 0, 0, h),
-        }, f)
-        corner(bar, h)
-        stroke(bar, T.GoldInk, 1, 0.2)
+            Position = UDim2.new(x, 0, spec[2] * 0.8 + 0.1, 0),
+            Size = UDim2.new(spec[3], 0, 0, barHeight),
+        }, holder)
+        addCorner(bar, barHeight)
+        addStroke(bar, Theme.GoldInk, 1, 0.2)
     end
-    return f
+    return holder
 end
 
 -- Tab icons drawn from frames: a coin stack, rising bars, an egg.
-local function icon(parent, kind, size)
-    local f = make(
+local function createStatIcon(parent, kind, size)
+    local holder = create(
         "Frame",
         { Name = "Icon", BackgroundTransparency = 1, Size = UDim2.fromOffset(size, size), LayoutOrder = 1 },
         parent
     )
     if kind == "money" then
         for i = 0, 2 do
-            local c = make("Frame", {
-                BackgroundColor3 = i == 2 and T.GoldLight or T.Gold,
+            local coin = create("Frame", {
+                BackgroundColor3 = i == 2 and Theme.GoldLight or Theme.Gold,
                 BorderSizePixel = 0,
                 Position = UDim2.new(0.08, 0, 0.62 - i * 0.24, 0),
                 Size = UDim2.new(0.84, 0, 0.3, 0),
-            }, f)
-            corner(c, size)
-            stroke(c, T.GoldInk, 1)
+            }, holder)
+            addCorner(coin, size)
+            addStroke(coin, Theme.GoldInk, 1)
         end
     elseif kind == "rate" then
-        for i, h in { 0.4, 0.66, 0.92 } do
-            local b = make("Frame", {
+        for i, heightScale in { 0.4, 0.66, 0.92 } do
+            local bar = create("Frame", {
                 BackgroundColor3 = Color3.new(1, 1, 1),
                 BorderSizePixel = 0,
                 AnchorPoint = Vector2.new(0, 1),
                 Position = UDim2.new((i - 1) * 0.34 + 0.02, 0, 1, 0),
-                Size = UDim2.new(0.26, 0, h, 0),
+                Size = UDim2.new(0.26, 0, heightScale, 0),
                 Name = "Tint",
-            }, f)
-            corner(b, 2)
+            }, holder)
+            addCorner(bar, 2)
         end
     else
-        local egg = make("Frame", {
-            BackgroundColor3 = T.Paper,
+        local egg = create("Frame", {
+            BackgroundColor3 = Theme.Paper,
             BorderSizePixel = 0,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.52),
             Size = UDim2.new(0.74, 0, 0.96, 0),
-        }, f)
-        make("UICorner", { CornerRadius = UDim.new(0.5, 0) }, egg)
-        stroke(egg, T.InkSoft, 1)
-        local band = make("Frame", {
-            BackgroundColor3 = T.Medal[3][2],
+        }, holder)
+        create("UICorner", { CornerRadius = UDim.new(0.5, 0) }, egg)
+        addStroke(egg, Theme.InkSoft, 1)
+        local band = create("Frame", {
+            BackgroundColor3 = Theme.Medal[3][2],
             BorderSizePixel = 0,
             Position = UDim2.fromScale(0.12, 0.5),
             Size = UDim2.new(0.76, 0, 0.1, 0),
         }, egg)
-        corner(band, 2)
+        addCorner(band, 2)
     end
-    return f
+    return holder
 end
 
-local function setIconTint(f, color)
-    for _, c in f:GetChildren() do
-        if c.Name == "Tint" then
-            c.BackgroundColor3 = color
+local function setIconTint(iconFrame, color)
+    for _, child in iconFrame:GetChildren() do
+        if child.Name == "Tint" then
+            child.BackgroundColor3 = color
         end
     end
 end
 
 local function medalStyle(rank)
-    return rank and T.Medal[rank]
+    return rank and Theme.Medal[rank]
 end
 
-local function buildRow(parent, M, name, pinned)
+-- One ranking row (pinned = the YOUR RANK card). Returns the table of parts fillRow updates.
+local function buildRow(parent, metrics, name, pinned)
     local row = { pinned = pinned }
-    local h = pinned and M.You or (M.Row - M.Gap)
-    local holder = make("Frame", {
+    local rowHeight = pinned and metrics.You or (metrics.Row - metrics.Gap)
+    local holder = create("Frame", {
         Name = name,
-        Size = UDim2.new(1, 0, 0, h),
-        BackgroundColor3 = pinned and T.CrimsonLip or T.CreamLip,
+        Size = UDim2.new(1, 0, 0, rowHeight),
+        BackgroundColor3 = pinned and Theme.CrimsonLip or Theme.CreamLip,
         BorderSizePixel = 0,
     }, parent)
-    corner(holder, 12)
+    addCorner(holder, 12)
     row.frame = holder
-    local face = make("Frame", {
+    local face = create("Frame", {
         Name = "Face",
         Size = UDim2.new(1, 0, 1, -3),
-        BackgroundColor3 = pinned and Color3.new(1, 1, 1) or T.Cream,
+        BackgroundColor3 = pinned and Color3.new(1, 1, 1) or Theme.Cream,
         BorderSizePixel = 0,
     }, holder)
-    corner(face, 12)
+    addCorner(face, 12)
     row.face = face
-    row.fill = pinned and gradient(face, T.Crimson, T.CrimsonLow)
-        or gradient(face, Color3.new(1, 1, 1), Color3.fromRGB(234, 222, 200))
-    row.edge = stroke(face, pinned and T.Gold or T.CreamEdge, pinned and 2 or 1.5)
+    row.fill = pinned and addGradient(face, Theme.Crimson, Theme.CrimsonLow)
+        or addGradient(face, Color3.new(1, 1, 1), Color3.fromRGB(234, 222, 200))
+    row.edge = addStroke(face, pinned and Theme.Gold or Theme.CreamEdge, pinned and 2 or 1.5)
 
-    local x = 8
-    local badge = pinned and M.YouRank or M.Badge
-    row.badge = make("Frame", {
+    local offsetX = 8
+    local badgeSize = pinned and metrics.YouRank or metrics.Badge
+    row.badge = create("Frame", {
         Name = "Rank",
         AnchorPoint = Vector2.new(0, 0.5),
-        Position = UDim2.new(0, x, 0.5, 0),
-        Size = UDim2.fromOffset(badge + (pinned and 8 or 0), badge),
+        Position = UDim2.new(0, offsetX, 0.5, 0),
+        Size = UDim2.fromOffset(badgeSize + (pinned and 8 or 0), badgeSize),
         BackgroundColor3 = Color3.new(1, 1, 1),
         BorderSizePixel = 0,
     }, face)
-    corner(row.badge, 10)
-    row.badgeFill = gradient(row.badge, T.Charcoal, T.CharcoalLow, 135)
-    row.badgeStroke = stroke(row.badge, pinned and T.Gold or T.CharcoalLip, pinned and 2 or 1.5)
-    row.rank = label(row.badge, {
+    addCorner(row.badge, 10)
+    row.badgeFill = addGradient(row.badge, Theme.Charcoal, Theme.CharcoalLow, 135)
+    row.badgeStroke = addStroke(row.badge, pinned and Theme.Gold or Theme.CharcoalLip, pinned and 2 or 1.5)
+    row.rank = createLabel(row.badge, {
         Size = UDim2.fromScale(1, 1),
-        FontFace = HEAD,
-        TextSize = math.floor(badge * 0.5),
-        TextColor3 = pinned and T.TabTextOn or T.Paper,
+        FontFace = HEAD_FONT,
+        TextSize = math.floor(badgeSize * 0.5),
+        TextColor3 = pinned and Theme.TabTextOn or Theme.Paper,
         TextXAlignment = Enum.TextXAlignment.Center,
         TextTruncate = Enum.TextTruncate.None,
     })
 
-    x += badge + (pinned and 8 or 0) + 10
-    row.avatar = make("ImageLabel", {
+    offsetX += badgeSize + (pinned and 8 or 0) + 10
+    row.avatar = create("ImageLabel", {
         Name = "Avatar",
         AnchorPoint = Vector2.new(0, 0.5),
-        Position = UDim2.new(0, x, 0.5, 0),
-        Size = UDim2.fromOffset(M.Avatar, M.Avatar),
-        BackgroundColor3 = T.Avatar,
+        Position = UDim2.new(0, offsetX, 0.5, 0),
+        Size = UDim2.fromOffset(metrics.Avatar, metrics.Avatar),
+        BackgroundColor3 = Theme.Avatar,
         BorderSizePixel = 0,
         ScaleType = Enum.ScaleType.Crop,
         Image = "",
     }, face)
-    corner(row.avatar, 10)
-    row.avatarStroke = stroke(row.avatar, pinned and T.Gold or T.CreamEdge, 1.5)
+    addCorner(row.avatar, 10)
+    row.avatarStroke = addStroke(row.avatar, pinned and Theme.Gold or Theme.CreamEdge, 1.5)
 
-    x += M.Avatar + 12
-    local names = make("Frame", {
+    offsetX += metrics.Avatar + 12
+    local names = create("Frame", {
         Name = "Names",
         BackgroundTransparency = 1,
-        Position = UDim2.fromOffset(x, 0),
-        Size = UDim2.new(1, -(x + M.ValueW + 22), 1, 0),
+        Position = UDim2.fromOffset(offsetX, 0),
+        Size = UDim2.new(1, -(offsetX + metrics.ValueW + 22), 1, 0),
         ClipsDescendants = true,
     }, face)
-    local nameRow = make("Frame", {
+    local nameRow = create("Frame", {
         BackgroundTransparency = 1,
         AnchorPoint = Vector2.new(0, 1),
         Position = UDim2.new(0, 0, 0.5, pinned and 8 or 4),
-        Size = UDim2.new(1, 0, 0, M.Name + 6),
+        Size = UDim2.new(1, 0, 0, metrics.Name + 6),
     }, names)
-    make("UIListLayout", {
+    create("UIListLayout", {
         FillDirection = Enum.FillDirection.Horizontal,
         VerticalAlignment = Enum.VerticalAlignment.Center,
         Padding = UDim.new(0, 6),
         SortOrder = Enum.SortOrder.LayoutOrder,
     }, nameRow)
-    row.name = label(nameRow, {
+    row.name = createLabel(nameRow, {
         Name = "DisplayName",
         Size = UDim2.new(0, 0, 1, 0),
         AutomaticSize = Enum.AutomaticSize.X,
-        FontFace = HEAD,
-        TextSize = M.Name,
-        TextColor3 = pinned and T.YouText or T.Ink,
+        FontFace = HEAD_FONT,
+        TextSize = metrics.Name,
+        TextColor3 = pinned and Theme.YouText or Theme.Ink,
         LayoutOrder = 1,
     })
-    make("UISizeConstraint", { MaxSize = Vector2.new(math.max(80, 340 - M.ValueW), 1000) }, row.name)
+    create("UISizeConstraint", { MaxSize = Vector2.new(math.max(80, 340 - metrics.ValueW), 1000) }, row.name)
     if not pinned then
-        row.you = label(nameRow, {
+        row.you = createLabel(nameRow, {
             Name = "You",
             Text = "YOU",
-            FontFace = HEAVY,
-            TextSize = math.max(9, M.User - 2),
-            TextColor3 = T.TabTextOn,
+            FontFace = HEAVY_FONT,
+            TextSize = math.max(9, metrics.User - 2),
+            TextColor3 = Theme.TabTextOn,
             BackgroundTransparency = 0,
-            BackgroundColor3 = T.CrimsonLow,
-            Size = UDim2.fromOffset(0, M.User + 4),
+            BackgroundColor3 = Theme.CrimsonLow,
+            Size = UDim2.fromOffset(0, metrics.User + 4),
             AutomaticSize = Enum.AutomaticSize.X,
             TextXAlignment = Enum.TextXAlignment.Center,
             Visible = false,
             LayoutOrder = 2,
         })
-        corner(row.you, 4)
-        make("UIPadding", { PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5) }, row.you)
+        addCorner(row.you, 4)
+        create("UIPadding", { PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5) }, row.you)
     end
-    row.user = label(names, {
+    row.user = createLabel(names, {
         Name = "Username",
         Position = UDim2.new(0, 0, 0.5, pinned and 8 or 4),
-        Size = UDim2.new(1, 0, 0, M.User + 4),
-        FontFace = BOLD,
-        TextSize = M.User,
-        TextColor3 = pinned and T.YouSub or T.InkFaint,
+        Size = UDim2.new(1, 0, 0, metrics.User + 4),
+        FontFace = BOLD_FONT,
+        TextSize = metrics.User,
+        TextColor3 = pinned and Theme.YouSub or Theme.InkFaint,
     })
     if pinned then
-        row.value = goldText(face, {
+        row.value = createGoldText(face, {
             Name = "Value",
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, -16, 0.5, 0),
-            Size = UDim2.new(0, M.ValueW, 1, 0),
-            FontFace = HEAD,
-            TextSize = M.Value + 6,
+            Size = UDim2.new(0, metrics.ValueW, 1, 0),
+            FontFace = HEAD_FONT,
+            TextSize = metrics.Value + 6,
             TextXAlignment = Enum.TextXAlignment.Right,
             TextTruncate = Enum.TextTruncate.None,
         }, 2)
     else
-        row.value = label(face, {
+        row.value = createLabel(face, {
             Name = "Value",
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, -16, 0.5, 0),
-            Size = UDim2.new(0, M.ValueW, 1, 0),
-            FontFace = HEAD,
-            TextSize = M.Value,
+            Size = UDim2.new(0, metrics.ValueW, 1, 0),
+            FontFace = HEAD_FONT,
+            TextSize = metrics.Value,
             TextXAlignment = Enum.TextXAlignment.Right,
             TextTruncate = Enum.TextTruncate.None,
         })
         -- hover: lift the face off its lip a little
         face.MouseEnter:Connect(function()
-            TweenService:Create(face, QUICK, { Position = UDim2.fromOffset(0, -2) }):Play()
+            TweenService:Create(face, QUICK_TWEEN, { Position = UDim2.fromOffset(0, -2) }):Play()
         end)
         face.MouseLeave:Connect(function()
-            TweenService:Create(face, QUICK, { Position = UDim2.fromOffset(0, 0) }):Play()
+            TweenService:Create(face, QUICK_TWEEN, { Position = UDim2.fromOffset(0, 0) }):Play()
         end)
     end
     return row
 end
 
--- e = { r = rank?, u = userId, n = username?, d = displayName?, v = value? }
-local function fillRow(row, e, kind, isSelf, alt, shown)
-    local medal = medalStyle(e.r)
+-- entry = { r = rank?, u = userId, n = username?, d = displayName?, v = value? }
+-- `shownValue` (0 when a count-up starts) is displayed instead of entry.v; row.target keeps the real value.
+local function fillRow(row, entry, kind, isSelf, isAlternate, shownValue)
+    local medal = medalStyle(entry.r)
     if not row.pinned then
-        local bg, edge, lip = alt and T.CreamAlt or T.Cream, T.CreamEdge, T.CreamLip
+        local faceColor, edgeColor, lipColor =
+            isAlternate and Theme.CreamAlt or Theme.Cream, Theme.CreamEdge, Theme.CreamLip
         if medal then
-            bg, edge, lip = medal[4], medal[2], medal[2]:Lerp(T.Ink, 0.35)
+            faceColor, edgeColor, lipColor = medal[4], medal[2], medal[2]:Lerp(Theme.Ink, 0.35)
         end
-        row.face.BackgroundColor3 = bg
-        row.frame.BackgroundColor3 = lip
-        row.edge.Color = isSelf and T.CrimsonLow or edge
+        row.face.BackgroundColor3 = faceColor
+        row.frame.BackgroundColor3 = lipColor
+        row.edge.Color = isSelf and Theme.CrimsonLow or edgeColor
         row.edge.Thickness = isSelf and 2.5 or 1.5
         if row.you then
             row.you.Visible = isSelf
         end
-        row.value.TextColor3 = medal and medal[3] or T.Ink
+        row.value.TextColor3 = medal and medal[3] or Theme.Ink
     end
     if medal then
         row.badgeFill.Color = ColorSequence.new(medal[1], medal[2])
-        row.badgeStroke.Color = medal[2]:Lerp(T.Ink, 0.4)
+        row.badgeStroke.Color = medal[2]:Lerp(Theme.Ink, 0.4)
         row.rank.TextColor3 = medal[3]
     elseif row.pinned then
-        row.badgeFill.Color = ColorSequence.new(T.CrimsonLip, T.CrimsonLip)
-        row.badgeStroke.Color = T.Gold
-        row.rank.TextColor3 = T.TabTextOn
+        row.badgeFill.Color = ColorSequence.new(Theme.CrimsonLip, Theme.CrimsonLip)
+        row.badgeStroke.Color = Theme.Gold
+        row.rank.TextColor3 = Theme.TabTextOn
     else
-        row.badgeFill.Color = ColorSequence.new(T.Charcoal, T.CharcoalLow)
-        row.badgeStroke.Color = T.CharcoalLip
-        row.rank.TextColor3 = T.Paper
+        row.badgeFill.Color = ColorSequence.new(Theme.Charcoal, Theme.CharcoalLow)
+        row.badgeStroke.Color = Theme.CharcoalLip
+        row.rank.TextColor3 = Theme.Paper
     end
-    row.rank.Text = e.r and ((row.pinned and "#" or "") .. tostring(e.r)) or "—"
-    local image = (e.u and e.u > 0) and string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=60&h=60", e.u) or ""
+    row.rank.Text = entry.r and ((row.pinned and "#" or "") .. tostring(entry.r)) or "—"
+    local image = (entry.u and entry.u > 0) and string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=60&h=60", entry.u)
+        or ""
     if row.avatar.Image ~= image then
         row.avatar.Image = image
     end
-    row.name.Text = e.d or e.n or "Unknown player"
-    row.user.Text = e.n and ("@" .. e.n) or (e.u and ("ID " .. e.u) or "")
-    row.target = e.v
-    local v = shown or e.v
-    row.value.Text = v and Format.Value(kind, v) or "—"
+    row.name.Text = entry.d or entry.n or "Unknown player"
+    row.user.Text = entry.n and ("@" .. entry.n) or (entry.u and ("ID " .. entry.u) or "")
+    row.target = entry.v
+    local displayValue = shownValue or entry.v
+    row.value.Text = displayValue and Format.Value(kind, displayValue) or "—"
 end
 
----------------------------------------------------------------- construction
+-- The hint under YOUR RANK: the gap to the player above, a lead message, or why there is no rank.
+local function yourRankNote(ownEntry, entries, snapshot, status, scope, kind)
+    if ownEntry.r and ownEntry.r > 1 and entries[ownEntry.r - 1] and entries[ownEntry.r - 1].v and ownEntry.v then
+        local ahead = entries[ownEntry.r - 1]
+        return Format.Value(kind, math.max(0, ahead.v - ownEntry.v))
+            .. " to pass "
+            .. (ahead.d or ahead.n or "the next player")
+    elseif ownEntry.r == 1 then
+        return "You lead " .. (scope == "Server" and "this server" or "everyone")
+    elseif not snapshot or status == "loading" then
+        return "Loading"
+    elseif status == "unavailable" then
+        return "Global unavailable"
+    elseif scope == "Global" and ownEntry.v and ownEntry.v > 0 then
+        return (snapshot.total or 0) >= (snapshot.depth or 100)
+                and ("Outside the top " .. (snapshot.depth or 100) .. "  ·  keep climbing")
+            or "Not on the global board yet"
+    else
+        return "Not ranked yet"
+    end
+end
+
+-- ===== 3. Construction =====
 function View.new(parent, mode, callbacks)
     local self = setmetatable({}, View)
     self.mode = mode
@@ -526,110 +560,97 @@ function View.new(parent, mode, callbacks)
     return self
 end
 
-function View:_build(parent)
-    local M = self.M
-    local root = make("Frame", {
-        Name = "Leaderboard",
-        Size = UDim2.fromScale(1, 1),
-        BackgroundColor3 = Color3.new(1, 1, 1),
-        BorderSizePixel = 0,
-        ClipsDescendants = true,
-    }, parent)
-    gradient(root, T.WoodTop, T.Wood)
-    local edge = M.Edge or 0
-    make("UIPadding", {
-        PaddingLeft = UDim.new(0, M.Pad + edge),
-        PaddingRight = UDim.new(0, M.Pad + edge),
-        PaddingTop = UDim.new(0, M.Pad - 6 + edge),
-        PaddingBottom = UDim.new(0, M.Pad - 8 + edge),
-    }, root)
-    self.root = root
-    local y = 0
-
-    -- header: title between gold cloud scrolls (close on the right of the expanded view)
-    local header =
-        make("Frame", { Name = "Header", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, M.Header) }, root)
-    local titleRow = make("Frame", {
+-- Header: the embossed title between gold cloud scrolls (plus a close button outside Board mode).
+local function buildHeader(self, root)
+    local metrics = self.M
+    local header = create(
+        "Frame",
+        { Name = "Header", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, metrics.Header) },
+        root
+    )
+    local titleRow = create("Frame", {
         BackgroundTransparency = 1,
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5),
         Size = UDim2.new(0, 0, 1, 0),
         AutomaticSize = Enum.AutomaticSize.X,
     }, header)
-    make("UIListLayout", {
+    create("UIListLayout", {
         FillDirection = Enum.FillDirection.Horizontal,
         VerticalAlignment = Enum.VerticalAlignment.Center,
         HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        Padding = UDim.new(0, math.floor(M.Title * 0.4)),
+        Padding = UDim.new(0, math.floor(metrics.Title * 0.4)),
         SortOrder = Enum.SortOrder.LayoutOrder,
     }, titleRow)
-    if M.Cloud > 0 then
-        cloud(titleRow, M.Cloud, false).LayoutOrder = 1
+    if metrics.Cloud > 0 then
+        createCloudScroll(titleRow, metrics.Cloud, false).LayoutOrder = 1
     end
     -- embossed gold title
-    local title = goldText(titleRow, {
+    local title = createGoldText(titleRow, {
         Name = "Title",
         Text = "LEADERBOARD",
-        FontFace = HEAD,
-        TextSize = M.Title,
+        FontFace = HEAD_FONT,
+        TextSize = metrics.Title,
         LayoutOrder = 2,
         Size = UDim2.new(0, 0, 1, 0),
         AutomaticSize = Enum.AutomaticSize.X,
         TextTruncate = Enum.TextTruncate.None,
-    }, M.Title >= 36 and 3 or 2)
-    if M.Cloud > 0 then
-        cloud(titleRow, M.Cloud, true).LayoutOrder = 3
+    }, metrics.Title >= 36 and 3 or 2)
+    if metrics.Cloud > 0 then
+        createCloudScroll(titleRow, metrics.Cloud, true).LayoutOrder = 3
     end
     self.title = title
 
     if self.mode ~= "Board" then
-        local size = M.ScopeH
-        local _, close = lipButton(header, {
+        local closeSize = metrics.ScopeH
+        local _, closeFace = createLipButton(header, {
             Name = "Close",
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, 0, 0.5, 0),
-            Size = UDim2.fromOffset(size, size + M.Lip),
-            Top = T.Crimson,
-            Bottom = T.CrimsonLow,
-            Lip = T.CrimsonLip,
-            Edge = T.CrimsonLip,
-        }, M.Lip, true)
+            Size = UDim2.fromOffset(closeSize, closeSize + metrics.Lip),
+            Top = Theme.Crimson,
+            Bottom = Theme.CrimsonLow,
+            Lip = Theme.CrimsonLip,
+            Edge = Theme.CrimsonLip,
+        }, metrics.Lip, true)
         for _, rotation in { 45, -45 } do
-            make("Frame", {
+            create("Frame", {
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 Position = UDim2.fromScale(0.5, 0.5),
                 Size = UDim2.new(0.46, 0, 0, 3),
                 Rotation = rotation,
-                BackgroundColor3 = T.TabTextOn,
+                BackgroundColor3 = Theme.TabTextOn,
                 BorderSizePixel = 0,
                 ZIndex = 2,
-            }, close)
+            }, closeFace)
         end
-        close.Activated:Connect(function()
+        closeFace.Activated:Connect(function()
             self.callbacks.onClose()
         end)
-        self.closeButton = close
+        self.closeButton = closeFace
     end
-    y += M.Header + 2
+end
 
-    -- stat tabs
-    local tabs = make("Frame", {
+-- Stat tabs: one lip button per Config.Stats entry, sharing the row width.
+local function buildTabs(self, root, y)
+    local metrics = self.M
+    local tabs = create("Frame", {
         Name = "Tabs",
         BackgroundTransparency = 1,
         Position = UDim2.fromOffset(0, y),
-        Size = UDim2.new(1, 0, 0, M.Tabs),
+        Size = UDim2.new(1, 0, 0, metrics.Tabs),
     }, root)
     self.tabs = {}
-    local count = #Config.Stats
-    local gap = self.mode == "Compact" and 6 or 10
+    local statCount = #Config.Stats
+    local tabGap = self.mode == "Compact" and 6 or 10
     for i, stat in Config.Stats do
-        local holder, face, fill, faceEdge = lipButton(tabs, {
+        local holder, face, fill, faceEdge = createLipButton(tabs, {
             Name = stat.Id,
-            Position = UDim2.new((i - 1) / count, (i - 1) * gap / count, 0, 0),
-            Size = UDim2.new(1 / count, -gap * (count - 1) / count, 1, 0),
-        }, M.Lip, self.interactive)
-        local glow = stroke(holder, T.Gold, 3, 1)
-        local content = make("Frame", {
+            Position = UDim2.new((i - 1) / statCount, (i - 1) * tabGap / statCount, 0, 0),
+            Size = UDim2.new(1 / statCount, -tabGap * (statCount - 1) / statCount, 1, 0),
+        }, metrics.Lip, self.interactive)
+        local glow = addStroke(holder, Theme.Gold, 3, 1)
+        local content = create("Frame", {
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
@@ -637,19 +658,19 @@ function View:_build(parent)
             AutomaticSize = Enum.AutomaticSize.X,
             ZIndex = 2,
         }, face)
-        make("UIListLayout", {
+        create("UIListLayout", {
             FillDirection = Enum.FillDirection.Horizontal,
             VerticalAlignment = Enum.VerticalAlignment.Center,
-            Padding = UDim.new(0, math.floor(M.Icon * 0.4)),
+            Padding = UDim.new(0, math.floor(metrics.Icon * 0.4)),
             SortOrder = Enum.SortOrder.LayoutOrder,
         }, content)
-        local glyph = icon(content, stat.Kind, M.Icon)
-        local text = label(content, {
+        local glyph = createStatIcon(content, stat.Kind, metrics.Icon)
+        local tabLabel = createLabel(content, {
             Name = "Label",
             Text = stat.Tab,
-            FontFace = HEAD,
-            TextSize = M.TabText,
-            TextColor3 = T.TabText,
+            FontFace = HEAD_FONT,
+            TextSize = metrics.TabText,
+            TextColor3 = Theme.TabText,
             Size = UDim2.new(0, 0, 1, 0),
             AutomaticSize = Enum.AutomaticSize.X,
             TextTruncate = Enum.TextTruncate.None,
@@ -665,118 +686,123 @@ function View:_build(parent)
             fill = fill,
             edge = faceEdge,
             glow = glow,
-            text = text,
+            text = tabLabel,
             icon = glyph,
         }
     end
-    y += M.Tabs + M.Gap + 2
+end
 
-    -- scope: a recessed track with two segments
-    local track = make("Frame", {
+-- Scope: a recessed track with two segments (THIS SERVER / GLOBAL).
+local function buildScopeToggle(self, root, y)
+    local metrics = self.M
+    local track = create("Frame", {
         Name = "Scope",
         AnchorPoint = Vector2.new(0.5, 0),
         Position = UDim2.new(0.5, 0, 0, y),
-        Size = UDim2.fromOffset(M.ScopeW, M.ScopeH),
-        BackgroundColor3 = T.Well,
+        Size = UDim2.fromOffset(metrics.ScopeW, metrics.ScopeH),
+        BackgroundColor3 = Theme.Well,
         BorderSizePixel = 0,
     }, root)
-    corner(track, 10)
-    stroke(track, T.WellEdge, 1.5)
+    addCorner(track, 10)
+    addStroke(track, Theme.WellEdge, 1.5)
     self.scopeButtons = {}
     for i, id in { "Server", "Global" } do
-        local position, size = UDim2.new((i - 1) * 0.5, i == 1 and 3 or 1, 0, 3), UDim2.new(0.5, -4, 1, -6)
+        local segmentPosition, segmentSize =
+            UDim2.new((i - 1) * 0.5, i == 1 and 3 or 1, 0, 3), UDim2.new(0.5, -4, 1, -6)
         -- the selected pill sits behind the text (a gradient on the button itself would tint its text too)
-        local pill = make("Frame", {
+        local pill = create("Frame", {
             Name = id .. "Pill",
-            Position = position,
-            Size = size,
+            Position = segmentPosition,
+            Size = segmentSize,
             BackgroundColor3 = Color3.new(1, 1, 1),
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
         }, track)
-        corner(pill, 8)
-        gradient(pill, T.Crimson, T.CrimsonLow)
-        local edgeStroke = stroke(pill, T.Gold, 1.5, 1)
-        local b = make("TextButton", {
+        addCorner(pill, 8)
+        addGradient(pill, Theme.Crimson, Theme.CrimsonLow)
+        local edgeStroke = addStroke(pill, Theme.Gold, 1.5, 1)
+        local scopeButton = create("TextButton", {
             Name = id,
-            Position = position,
-            Size = size,
+            Position = segmentPosition,
+            Size = segmentSize,
             BackgroundTransparency = 1,
             Text = id == "Server" and "THIS SERVER" or "GLOBAL",
-            FontFace = HEAD,
-            TextSize = M.Scope + 1,
-            TextColor3 = T.PageSoft,
+            FontFace = HEAD_FONT,
+            TextSize = metrics.Scope + 1,
+            TextColor3 = Theme.PageSoft,
             AutoButtonColor = false,
             Selectable = self.interactive,
             BorderSizePixel = 0,
             ZIndex = 2,
         }, track)
-        b.Activated:Connect(function()
+        scopeButton.Activated:Connect(function()
             self.callbacks.onScope(id)
         end)
-        self.scopeButtons[id] = { button = b, pill = pill, edge = edgeStroke }
+        self.scopeButtons[id] = { button = scopeButton, pill = pill, edge = edgeStroke }
     end
-    y += M.ScopeH + M.Gap
+end
 
-    -- column labels
-    if M.Column > 0 then
-        local columns = make("Frame", {
-            Name = "Columns",
-            BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(0, y),
-            Size = UDim2.new(1, 0, 0, M.Column),
-        }, root)
-        label(columns, {
-            Text = "RANK",
-            FontFace = HEAVY,
-            TextSize = M.ColText,
-            TextColor3 = T.PageFaint,
-            TextXAlignment = Enum.TextXAlignment.Center,
-            Position = UDim2.fromOffset(16, 0),
-            Size = UDim2.new(0, M.Badge, 1, 0),
-        })
-        label(columns, {
-            Text = "PLAYER",
-            FontFace = HEAVY,
-            TextSize = M.ColText,
-            TextColor3 = T.PageFaint,
-            Position = UDim2.fromOffset(16 + M.Badge + 10 + M.Avatar + 12, 0),
-            Size = UDim2.new(0, 160, 1, 0),
-        })
-        self.columnValue = label(columns, {
-            Text = "",
-            FontFace = HEAVY,
-            TextSize = M.ColText,
-            TextColor3 = T.PageFaint,
-            TextXAlignment = Enum.TextXAlignment.Right,
-            AnchorPoint = Vector2.new(1, 0),
-            Position = UDim2.new(1, -24 - M.Bar, 0, 0),
-            Size = UDim2.new(0, M.ValueW, 1, 0),
-        })
-        y += M.Column
-    end
+-- Column labels (only when metrics.Column > 0).
+local function buildColumnLabels(self, root, y)
+    local metrics = self.M
+    local columns = create("Frame", {
+        Name = "Columns",
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(0, y),
+        Size = UDim2.new(1, 0, 0, metrics.Column),
+    }, root)
+    createLabel(columns, {
+        Text = "RANK",
+        FontFace = HEAVY_FONT,
+        TextSize = metrics.ColText,
+        TextColor3 = Theme.PageFaint,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        Position = UDim2.fromOffset(16, 0),
+        Size = UDim2.new(0, metrics.Badge, 1, 0),
+    })
+    createLabel(columns, {
+        Text = "PLAYER",
+        FontFace = HEAVY_FONT,
+        TextSize = metrics.ColText,
+        TextColor3 = Theme.PageFaint,
+        Position = UDim2.fromOffset(16 + metrics.Badge + 10 + metrics.Avatar + 12, 0),
+        Size = UDim2.new(0, 160, 1, 0),
+    })
+    self.columnValue = createLabel(columns, {
+        Text = "",
+        FontFace = HEAVY_FONT,
+        TextSize = metrics.ColText,
+        TextColor3 = Theme.PageFaint,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -24 - metrics.Bar, 0, 0),
+        Size = UDim2.new(0, metrics.ValueW, 1, 0),
+    })
+end
 
-    -- the well with pooled rows
-    local bottom = M.You + M.Meta + M.Gap + 4
-    local well = make("Frame", {
+-- The well holding the pooled rows' ScrollingFrame.
+local function buildWell(self, root, y)
+    local metrics = self.M
+    local bottom = metrics.You + metrics.Meta + metrics.Gap + 4
+    local well = create("Frame", {
         Name = "Well",
         Position = UDim2.fromOffset(0, y),
         Size = UDim2.new(1, 0, 1, -(y + bottom)),
-        BackgroundColor3 = T.Well,
+        BackgroundColor3 = Theme.Well,
         BorderSizePixel = 0,
     }, root)
-    corner(well, 12)
-    stroke(well, T.WellEdge, 1.5)
+    addCorner(well, 12)
+    addStroke(well, Theme.WellEdge, 1.5)
     self.well = well
-    self.list = make("ScrollingFrame", {
+    self.list = create("ScrollingFrame", {
         Name = "List",
         Position = UDim2.fromOffset(8, 8),
         Size = UDim2.new(1, -12, 1, -12),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         CanvasSize = UDim2.new(),
-        ScrollBarThickness = M.Bar,
-        ScrollBarImageColor3 = T.Scroll,
+        ScrollBarThickness = metrics.Bar,
+        ScrollBarImageColor3 = Theme.Scroll,
         ScrollBarImageTransparency = 0.15,
         ScrollingDirection = Enum.ScrollingDirection.Y,
         VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar,
@@ -784,9 +810,12 @@ function View:_build(parent)
         Selectable = self.interactive,
         SelectionGroup = false,
     }, well)
+end
 
-    -- states: loading skeleton / empty trophy / unavailable
-    local status = make("Frame", {
+-- Overlays for the loading skeleton / empty trophy / unavailable states.
+local function buildStatusStates(self, well)
+    local metrics = self.M
+    local status = create("Frame", {
         Name = "Status",
         BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1),
@@ -794,7 +823,7 @@ function View:_build(parent)
         ZIndex = 3,
     }, well)
     self.status = status
-    self.skeleton = make("Frame", {
+    self.skeleton = create("Frame", {
         Name = "Skeleton",
         BackgroundTransparency = 1,
         Position = UDim2.fromOffset(8, 8),
@@ -802,113 +831,113 @@ function View:_build(parent)
         ZIndex = 3,
     }, status)
     for i = 1, 4 do
-        local s = make("Frame", {
-            BackgroundColor3 = T.Cream,
+        local skeletonBar = create("Frame", {
+            BackgroundColor3 = Theme.Cream,
             BackgroundTransparency = 0.35,
             BorderSizePixel = 0,
             ZIndex = 3,
-            Position = UDim2.fromOffset(0, (i - 1) * M.Row),
-            Size = UDim2.new(1, 0, 0, M.Row - M.Gap - 3),
+            Position = UDim2.fromOffset(0, (i - 1) * metrics.Row),
+            Size = UDim2.new(1, 0, 0, metrics.Row - metrics.Gap - 3),
         }, self.skeleton)
-        corner(s, 12)
-        table.insert(self.tweens, TweenService:Create(s, PULSE, { BackgroundTransparency = 0.7 }))
+        addCorner(skeletonBar, 12)
+        table.insert(self.tweens, TweenService:Create(skeletonBar, PULSE_TWEEN, { BackgroundTransparency = 0.7 }))
     end
-    self.trophy = make("Frame", {
+    self.trophy = create("Frame", {
         Name = "Trophy",
         BackgroundTransparency = 1,
         AnchorPoint = Vector2.new(0.5, 1),
-        Position = UDim2.new(0.5, 0, 0.5, -M.Name),
-        Size = UDim2.fromOffset(M.Avatar * 1.8, M.Avatar * 1.5),
+        Position = UDim2.new(0.5, 0, 0.5, -metrics.Name),
+        Size = UDim2.fromOffset(metrics.Avatar * 1.8, metrics.Avatar * 1.5),
         ZIndex = 3,
     }, status)
     do
-        local t = self.trophy
-        local cup = make("Frame", {
+        local trophy = self.trophy
+        local cup = create("Frame", {
             BackgroundColor3 = Color3.new(1, 1, 1),
             BorderSizePixel = 0,
             Position = UDim2.fromScale(0.22, 0),
             Size = UDim2.fromScale(0.56, 0.56),
             ZIndex = 3,
-        }, t)
-        make("UICorner", { CornerRadius = UDim.new(0.3, 0) }, cup)
-        gradient(cup, T.GoldLight, T.GoldDeep)
-        stroke(cup, T.GoldInk, 2)
-        local gem = make("Frame", {
-            BackgroundColor3 = T.CrimsonLow,
+        }, trophy)
+        create("UICorner", { CornerRadius = UDim.new(0.3, 0) }, cup)
+        addGradient(cup, Theme.GoldLight, Theme.GoldDeep)
+        addStroke(cup, Theme.GoldInk, 2)
+        local gem = create("Frame", {
+            BackgroundColor3 = Theme.CrimsonLow,
             BorderSizePixel = 0,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.42),
             Size = UDim2.fromScale(0.3, 0.3),
             ZIndex = 4,
         }, cup)
-        make("UICorner", { CornerRadius = UDim.new(0.5, 0) }, gem)
-        local stem = make("Frame", {
-            BackgroundColor3 = T.GoldDeep,
+        create("UICorner", { CornerRadius = UDim.new(0.5, 0) }, gem)
+        local stem = create("Frame", {
+            BackgroundColor3 = Theme.GoldDeep,
             BorderSizePixel = 0,
             Position = UDim2.fromScale(0.42, 0.54),
             Size = UDim2.fromScale(0.16, 0.2),
             ZIndex = 3,
-        }, t)
-        stroke(stem, T.GoldInk, 1)
-        local foot = make("Frame", {
-            BackgroundColor3 = T.WoodTop,
+        }, trophy)
+        addStroke(stem, Theme.GoldInk, 1)
+        local foot = create("Frame", {
+            BackgroundColor3 = Theme.WoodTop,
             BorderSizePixel = 0,
             Position = UDim2.fromScale(0.26, 0.74),
             Size = UDim2.fromScale(0.48, 0.2),
             ZIndex = 3,
-        }, t)
-        corner(foot, 3)
-        stroke(foot, T.Gold, 1.5)
+        }, trophy)
+        addCorner(foot, 3)
+        addStroke(foot, Theme.Gold, 1.5)
         for _, x in { 0.02, 0.84 } do
-            local coin = make("Frame", {
-                BackgroundColor3 = T.Gold,
+            local coin = create("Frame", {
+                BackgroundColor3 = Theme.Gold,
                 BorderSizePixel = 0,
                 Position = UDim2.fromScale(x, 0.8),
                 Size = UDim2.fromScale(0.14, 0.12),
                 ZIndex = 3,
-            }, t)
-            make("UICorner", { CornerRadius = UDim.new(0.5, 0) }, coin)
-            stroke(coin, T.GoldInk, 1)
+            }, trophy)
+            create("UICorner", { CornerRadius = UDim.new(0.5, 0) }, coin)
+            addStroke(coin, Theme.GoldInk, 1)
         end
     end
-    self.statusTitle = label(status, {
-        FontFace = HEAD,
-        TextSize = M.Name + 4,
-        TextColor3 = T.PageText,
+    self.statusTitle = createLabel(status, {
+        FontFace = HEAD_FONT,
+        TextSize = metrics.Name + 4,
+        TextColor3 = Theme.PageText,
         TextXAlignment = Enum.TextXAlignment.Center,
         ZIndex = 3,
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0.5, -M.Name + 4),
-        Size = UDim2.new(1, -40, 0, M.Name + 8),
+        Position = UDim2.new(0.5, 0, 0.5, -metrics.Name + 4),
+        Size = UDim2.new(1, -40, 0, metrics.Name + 8),
     })
-    self.statusBody = label(status, {
-        TextSize = M.User + 1,
-        TextColor3 = T.PageSoft,
+    self.statusBody = createLabel(status, {
+        TextSize = metrics.User + 1,
+        TextColor3 = Theme.PageSoft,
         TextXAlignment = Enum.TextXAlignment.Center,
-        FontFace = BOLD,
+        FontFace = BOLD_FONT,
         ZIndex = 3,
         TextYAlignment = Enum.TextYAlignment.Top,
         TextWrapped = true,
         TextTruncate = Enum.TextTruncate.None,
         AnchorPoint = Vector2.new(0.5, 0),
         Position = UDim2.new(0.5, 0, 0.5, 14),
-        Size = UDim2.new(1, -60, 0, (M.User + 4) * 2),
+        Size = UDim2.new(1, -60, 0, (metrics.User + 4) * 2),
     })
-    local statusHolder, statusFace = lipButton(status, {
+    local statusHolder, statusFace = createLipButton(status, {
         Name = "ViewServer",
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0.5, 14 + (M.User + 4) * 2 + 4),
-        Size = UDim2.fromOffset(M.ScopeW - 40, M.ScopeH + M.Lip),
-        Top = T.GoldLight,
-        Bottom = T.GoldDeep,
-        Lip = T.GoldInk,
-        Edge = T.GoldInk,
-    }, M.Lip, self.interactive)
-    label(statusFace, {
+        Position = UDim2.new(0.5, 0, 0.5, 14 + (metrics.User + 4) * 2 + 4),
+        Size = UDim2.fromOffset(metrics.ScopeW - 40, metrics.ScopeH + metrics.Lip),
+        Top = Theme.GoldLight,
+        Bottom = Theme.GoldDeep,
+        Lip = Theme.GoldInk,
+        Edge = Theme.GoldInk,
+    }, metrics.Lip, self.interactive)
+    createLabel(statusFace, {
         Text = "VIEW THIS SERVER",
-        FontFace = HEAD,
-        TextSize = M.Scope + 2,
-        TextColor3 = T.GoldInk,
+        FontFace = HEAD_FONT,
+        TextSize = metrics.Scope + 2,
+        TextColor3 = Theme.GoldInk,
         TextXAlignment = Enum.TextXAlignment.Center,
         Size = UDim2.fromScale(1, 1),
         ZIndex = 3,
@@ -917,47 +946,90 @@ function View:_build(parent)
         self.callbacks.onScope("Server")
     end)
     self.statusButton = statusHolder
+end
 
-    -- YOUR RANK: dark brown and gold, always pinned under the list
-    local youHolder = make("Frame", {
+-- YOUR RANK: crimson and gold, always pinned under the list.
+local function buildYourRank(self, root)
+    local metrics = self.M
+    local youHolder = create("Frame", {
         Name = "YourRank",
         AnchorPoint = Vector2.new(0, 1),
-        Position = UDim2.new(0, 0, 1, -(M.Meta + 2)),
-        Size = UDim2.new(1, 0, 0, M.You),
+        Position = UDim2.new(0, 0, 1, -(metrics.Meta + 2)),
+        Size = UDim2.new(1, 0, 0, metrics.You),
         BackgroundTransparency = 1,
     }, root)
-    self.youRow = buildRow(youHolder, M, "You", true)
-    self.youLabel = label(self.youRow.face, {
+    self.youRow = buildRow(youHolder, metrics, "You", true)
+    self.youLabel = createLabel(self.youRow.face, {
         Name = "Label",
         Text = "YOUR RANK",
-        FontFace = HEAVY,
-        TextSize = math.max(9, M.User - 1),
-        TextColor3 = T.YouSub,
-        Position = UDim2.fromOffset(8 + M.YouRank + 8 + 10 + M.Avatar + 12, 4),
-        Size = UDim2.new(0.5, 0, 0, M.User + 2),
+        FontFace = HEAVY_FONT,
+        TextSize = math.max(9, metrics.User - 1),
+        TextColor3 = Theme.YouSub,
+        Position = UDim2.fromOffset(8 + metrics.YouRank + 8 + 10 + metrics.Avatar + 12, 4),
+        Size = UDim2.new(0.5, 0, 0, metrics.User + 2),
     })
+end
 
-    -- meta line
-    if M.Meta == 0 then
-        return
-    end
-    self.metaLeft = label(root, {
+-- Meta line under the card (scope summary left, data age right).
+local function buildMetaLine(self, root)
+    local metrics = self.M
+    self.metaLeft = createLabel(root, {
         AnchorPoint = Vector2.new(0, 1),
         Position = UDim2.new(0, 4, 1, 0),
-        Size = UDim2.new(0.6, 0, 0, M.Meta),
-        TextSize = M.MetaText,
-        TextColor3 = T.PageFaint,
-        FontFace = BOLD,
+        Size = UDim2.new(0.6, 0, 0, metrics.Meta),
+        TextSize = metrics.MetaText,
+        TextColor3 = Theme.PageFaint,
+        FontFace = BOLD_FONT,
     })
-    self.metaRight = label(root, {
+    self.metaRight = createLabel(root, {
         AnchorPoint = Vector2.new(1, 1),
         Position = UDim2.new(1, -4, 1, 0),
-        Size = UDim2.new(0.4, 0, 0, M.Meta),
-        TextSize = M.MetaText,
-        TextColor3 = T.PageFaint,
+        Size = UDim2.new(0.4, 0, 0, metrics.Meta),
+        TextSize = metrics.MetaText,
+        TextColor3 = Theme.PageFaint,
         TextXAlignment = Enum.TextXAlignment.Right,
-        FontFace = BOLD,
+        FontFace = BOLD_FONT,
     })
+end
+
+-- Builds the whole view top to bottom; `y` is the running vertical offset inside the padded root.
+function View:_build(parent)
+    local metrics = self.M
+    local root = create("Frame", {
+        Name = "Leaderboard",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+    }, parent)
+    addGradient(root, Theme.WoodTop, Theme.Wood)
+    local edge = metrics.Edge or 0
+    create("UIPadding", {
+        PaddingLeft = UDim.new(0, metrics.Pad + edge),
+        PaddingRight = UDim.new(0, metrics.Pad + edge),
+        PaddingTop = UDim.new(0, metrics.Pad - 6 + edge),
+        PaddingBottom = UDim.new(0, metrics.Pad - 8 + edge),
+    }, root)
+    self.root = root
+    local y = 0
+
+    buildHeader(self, root)
+    y += metrics.Header + 2
+    buildTabs(self, root, y)
+    y += metrics.Tabs + metrics.Gap + 2
+    buildScopeToggle(self, root, y)
+    y += metrics.ScopeH + metrics.Gap
+    if metrics.Column > 0 then
+        buildColumnLabels(self, root, y)
+        y += metrics.Column
+    end
+    buildWell(self, root, y)
+    buildStatusStates(self, self.well)
+    buildYourRank(self, root)
+    if metrics.Meta == 0 then
+        return
+    end
+    buildMetaLine(self, root)
 end
 
 function View:_row(i)
@@ -967,40 +1039,41 @@ function View:_row(i)
     return row
 end
 
----------------------------------------------------------------- state changes
+-- ===== 4. State changes =====
 function View:_selectTab(index, animate)
     for i, tab in self.tabs do
-        local on = i == index
-        tab.fill.Color = on and ColorSequence.new(T.Crimson, T.CrimsonLow)
-            or ColorSequence.new(T.Charcoal, T.CharcoalLow)
-        tab.holder.BackgroundColor3 = on and T.CrimsonLip or T.CharcoalLip
-        tab.edge.Color = on and T.Gold or T.CharcoalLip
-        tab.edge.Thickness = on and 2 or 1.5
-        setIconTint(tab.icon, on and T.TabTextOn or T.TabText)
-        local goal = on and 0.55 or 1
+        local isSelected = i == index
+        tab.fill.Color = isSelected and ColorSequence.new(Theme.Crimson, Theme.CrimsonLow)
+            or ColorSequence.new(Theme.Charcoal, Theme.CharcoalLow)
+        tab.holder.BackgroundColor3 = isSelected and Theme.CrimsonLip or Theme.CharcoalLip
+        tab.edge.Color = isSelected and Theme.Gold or Theme.CharcoalLip
+        tab.edge.Thickness = isSelected and 2 or 1.5
+        setIconTint(tab.icon, isSelected and Theme.TabTextOn or Theme.TabText)
+        local goal = isSelected and 0.55 or 1
         if animate then
-            TweenService:Create(tab.glow, QUICK, { Transparency = goal }):Play()
-            TweenService:Create(tab.text, QUICK, { TextColor3 = on and T.TabTextOn or T.TabText }):Play()
+            TweenService:Create(tab.glow, QUICK_TWEEN, { Transparency = goal }):Play()
+            TweenService:Create(tab.text, QUICK_TWEEN, { TextColor3 = isSelected and Theme.TabTextOn or Theme.TabText })
+                :Play()
         else
             tab.glow.Transparency = goal
-            tab.text.TextColor3 = on and T.TabTextOn or T.TabText
+            tab.text.TextColor3 = isSelected and Theme.TabTextOn or Theme.TabText
         end
     end
     self.tabIndex = index
 end
 
 function View:_selectScope(scope, animate)
-    for id, s in self.scopeButtons do
-        local on = id == scope
-        local fill, ink = on and 0 or 1, on and T.TabTextOn or T.PageSoft
+    for id, segment in self.scopeButtons do
+        local isSelected = id == scope
+        local pillTransparency, textColor = isSelected and 0 or 1, isSelected and Theme.TabTextOn or Theme.PageSoft
         if animate then
-            TweenService:Create(s.pill, QUICK, { BackgroundTransparency = fill }):Play()
-            TweenService:Create(s.button, QUICK, { TextColor3 = ink }):Play()
+            TweenService:Create(segment.pill, QUICK_TWEEN, { BackgroundTransparency = pillTransparency }):Play()
+            TweenService:Create(segment.button, QUICK_TWEEN, { TextColor3 = textColor }):Play()
         else
-            s.pill.BackgroundTransparency = fill
-            s.button.TextColor3 = ink
+            segment.pill.BackgroundTransparency = pillTransparency
+            segment.button.TextColor3 = textColor
         end
-        s.edge.Transparency = on and 0 or 1
+        segment.edge.Transparency = isSelected and 0 or 1
     end
     self.scopeId = scope
 end
@@ -1010,11 +1083,11 @@ function View:_setStatus(kind, title, body, showButton)
     self.list.Visible = kind == nil
     local loading = kind == "loading"
     self.skeleton.Visible = loading
-    for _, tw in self.tweens do
+    for _, tween in self.tweens do
         if loading then
-            tw:Play()
+            tween:Play()
         else
-            tw:Cancel()
+            tween:Cancel()
         end
     end
     self.trophy.Visible = kind == "empty"
@@ -1031,20 +1104,20 @@ function View:_meta(state)
     if not self.metaLeft then
         return
     end
-    local snap = state.snapshot
+    local snapshot = state.snapshot
     if state.scope == "Server" then
-        local n = snap and snap.total
-        self.metaLeft.Text = n and string.format("THIS SERVER  ·  %d ranked", n) or "THIS SERVER"
+        local rankedCount = snapshot and snapshot.total
+        self.metaLeft.Text = rankedCount and string.format("THIS SERVER  ·  %d ranked", rankedCount) or "THIS SERVER"
     else
         self.metaLeft.Text = "GLOBAL  ·  all servers, top " .. Config.MaxRows
     end
-    local right = ""
-    if snap and snap.updated then
-        local age = workspace:GetServerTimeNow() - snap.updated
-        right = snap.status == "stale" and ("Couldn't refresh  ·  from " .. Format.Age(age))
+    local rightText = ""
+    if snapshot and snapshot.updated then
+        local age = workspace:GetServerTimeNow() - snapshot.updated
+        rightText = snapshot.status == "stale" and ("Couldn't refresh  ·  from " .. Format.Age(age))
             or ("Updated " .. Format.Age(age))
     end
-    self.metaRight.Text = right
+    self.metaRight.Text = rightText
 end
 
 -- Values roll up from 0 to the server's number, then show it exactly.
@@ -1053,39 +1126,39 @@ function View:_countUp(kind)
         self.counter:Disconnect()
         self.counter = nil
     end
-    local reduced = Players.LocalPlayer and Players.LocalPlayer:GetAttribute("ReducedMotion") == true
-    if reduced then
+    local reducedMotion = Players.LocalPlayer and Players.LocalPlayer:GetAttribute("ReducedMotion") == true
+    if reducedMotion then
         return
     end
-    local rows = {}
+    local countingRows = {}
     for _, row in self.rows do
         if row.frame.Visible and row.target then
-            table.insert(rows, row)
+            table.insert(countingRows, row)
         end
     end
     if self.youRow.target then
-        table.insert(rows, self.youRow)
+        table.insert(countingRows, self.youRow)
     end
-    if #rows == 0 then
+    if #countingRows == 0 then
         return
     end
-    local start = os.clock()
+    local startedAt = os.clock()
     self.counter = RunService.Heartbeat:Connect(function()
-        local u = math.clamp((os.clock() - start) / COUNT_TIME, 0, 1)
-        local e = 1 - (1 - u) ^ 3
-        for _, row in rows do
+        local progress = math.clamp((os.clock() - startedAt) / COUNT_TIME, 0, 1)
+        local eased = 1 - (1 - progress) ^ 3
+        for _, row in countingRows do
             if row.target then
-                row.value.Text = Format.Value(kind, u >= 1 and row.target or math.floor(row.target * e))
+                row.value.Text = Format.Value(kind, progress >= 1 and row.target or math.floor(row.target * eased))
             end
         end
-        if u >= 1 and self.counter then
+        if progress >= 1 and self.counter then
             self.counter:Disconnect()
             self.counter = nil
         end
     end)
 end
 
----------------------------------------------------------------- public
+-- ===== 5. Public API =====
 --[[ state = {
 	tab, scope, phase = "loading" | "ready" | "error",
 	snapshot = { status, entries, total, updated, depth, you = { r, v } } | nil,
@@ -1121,8 +1194,8 @@ function View:Render(state)
         restore = self.scroll[key] or Vector2.zero
     end
 
-    local snap = state.snapshot
-    local entries = snap and snap.entries or {}
+    local snapshot = state.snapshot
+    local entries = snapshot and snapshot.entries or {}
     local count = math.min(#entries, Config.MaxRows)
     -- count up once per tab + scope, the first time it has rows
     local animate = count > 0 and self.counted ~= key
@@ -1131,8 +1204,8 @@ function View:Render(state)
     end
     for i = 1, count do
         local row = self.rows[i] or self:_row(i)
-        local e = entries[i]
-        fillRow(row, e, stat.Kind, e.u == state.localUserId, i % 2 == 0, animate and 0 or nil)
+        local entry = entries[i]
+        fillRow(row, entry, stat.Kind, entry.u == state.localUserId, i % 2 == 0, animate and 0 or nil)
         row.frame.Visible = true
     end
     for i = count + 1, #self.rows do
@@ -1150,10 +1223,10 @@ function View:Render(state)
     end
 
     -- loading / empty / unavailable
-    local status = snap and snap.status
+    local status = snapshot and snapshot.status
     if count > 0 then
         self:_setStatus(nil)
-    elseif state.phase == "error" and not snap then
+    elseif state.phase == "error" and not snapshot then
         self:_setStatus("error", "Couldn't load rankings", "Trying again in a few seconds.")
     elseif state.phase == "loading" or status == "loading" then
         self:_setStatus("loading")
@@ -1169,32 +1242,18 @@ function View:Render(state)
     end
 
     -- YOUR RANK
-    local you = snap and snap.you
-    local mine =
-        { r = you and you.r, u = state.localUserId, n = state.localName, d = state.localDisplayName, v = you and you.v }
-    fillRow(self.youRow, mine, stat.Kind, false, false, animate and mine.v and 0 or nil)
+    local yourRank = snapshot and snapshot.you
+    local ownEntry = {
+        r = yourRank and yourRank.r,
+        u = state.localUserId,
+        n = state.localName,
+        d = state.localDisplayName,
+        v = yourRank and yourRank.v,
+    }
+    fillRow(self.youRow, ownEntry, stat.Kind, false, false, animate and ownEntry.v and 0 or nil)
     self.youLabel.Text = "YOUR RANK  ·  " .. (state.scope == "Server" and "THIS SERVER" or "GLOBAL")
-    local note
-    if mine.r and mine.r > 1 and entries[mine.r - 1] and entries[mine.r - 1].v and mine.v then
-        local ahead = entries[mine.r - 1]
-        note = Format.Value(stat.Kind, math.max(0, ahead.v - mine.v))
-            .. " to pass "
-            .. (ahead.d or ahead.n or "the next player")
-    elseif mine.r == 1 then
-        note = "You lead " .. (state.scope == "Server" and "this server" or "everyone")
-    elseif not snap or status == "loading" then
-        note = "Loading"
-    elseif status == "unavailable" then
-        note = "Global unavailable"
-    elseif state.scope == "Global" and mine.v and mine.v > 0 then
-        note = (snap.total or 0) >= (snap.depth or 100)
-                and ("Outside the top " .. (snap.depth or 100) .. "  ·  keep climbing")
-            or "Not on the global board yet"
-    else
-        note = "Not ranked yet"
-    end
-    self.youRow.user.Text = note
-    self.youRow.rank.Text = mine.r and ("#" .. mine.r) or "—"
+    self.youRow.user.Text = yourRankNote(ownEntry, entries, snapshot, status, state.scope, stat.Kind)
+    self.youRow.rank.Text = ownEntry.r and ("#" .. ownEntry.r) or "—"
     if animate then
         self:_countUp(stat.Kind)
     end
@@ -1218,8 +1277,8 @@ function View:Destroy()
         self.counter:Disconnect()
         self.counter = nil
     end
-    for _, tw in self.tweens do
-        tw:Cancel()
+    for _, tween in self.tweens do
+        tween:Cancel()
     end
     if self.root then
         self.root:Destroy()

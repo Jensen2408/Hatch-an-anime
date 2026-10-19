@@ -12,7 +12,26 @@ The client can only ASK for a ranking ("Cash", "Global"). Nothing it sends is ev
 GLOBAL uses one OrderedDataStore per stat. Reads are cached (Config.Server.GlobalRead) and skipped when
 nobody is looking; writes happen only when a value changed, are spread out per player, and every call
 checks the request budget first. Hatches use IncrementAsync so two servers never overwrite each other.
+
+Data model (persistence contract - do not change):
+  • store   OrderedDataStore "Leaderboard_<statId>_<Config.Server.StoreVersion>", plus "_Studio" in Studio
+            when Config.Server.SeparateStudioStores is set
+  • key     tostring(player.UserId)
+  • value   non-negative integer, math.floor(math.min(value, 2^53)) (see sanitizeScore)
+  • Cash / Income are written with SetAsync (latest value), Hatches with IncrementAsync (lifetime total)
+
+Network contract: RemoteFunction Shared.<Config.RemoteName>, created by Service.Start.
+  InvokeServer(statId: string, scope: "Server" | "Global") ->
+    nil                                          invalid arguments
+    { stat, scope, status = "busy" }             per-player token bucket empty
+    { stat, scope, status, entries, total, updated, depth?, you = { r?, v? } }
+  entries[i] = { r = rank, u = userId, n = username?, d = displayName?, v = value }, at most Config.MaxRows.
+  status: "ok" | "loading" | "stale" (last good GLOBAL page after a failed read) | "unavailable".
+
+Public API (also used by LeaderboardChampions and PlayerPunish): GlobalUpdated, RecordHatch, Forget,
+SetGlobalCash, GetValue, GetGlobalTop, Start.
 ]]
+-- ===== 1. Setup =====
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -21,7 +40,7 @@ local UserService = game:GetService("UserService")
 
 local Shared = ReplicatedStorage:WaitForChild("Leaderboard")
 local Config = require(Shared:WaitForChild("LeaderboardConfig"))
-local S = Config.Server
+local ServerConfig = Config.Server
 
 local Service = {}
 
@@ -31,14 +50,14 @@ Service.GlobalUpdated = Instance.new("BindableEvent")
 local STATS = Config.StatById
 local SCOPES = { Server = true, Global = true }
 local MAX_VALUE = 2 ^ 53
-local WRITE = Enum.DataStoreRequestType.SetIncrementSortedAsync
-local READ_SORTED = Enum.DataStoreRequestType.GetSortedAsync
-local READ = Enum.DataStoreRequestType.GetAsync
+local WRITE_REQUEST = Enum.DataStoreRequestType.SetIncrementSortedAsync
+local READ_SORTED_REQUEST = Enum.DataStoreRequestType.GetSortedAsync
+local READ_REQUEST = Enum.DataStoreRequestType.GetAsync
 
-local plots = workspace:WaitForChild("Plots")
+local plotsFolder = workspace:WaitForChild("Plots")
 
 -- Never shown on any board (server or global) and never written to the global stores.
-local HIDDEN = {
+local HIDDEN_USER_IDS = {
     [168774222] = true, -- Jen1sen (owner)
 }
 
@@ -47,18 +66,18 @@ local serverBoards = {} -- [statId] = { entries, rankByUser, total, updated }
 local globalBoards = {} -- [statId] = { status, entries, rankByUser, valueByUser, total, updated }
 local nameCache = {} -- [userId] = { n = username, d = displayName, at = os.clock() }
 local lastGlobalDemand = {} -- [statId] = os.clock() of the last GLOBAL request
-local buckets = {} -- [Player] = rate-limit bucket
+local buckets = {} -- [Player] = { tokens, at } rate-limit bucket for the remote
 local started = false
 
----------------------------------------------------------------- stores
+-- ===== 2. Stores and warning throttle =====
 local stores = {}
 local storesOk = pcall(function()
-    for id in STATS do
-        local name = "Leaderboard_" .. id .. "_" .. S.StoreVersion
-        if RunService:IsStudio() and S.SeparateStudioStores then
-            name ..= "_Studio"
+    for statId in STATS do
+        local storeName = "Leaderboard_" .. statId .. "_" .. ServerConfig.StoreVersion
+        if RunService:IsStudio() and ServerConfig.SeparateStudioStores then
+            storeName ..= "_Studio"
         end
-        stores[id] = DataStoreService:GetOrderedDataStore(name)
+        stores[statId] = DataStoreService:GetOrderedDataStore(storeName)
     end
 end)
 if not storesOk then
@@ -68,7 +87,7 @@ end
 -- One warning per topic every 10 minutes, so a DataStore outage (or Studio without API access)
 -- doesn't flood the output.
 local warnedAt = {}
-local function note(topic, message)
+local function warnThrottled(topic, message)
     local now = os.clock()
     if warnedAt[topic] and now - warnedAt[topic] < 600 then
         return
@@ -77,20 +96,22 @@ local function note(topic, message)
     warn("[Leaderboard] " .. message)
 end
 
-local function budget(kind)
-    local ok, n = pcall(DataStoreService.GetRequestBudgetForRequestType, DataStoreService, kind)
-    return ok and n or 0
+-- 0 when the budget can't be read, so callers simply skip the request.
+local function requestBudget(requestType)
+    local ok, remaining = pcall(DataStoreService.GetRequestBudgetForRequestType, DataStoreService, requestType)
+    return ok and remaining or 0
 end
 
-local function clean(v)
-    v = tonumber(v)
-    if not v or v ~= v or v < 0 then
+-- nil for non-numbers, NaN and negatives; otherwise an integer clamped to 2^53.
+local function sanitizeScore(value)
+    value = tonumber(value)
+    if not value or value ~= value or value < 0 then
         return nil
     end
-    return math.floor(math.min(v, MAX_VALUE))
+    return math.floor(math.min(value, MAX_VALUE))
 end
 
----------------------------------------------------------------- live values
+-- ===== 3. Live values =====
 local function cashOf(player)
     local stats = player:FindFirstChild("leaderstats")
     local cash = stats and stats:FindFirstChild("Cash")
@@ -102,7 +123,7 @@ end
 
 local function incomeOf(player)
     local total = 0
-    for _, plot in plots:GetChildren() do
+    for _, plot in plotsFolder:GetChildren() do
         if plot:GetAttribute("OwnerUserId") == player.UserId then
             local placed = plot:FindFirstChild("PlacedItems")
             if placed then
@@ -115,7 +136,7 @@ local function incomeOf(player)
             end
         end
     end
-    if S.IncludeIncomeMultiplier then
+    if ServerConfig.IncludeIncomeMultiplier then
         total *= (tonumber(workspace:GetAttribute("OwnerIncomeMultiplier")) or 1) * (workspace:GetAttribute(
             "NightCashMultiplier"
         ) or 1)
@@ -127,7 +148,7 @@ local function newRecord()
     return {
         values = {}, -- [statId] = latest value (number) or nil when not ready
         written = {}, -- [statId] = value last written to the global store
-        nextWrite = os.clock() + S.FirstWriteDelay + math.random() * 15,
+        nextWrite = os.clock() + ServerConfig.FirstWriteDelay + math.random() * 15,
         hatchStored = nil, -- lifetime hatches in the store (known after load / increment)
         hatchPending = 0, -- completed here, not yet written
         hatchInflight = 0, -- being written right now
@@ -135,37 +156,39 @@ local function newRecord()
     }
 end
 
-local function hatchesOf(rec)
-    return (rec.hatchStored or 0) + rec.hatchPending + rec.hatchInflight
+local function hatchesOf(record)
+    return (record.hatchStored or 0) + record.hatchPending + record.hatchInflight
 end
 
----------------------------------------------------------------- global writes
-local function loadHatches(player, rec)
+-- ===== 4. Global writes =====
+local function loadHatches(player, record)
     local store = stores.Hatches
     if not store then
-        rec.hatchState = "offline"
+        record.hatchState = "offline"
         return
     end
     for attempt = 1, 3 do
         if player.Parent ~= Players then
             return
         end
-        if budget(READ) > 2 then
+        if requestBudget(READ_REQUEST) > 2 then
             local ok, value = pcall(store.GetAsync, store, tostring(player.UserId))
             if ok then
-                rec.hatchStored = clean(value) or 0
-                rec.hatchState = "ready"
+                record.hatchStored = sanitizeScore(value) or 0
+                record.hatchState = "ready"
                 return
             end
-            note("load", "could not load hatches for " .. player.Name .. ": " .. tostring(value))
+            warnThrottled("load", "could not load hatches for " .. player.Name .. ": " .. tostring(value))
         end
         task.wait(5 * attempt)
     end
-    rec.hatchState = "offline" -- session hatches still count and are added with IncrementAsync later
+    record.hatchState = "offline" -- session hatches still count and are added with IncrementAsync later
 end
 
-local function flush(player, rec, final)
-    if not storesOk or HIDDEN[player.UserId] then
+-- Writes a player's changed values to the global stores. `final` (leaving / shutdown) ignores the write
+-- budget and the hatch-load guard, because there is no later chance.
+local function flush(player, record, final)
+    if not storesOk or HIDDEN_USER_IDS[player.UserId] then
         return
     end
     local key = tostring(player.UserId)
@@ -173,65 +196,66 @@ local function flush(player, rec, final)
     -- Hatches: atomic increment. Skipped while the first load is running so the two can't double count
     -- (except on leave, where only the store matters).
     if
-        rec.hatchPending > 0
-        and (final or rec.hatchState ~= "loading")
-        and (final or budget(WRITE) > S.WriteReserve)
+        record.hatchPending > 0
+        and (final or record.hatchState ~= "loading")
+        and (final or requestBudget(WRITE_REQUEST) > ServerConfig.WriteReserve)
     then
-        local delta = rec.hatchPending
-        rec.hatchPending = 0
-        rec.hatchInflight = delta
+        local delta = record.hatchPending
+        record.hatchPending = 0
+        record.hatchInflight = delta
         local ok, newValue = pcall(stores.Hatches.IncrementAsync, stores.Hatches, key, delta)
-        rec.hatchInflight = 0
+        record.hatchInflight = 0
         if ok then
-            rec.hatchStored = clean(newValue) or ((rec.hatchStored or 0) + delta)
-            rec.hatchState = "ready"
+            record.hatchStored = sanitizeScore(newValue) or ((record.hatchStored or 0) + delta)
+            record.hatchState = "ready"
         else
-            rec.hatchPending += delta
-            note("write", "hatch write failed for " .. player.Name .. ": " .. tostring(newValue))
+            record.hatchPending += delta
+            warnThrottled("write", "hatch write failed for " .. player.Name .. ": " .. tostring(newValue))
         end
     end
 
     -- Cash / Income: the current value, written only when it changed.
-    for _, id in { "Cash", "Income" } do
-        local value = rec.values[id]
-        local last = rec.written[id]
+    for _, statId in { "Cash", "Income" } do
+        local value = record.values[statId]
+        local last = record.written[statId]
         if value ~= nil and value ~= last and not (last == nil and value == 0) then
-            if final or budget(WRITE) > S.WriteReserve then
-                local ok, err = pcall(stores[id].SetAsync, stores[id], key, value)
+            if final or requestBudget(WRITE_REQUEST) > ServerConfig.WriteReserve then
+                local ok, err = pcall(stores[statId].SetAsync, stores[statId], key, value)
                 if ok then
-                    rec.written[id] = value
+                    record.written[statId] = value
                 else
-                    note("write", id .. " write failed: " .. tostring(err))
+                    warnThrottled("write", statId .. " write failed: " .. tostring(err))
                 end
             end
         end
     end
 end
 
----------------------------------------------------------------- THIS SERVER
+-- ===== 5. THIS SERVER rankings =====
+-- Rebuilds serverBoards from the live values of everyone in this server (cheap, no DataStore calls).
 local function refreshServer()
-    for player, rec in records do
+    for player, record in records do
         if player.Parent ~= Players then
             continue
         end
-        rec.values.Cash = clean(cashOf(player))
-        rec.values.Income = clean(incomeOf(player))
-        rec.values.Hatches = clean(hatchesOf(rec))
+        record.values.Cash = sanitizeScore(cashOf(player))
+        record.values.Income = sanitizeScore(incomeOf(player))
+        record.values.Hatches = sanitizeScore(hatchesOf(record))
     end
     local now = workspace:GetServerTimeNow()
-    for id in STATS do
+    for statId in STATS do
         local list = {}
-        for player, rec in records do
-            local v = rec.values[id]
-            if player.Parent == Players and v and v > 0 and not HIDDEN[player.UserId] then
-                table.insert(list, { player = player, v = v })
+        for player, record in records do
+            local value = record.values[statId]
+            if player.Parent == Players and value and value > 0 and not HIDDEN_USER_IDS[player.UserId] then
+                table.insert(list, { player = player, v = value })
             end
         end
-        table.sort(list, function(a, b)
-            if a.v ~= b.v then
-                return a.v > b.v
+        table.sort(list, function(left, right)
+            if left.v ~= right.v then
+                return left.v > right.v
             end
-            return a.player.UserId < b.player.UserId
+            return left.player.UserId < right.player.UserId
         end)
         local entries, rankByUser = {}, {}
         for i, item in list do
@@ -241,20 +265,21 @@ local function refreshServer()
                     { r = i, u = item.player.UserId, n = item.player.Name, d = item.player.DisplayName, v = item.v }
             end
         end
-        serverBoards[id] = { entries = entries, rankByUser = rankByUser, total = #list, updated = now }
+        serverBoards[statId] = { entries = entries, rankByUser = rankByUser, total = #list, updated = now }
     end
 end
 
----------------------------------------------------------------- GLOBAL
-local function resolveNames(ids)
+-- ===== 6. GLOBAL rankings =====
+-- Fills nameCache for the given users (online players directly, others via UserService, cached 1 hour).
+local function resolveNames(userIds)
     local missing = {}
     local now = os.clock()
-    for _, id in ids do
-        local p = Players:GetPlayerByUserId(id)
-        if p then
-            nameCache[id] = { n = p.Name, d = p.DisplayName, at = now }
-        elseif not nameCache[id] or now - nameCache[id].at > 3600 then
-            table.insert(missing, id)
+    for _, userId in userIds do
+        local onlinePlayer = Players:GetPlayerByUserId(userId)
+        if onlinePlayer then
+            nameCache[userId] = { n = onlinePlayer.Name, d = onlinePlayer.DisplayName, at = now }
+        elseif not nameCache[userId] or now - nameCache[userId].at > 3600 then
+            table.insert(missing, userId)
         end
     end
     if #missing == 0 then
@@ -266,46 +291,48 @@ local function resolveNames(ids)
             nameCache[info.Id] = { n = info.Username, d = info.DisplayName, at = now }
         end
     else
-        note("names", "name lookup failed: " .. tostring(infos))
+        warnThrottled("names", "name lookup failed: " .. tostring(infos))
     end
 end
 
-local function refreshGlobal(id)
-    local board = globalBoards[id]
-    local store = stores[id]
+-- Reads the top Config.Server.GlobalFetchSize of one stat. Returns true on success; on failure keeps the
+-- previous page and marks it "stale" (or "unavailable" if there never was one).
+local function refreshGlobal(statId)
+    local board = globalBoards[statId]
+    local store = stores[statId]
     if not store then
         board.status = board.entries and "stale" or "unavailable"
         return false
     end
-    if budget(READ_SORTED) < 1 then
+    if requestBudget(READ_SORTED_REQUEST) < 1 then
         return false
     end
     local ok, page = pcall(function()
-        return store:GetSortedAsync(false, S.GlobalFetchSize, 1):GetCurrentPage()
+        return store:GetSortedAsync(false, ServerConfig.GlobalFetchSize, 1):GetCurrentPage()
     end)
     if not ok then
-        note("read", "global " .. id .. " read failed: " .. tostring(page))
+        warnThrottled("read", "global " .. statId .. " read failed: " .. tostring(page))
         board.status = board.entries and "stale" or "unavailable"
         return false
     end
-    local ids = {}
+    local userIds = {}
     for _, item in page do
-        local uid = tonumber(item.key)
-        if uid then
-            table.insert(ids, uid)
+        local userId = tonumber(item.key)
+        if userId then
+            table.insert(userIds, userId)
         end
     end
-    resolveNames(ids)
+    resolveNames(userIds)
     local entries, rankByUser, valueByUser, rank = {}, {}, {}, 0
     for _, item in page do
-        local uid, v = tonumber(item.key), clean(item.value)
-        if uid and v and v > 0 and not HIDDEN[uid] then
+        local userId, value = tonumber(item.key), sanitizeScore(item.value)
+        if userId and value and value > 0 and not HIDDEN_USER_IDS[userId] then
             rank += 1
-            rankByUser[uid] = rank
-            valueByUser[uid] = v
+            rankByUser[userId] = rank
+            valueByUser[userId] = value
             if rank <= Config.MaxRows then
-                local name = nameCache[uid]
-                entries[rank] = { r = rank, u = uid, n = name and name.n, d = name and name.d, v = v }
+                local name = nameCache[userId]
+                entries[rank] = { r = rank, u = userId, n = name and name.n, d = name and name.d, v = value }
             end
         end
     end
@@ -316,17 +343,19 @@ local function refreshGlobal(id)
     return true
 end
 
----------------------------------------------------------------- remote
-local function snapshot(player, id, scope)
-    local rec = records[player]
-    local live = rec and rec.values[id]
+-- ===== 7. Remote handler =====
+-- Builds the remote's reply (shape documented in the header). A GLOBAL request also marks the stat as
+-- "being looked at", which keeps its periodic reads running.
+local function snapshot(player, statId, scope)
+    local record = records[player]
+    local live = record and record.values[statId]
     if scope == "Server" then
-        local board = serverBoards[id]
+        local board = serverBoards[statId]
         if not board then
-            return { stat = id, scope = scope, status = "loading" }
+            return { stat = statId, scope = scope, status = "loading" }
         end
         return {
-            stat = id,
+            stat = statId,
             scope = scope,
             status = "ok",
             entries = board.entries,
@@ -335,73 +364,77 @@ local function snapshot(player, id, scope)
             you = { r = board.rankByUser[player.UserId], v = live },
         }
     end
-    lastGlobalDemand[id] = os.clock()
-    local board = globalBoards[id]
+    lastGlobalDemand[statId] = os.clock()
+    local board = globalBoards[statId]
     local rank = board.rankByUser and board.rankByUser[player.UserId]
     local you = rank and { r = rank, v = board.valueByUser[player.UserId] } or { v = live }
     return {
-        stat = id,
+        stat = statId,
         scope = scope,
         status = board.status,
         entries = board.entries,
         total = board.total,
         updated = board.updated,
-        depth = S.GlobalFetchSize,
+        depth = ServerConfig.GlobalFetchSize,
         you = you,
     }
 end
 
-local function onInvoke(player, id, scope)
-    if type(id) ~= "string" or not STATS[id] or type(scope) ~= "string" or not SCOPES[scope] then
+-- OnServerInvoke: validates the arguments, then spends one token from the player's bucket
+-- (Config.Server.RequestBurst tokens, refilled at RequestsPerSecond).
+local function onInvoke(player, statId, scope)
+    if type(statId) ~= "string" or not STATS[statId] or type(scope) ~= "string" or not SCOPES[scope] then
         return nil
     end
     local now = os.clock()
     local bucket = buckets[player]
     if not bucket then
-        bucket = { tokens = S.RequestBurst, at = now }
+        bucket = { tokens = ServerConfig.RequestBurst, at = now }
         buckets[player] = bucket
     end
-    bucket.tokens = math.min(S.RequestBurst, bucket.tokens + (now - bucket.at) * S.RequestsPerSecond)
+    bucket.tokens =
+        math.min(ServerConfig.RequestBurst, bucket.tokens + (now - bucket.at) * ServerConfig.RequestsPerSecond)
     bucket.at = now
     if bucket.tokens < 1 then
-        return { stat = id, scope = scope, status = "busy" }
+        return { stat = statId, scope = scope, status = "busy" }
     end
     bucket.tokens -= 1
-    return snapshot(player, id, scope)
+    return snapshot(player, statId, scope)
 end
 
----------------------------------------------------------------- hatches
-local function plotOf(inst)
-    local node = inst
-    while node and node.Parent ~= plots do
+-- ===== 8. Hatch tracking and public API =====
+-- The direct child of workspace.Plots that contains `instance` (nil if it is not under Plots).
+local function plotOf(instance)
+    local node = instance
+    while node and node.Parent ~= plotsFolder do
         node = node.Parent
     end
     return node
 end
 
-local hooked = setmetatable({}, { __mode = "k" })
-local function hookChamber(inst)
-    if hooked[inst] or inst.Name ~= "HatchCycleCompleted" or not inst:IsA("BindableEvent") then
+local hookedEvents = setmetatable({}, { __mode = "k" })
+local function hookChamber(hatchEvent)
+    if hookedEvents[hatchEvent] or hatchEvent.Name ~= "HatchCycleCompleted" or not hatchEvent:IsA("BindableEvent") then
         return
     end
-    hooked[inst] = true
-    inst.Event:Connect(function(who)
-        if typeof(who) ~= "Instance" or not who:IsA("Player") or who.Parent ~= Players then
+    hookedEvents[hatchEvent] = true
+    hatchEvent.Event:Connect(function(hatcher)
+        if typeof(hatcher) ~= "Instance" or not hatcher:IsA("Player") or hatcher.Parent ~= Players then
             return
         end
-        local plot = plotOf(inst)
-        if not plot or plot:GetAttribute("OwnerUserId") ~= who.UserId then
+        local plot = plotOf(hatchEvent)
+        if not plot or plot:GetAttribute("OwnerUserId") ~= hatcher.UserId then
             return
         end
-        Service.RecordHatch(who)
+        Service.RecordHatch(hatcher)
     end)
 end
 
 -- Server-side only. Call this from other server systems if you add new ways to complete a hatch.
 function Service.RecordHatch(player)
-    local rec = records[player]
-    if rec then
-        rec.hatchPending += 1
+    local record = records[player]
+    if record then
+        record.hatchPending += 1
     end
 end
 
@@ -412,30 +445,30 @@ function Service.Forget(userId)
         return false
     end
     local key, ok = tostring(userId), true
-    for id, store in stores do
-        local s = pcall(store.RemoveAsync, store, key)
-        ok = ok and s
-        local board = globalBoards[id]
+    for statId, store in stores do
+        local removed = pcall(store.RemoveAsync, store, key)
+        ok = ok and removed
+        local board = globalBoards[statId]
         if board and board.entries then
             local keep, rankByUser, valueByUser = {}, {}, {}
-            for _, e in board.entries do
-                if e.u ~= userId then
-                    table.insert(keep, e)
-                    e.r = #keep
-                    rankByUser[e.u] = #keep
-                    valueByUser[e.u] = e.v
+            for _, entry in board.entries do
+                if entry.u ~= userId then
+                    table.insert(keep, entry)
+                    entry.r = #keep
+                    rankByUser[entry.u] = #keep
+                    valueByUser[entry.u] = entry.v
                 end
             end
             board.entries, board.rankByUser, board.valueByUser = keep, rankByUser, valueByUser
             board.total = #keep
         end
-        Service.GlobalUpdated:Fire(id)
+        Service.GlobalUpdated:Fire(statId)
     end
-    for player, rec in records do
+    for player, record in records do
         if player.UserId == userId then
-            rec.written = {}
-            rec.hatchStored = 0
-            rec.hatchPending = 0
+            record.written = {}
+            record.hatchStored = 0
+            record.hatchPending = 0
         end
     end
     return ok
@@ -446,12 +479,12 @@ function Service.SetGlobalCash(userId, value)
     if not stores.Cash then
         return false
     end
-    return (pcall(stores.Cash.SetAsync, stores.Cash, tostring(userId), clean(value) or 0))
+    return (pcall(stores.Cash.SetAsync, stores.Cash, tostring(userId), sanitizeScore(value) or 0))
 end
 
 function Service.GetValue(player, statId)
-    local rec = records[player]
-    return rec and rec.values[statId]
+    local record = records[player]
+    return record and record.values[statId]
 end
 
 -- Top `count` GLOBAL entries for a stat, copied: status ("loading" | "ok" | "stale" | "unavailable"), list.
@@ -474,23 +507,23 @@ function Service.GetGlobalTop(statId, count)
     return board.status, list
 end
 
----------------------------------------------------------------- lifecycle
+-- ===== 9. Lifecycle =====
 local function onJoin(player)
     if records[player] then
         return
     end
-    local rec = newRecord()
-    records[player] = rec
+    local record = newRecord()
+    records[player] = record
     nameCache[player.UserId] = { n = player.Name, d = player.DisplayName, at = os.clock() }
-    task.spawn(loadHatches, player, rec)
+    task.spawn(loadHatches, player, record)
 end
 
 local function onLeave(player)
-    local rec = records[player]
+    local record = records[player]
     records[player] = nil
     buckets[player] = nil
-    if rec then
-        task.spawn(flush, player, rec, true)
+    if record then
+        task.spawn(flush, player, record, true)
     end
 end
 
@@ -505,37 +538,37 @@ function Service.Start()
     remote.OnServerInvoke = onInvoke
     remote.Parent = Shared
 
-    for id in STATS do
-        globalBoards[id] = { status = storesOk and "loading" or "unavailable" }
+    for statId in STATS do
+        globalBoards[statId] = { status = storesOk and "loading" or "unavailable" }
     end
 
     Players.PlayerAdded:Connect(onJoin)
     Players.PlayerRemoving:Connect(onLeave)
-    for _, p in Players:GetPlayers() do
-        onJoin(p)
+    for _, existingPlayer in Players:GetPlayers() do
+        onJoin(existingPlayer)
     end
     -- clear any old global entries of hidden accounts (once per server start, live game only)
     if storesOk and not RunService:IsStudio() then
         task.delay(20, function()
-            for id in HIDDEN do
-                pcall(Service.Forget, id)
+            for statId in HIDDEN_USER_IDS do
+                pcall(Service.Forget, statId)
             end
         end)
     end
 
-    for _, d in plots:GetDescendants() do
-        hookChamber(d)
+    for _, descendant in plotsFolder:GetDescendants() do
+        hookChamber(descendant)
     end
-    plots.DescendantAdded:Connect(hookChamber)
+    plotsFolder.DescendantAdded:Connect(hookChamber)
 
     -- THIS SERVER: cheap rebuild from live values.
     refreshServer()
     task.spawn(function()
         while true do
-            task.wait(S.ServerRefresh)
+            task.wait(ServerConfig.ServerRefresh)
             local ok, err = pcall(refreshServer)
             if not ok then
-                note("refresh", "server refresh: " .. tostring(err))
+                warnThrottled("refresh", "server refresh: " .. tostring(err))
             end
         end
     end)
@@ -551,18 +584,19 @@ function Service.Start()
             if not storesOk then
                 continue
             end
-            for id, at in nextRead do
-                if os.clock() < at then
+            for statId, dueAt in nextRead do
+                if os.clock() < dueAt then
                     continue
                 end
-                local board = globalBoards[id]
-                local idle = board.entries and os.clock() - (lastGlobalDemand[id] or -math.huge) > S.GlobalIdleAfter
+                local board = globalBoards[statId]
+                local idle = board.entries
+                    and os.clock() - (lastGlobalDemand[statId] or -math.huge) > ServerConfig.GlobalIdleAfter
                 if idle then
-                    nextRead[id] = os.clock() + 5 -- re-check soon; reads resume as soon as someone looks
+                    nextRead[statId] = os.clock() + 5 -- re-check soon; reads resume as soon as someone looks
                 else
-                    local ok = refreshGlobal(id)
-                    nextRead[id] = os.clock() + (ok and S.GlobalRead or S.GlobalRetry)
-                    Service.GlobalUpdated:Fire(id)
+                    local ok = refreshGlobal(statId)
+                    nextRead[statId] = os.clock() + (ok and ServerConfig.GlobalRead or ServerConfig.GlobalRetry)
+                    Service.GlobalUpdated:Fire(statId)
                 end
             end
         end
@@ -573,14 +607,14 @@ function Service.Start()
         while true do
             task.wait(5)
             local now, done = os.clock(), 0
-            for player, rec in records do
-                if done >= S.WritesPerTick then
+            for player, record in records do
+                if done >= ServerConfig.WritesPerTick then
                     break
                 end
-                if now >= rec.nextWrite then
-                    rec.nextWrite = now + S.GlobalWrite
+                if now >= record.nextWrite then
+                    record.nextWrite = now + ServerConfig.GlobalWrite
                     done += 1
-                    task.spawn(flush, player, rec, false)
+                    task.spawn(flush, player, record, false)
                 end
             end
         end
@@ -591,15 +625,15 @@ function Service.Start()
             return
         end
         local pending = 0
-        for player, rec in records do
+        for player, record in records do
             pending += 1
             task.spawn(function()
-                pcall(flush, player, rec, true)
+                pcall(flush, player, record, true)
                 pending -= 1
             end)
         end
-        local t = os.clock()
-        while pending > 0 and os.clock() - t < 20 do
+        local closeStartedAt = os.clock()
+        while pending > 0 and os.clock() - closeStartedAt < 20 do
             task.wait(0.25)
         end
     end)

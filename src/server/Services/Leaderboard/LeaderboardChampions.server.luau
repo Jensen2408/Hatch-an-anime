@@ -1,4 +1,15 @@
--- Global Cash and Eggs Hatched podiums. Avatar failures never remove a winner's identity.
+--[[ ServerScriptService.Leaderboard.LeaderboardChampions  (Script)
+Global Cash and Eggs Hatched podiums. Avatar failures never remove a winner's identity.
+
+Podiums are children of boards tagged Config.Tag, named "Podium<rank>" (or with a PodiumRank attribute),
+optionally with a PodiumStat attribute, a PlaqueFace part and a ChampionSpot attachment. Each podium
+shows the GLOBAL top entry for its rank (LeaderboardService.GetGlobalTop) as a plaque plus a
+humanoid avatar dummy, and mirrors the winner into ChampionUserId / ChampionUsername / ChampionValue /
+AvatarStatus / AvatarError attributes. Refreshes on LeaderboardService.GlobalUpdated and every
+Config.Champions.Refresh seconds. In Studio, a "ChampionsStudioPreview" BindableFunction under this
+script can inject fake entries.
+]]
+-- ===== 1. Setup =====
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,15 +20,19 @@ local Config = require(Shared:WaitForChild("LeaderboardConfig"))
 local Format = require(Shared:WaitForChild("LeaderboardFormat"))
 local Service = require(script.Parent:WaitForChild("LeaderboardService"))
 
-local C = Config.Champions
-local RANK_WORD = { "1ST", "2ND", "3RD" }
+local ChampionsConfig = Config.Champions
+local _RANK_WORD = { "1ST", "2ND", "3RD" } -- unused
 
-local spots = {} -- [Podium Model] = { rank, spot (Attachment), title, sub, entry, dummy, token, userId }
+-- [Podium Model] = { stat, rank, podium, spot (Attachment), title, sub, entry, status, isPreview,
+--                    dummy, token, userId, loading, avatarStatus, nextAttempt }
+-- `token` is bumped on every clear/spawn so a late avatar response for an old winner is discarded.
+local spots = {}
 local preview = nil -- Studio-only { [statId] = entries }; plaques explicitly label the preview
 local stopped = false
 local connections = {}
 local refresh
 local refreshQueued = false
+-- Coalesces bursts (several podiums added, GlobalUpdated for every stat) into one deferred refresh.
 local function queueRefresh()
     if stopped or refreshQueued then
         return
@@ -31,7 +46,7 @@ local function queueRefresh()
     end)
 end
 
----------------------------------------------------------------- dummies
+-- ===== 2. Champion dummies =====
 local function clearDummy(state)
     state.token += 1
     state.userId = nil
@@ -47,9 +62,11 @@ local function playIdle(model)
     if not humanoid then
         return
     end
+    -- Instance.new(class, parent) is deprecated; kept as-is to preserve behaviour.
     local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
     local animation = Instance.new("Animation")
-    animation.AnimationId = humanoid.RigType == Enum.HumanoidRigType.R15 and C.IdleAnimationR15 or C.IdleAnimationR6
+    animation.AnimationId = humanoid.RigType == Enum.HumanoidRigType.R15 and ChampionsConfig.IdleAnimationR15
+        or ChampionsConfig.IdleAnimationR6
     local ok, track = pcall(animator.LoadAnimation, animator, animation)
     if ok and track then
         track.Looped = true
@@ -57,7 +74,8 @@ local function playIdle(model)
     end
 end
 
-local function billboard(model, entry, rank)
+-- Billboard over the dummy's head; its texts are filled in by updateIdentity.
+local function createChampionTag(model, _entry, rank)
     local head = model:FindFirstChild("Head")
     if not head then
         return
@@ -69,37 +87,38 @@ local function billboard(model, entry, rank)
     gui.MaxDistance = 90
     gui.LightInfluence = 0
     gui.Parent = head
-    local name = Instance.new("TextLabel")
-    name.Name = "DisplayName"
-    name.BackgroundTransparency = 1
-    name.Size = UDim2.new(1, 0, 0, 28)
-    name.FontFace = Font.new("rbxasset://fonts/families/FredokaOne.json")
-    name.TextSize = 24
-    name.TextColor3 = Color3.fromRGB(255, 244, 220)
-    name.TextStrokeColor3 = Color3.fromRGB(74, 54, 44)
-    name.TextStrokeTransparency = 0
-    name.TextTruncate = Enum.TextTruncate.AtEnd
-    name.Parent = gui
-    local value = Instance.new("TextLabel")
-    value.Name = "Value"
-    value.BackgroundTransparency = 1
-    value.Position = UDim2.fromOffset(0, 28)
-    value.Size = UDim2.new(1, 0, 0, 22)
-    value.FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold)
-    value.TextSize = 18
-    value.TextColor3 = rank == 1 and Color3.fromRGB(255, 214, 96) or Color3.fromRGB(226, 232, 240)
-    value.TextStrokeColor3 = Color3.fromRGB(74, 54, 44)
-    value.TextStrokeTransparency = 0
-    value.Parent = gui
-    local user = value:Clone()
-    user.Name = "Username"
-    user.Position = UDim2.fromOffset(0, 50)
-    user.TextSize = 14
-    user.TextColor3 = Color3.fromRGB(255, 244, 220)
-    user.Parent = gui
+    local displayNameLabel = Instance.new("TextLabel")
+    displayNameLabel.Name = "DisplayName"
+    displayNameLabel.BackgroundTransparency = 1
+    displayNameLabel.Size = UDim2.new(1, 0, 0, 28)
+    displayNameLabel.FontFace = Font.new("rbxasset://fonts/families/FredokaOne.json")
+    displayNameLabel.TextSize = 24
+    displayNameLabel.TextColor3 = Color3.fromRGB(255, 244, 220)
+    displayNameLabel.TextStrokeColor3 = Color3.fromRGB(74, 54, 44)
+    displayNameLabel.TextStrokeTransparency = 0
+    displayNameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    displayNameLabel.Parent = gui
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Name = "Value"
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.Position = UDim2.fromOffset(0, 28)
+    valueLabel.Size = UDim2.new(1, 0, 0, 22)
+    valueLabel.FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold)
+    valueLabel.TextSize = 18
+    valueLabel.TextColor3 = rank == 1 and Color3.fromRGB(255, 214, 96) or Color3.fromRGB(226, 232, 240)
+    valueLabel.TextStrokeColor3 = Color3.fromRGB(74, 54, 44)
+    valueLabel.TextStrokeTransparency = 0
+    valueLabel.Parent = gui
+    local usernameLabel = valueLabel:Clone()
+    usernameLabel.Name = "Username"
+    usernameLabel.Position = UDim2.fromOffset(0, 50)
+    usernameLabel.TextSize = 14
+    usernameLabel.TextColor3 = Color3.fromRGB(255, 244, 220)
+    usernameLabel.Parent = gui
     return gui
 end
 
+-- Writes the podium attributes, plaque texts and (if present) the head tag from state.entry.
 local function updateIdentity(state)
     local entry = state.entry
     local podium = state.podium
@@ -132,26 +151,28 @@ local function updateIdentity(state)
     end
 end
 
+-- Loads the winner's avatar asynchronously. Every step re-checks isCurrent(): the podium may have been
+-- removed, the winner may have changed, or the request may have timed out meanwhile.
 local function spawnDummy(state, entry)
     clearDummy(state)
     local token = state.token
-    local uid = entry.u
-    state.userId = uid
+    local userId = entry.u
+    state.userId = userId
     state.loading = true
     state.avatarStatus = "loading"
-    state.nextAttempt = os.clock() + (C.AvatarRetry or 60)
+    state.nextAttempt = os.clock() + (ChampionsConfig.AvatarRetry or 60)
     updateIdentity(state)
 
-    local function current()
+    local function isCurrent()
         return not stopped
             and spots[state.podium] == state
             and state.podium.Parent
             and state.token == token
             and state.entry
-            and state.entry.u == uid
+            and state.entry.u == userId
     end
-    local function failed(message)
-        if not current() then
+    local function failAvatar(message)
+        if not isCurrent() then
             return
         end
         state.loading = false
@@ -168,15 +189,15 @@ local function spawnDummy(state, entry)
                 .. " #"
                 .. state.rank
                 .. " user "
-                .. uid
+                .. userId
                 .. ": "
                 .. tostring(message)
         )
     end
     -- A yielded avatar request must not leave this spot stuck in "loading" forever.
-    task.delay(C.AvatarTimeout or 20, function()
-        if current() and state.loading then
-            failed("Avatar request timed out")
+    task.delay(ChampionsConfig.AvatarTimeout or 20, function()
+        if isCurrent() and state.loading then
+            failAvatar("Avatar request timed out")
             state.token += 1 -- discard a late response; a later refresh may retry
         end
     end)
@@ -184,24 +205,24 @@ local function spawnDummy(state, entry)
         local model
         local ok, err = pcall(function()
             -- Async is the supported API. A description-based attempt recovers some outfit failures.
-            local loaded, result = pcall(Players.CreateHumanoidModelFromUserIdAsync, Players, uid)
+            local loaded, result = pcall(Players.CreateHumanoidModelFromUserIdAsync, Players, userId)
             if not loaded then
-                if not current() then
+                if not isCurrent() then
                     return
                 end
-                local description = Players:GetHumanoidDescriptionFromUserIdAsync(uid)
+                local description = Players:GetHumanoidDescriptionFromUserIdAsync(userId)
                 result = Players:CreateHumanoidModelFromDescriptionAsync(description, Enum.HumanoidRigType.R15)
                 description:Destroy()
             end
             model = result
-            if not current() then
+            if not isCurrent() then
                 return
             end
             local humanoid = model and model:FindFirstChildOfClass("Humanoid")
             local root = model and model:FindFirstChild("HumanoidRootPart")
             assert(humanoid and root, "Avatar has no Humanoid or root")
             model.Name = "Champion" .. state.rank
-            model:SetAttribute("ChampionUserId", uid)
+            model:SetAttribute("ChampionUserId", userId)
             model:SetAttribute("ChampionStat", state.stat)
             humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
             humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
@@ -218,19 +239,19 @@ local function spawnDummy(state, entry)
                     part:Destroy()
                 end
             end
-            model:ScaleTo(C.Scale)
+            model:ScaleTo(ChampionsConfig.Scale)
             local lift
             if humanoid.RigType == Enum.HumanoidRigType.R15 then
                 lift = humanoid.HipHeight + root.Size.Y / 2
             else
                 local leg = model:FindFirstChild("Left Leg")
-                lift = root.Size.Y / 2 + (leg and leg.Size.Y or 2 * C.Scale)
+                lift = root.Size.Y / 2 + (leg and leg.Size.Y or 2 * ChampionsConfig.Scale)
             end
             -- Use the root transform explicitly; an avatar's model pivot may differ.
             local desiredRoot = state.spot.WorldCFrame * CFrame.new(0, lift, 0)
             model:PivotTo(desiredRoot * root.CFrame:Inverse() * model:GetPivot())
-            billboard(model, state.entry, state.rank)
-            if not current() then
+            createChampionTag(model, state.entry, state.rank)
+            if not isCurrent() then
                 return
             end
             model.Parent = state.podium
@@ -245,13 +266,15 @@ local function spawnDummy(state, entry)
             if model then
                 model:Destroy()
             end
-            failed(err)
-        elseif model and not current() then
+            failAvatar(err)
+        elseif model and not isCurrent() then
             model:Destroy()
         end
     end)
 end
 
+-- Rebuilds every podium from one GetGlobalTop call per stat (or the Studio preview data).
+-- A new avatar is requested when the winner changed, or after AvatarRetry when the last attempt failed.
 refresh = function()
     local snapshots = {}
     for _, state in spots do
@@ -259,13 +282,13 @@ refresh = function()
             if preview then
                 snapshots[state.stat] = { status = "ok", entries = preview[state.stat] or {} }
             else
-                local status, top = Service.GetGlobalTop(state.stat, C.Count)
+                local status, top = Service.GetGlobalTop(state.stat, ChampionsConfig.Count)
                 snapshots[state.stat] = { status = status, entries = top }
             end
         end
-        local snap = snapshots[state.stat]
-        local entry = snap.entries[state.rank]
-        state.status = snap.status
+        local snapshot = snapshots[state.stat]
+        local entry = snapshot.entries[state.rank]
+        state.status = snapshot.status
         state.isPreview = preview ~= nil
         state.entry = entry
         if entry and type(entry.u) == "number" and entry.u > 0 then
@@ -283,7 +306,7 @@ refresh = function()
     end
 end
 
----------------------------------------------------------------- podium discovery
+-- ===== 3. Podium discovery =====
 local function makePlaque(face)
     local gui = Instance.new("SurfaceGui")
     gui.Name = "ChampionPlaque"
@@ -303,26 +326,26 @@ local function makePlaque(face)
     rim.Color = Color3.fromRGB(196, 160, 86)
     rim.Thickness = 4
     rim.Parent = plate
-    local title = Instance.new("TextLabel")
-    title.Name = "Title"
-    title.BackgroundTransparency = 1
-    title.Position = UDim2.fromScale(0, 0.08)
-    title.Size = UDim2.fromScale(1, 0.36)
-    title.FontFace = Font.new("rbxasset://fonts/families/FredokaOne.json")
-    title.TextScaled = true
-    title.TextColor3 = Color3.fromRGB(255, 214, 96)
-    title.Parent = plate
-    local sub = Instance.new("TextLabel")
-    sub.Name = "Sub"
-    sub.BackgroundTransparency = 1
-    sub.Position = UDim2.fromScale(0.04, 0.48)
-    sub.Size = UDim2.fromScale(0.92, 0.46)
-    sub.TextWrapped = true
-    sub.FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold)
-    sub.TextScaled = true
-    sub.TextColor3 = Color3.fromRGB(240, 226, 196)
-    sub.Parent = plate
-    return title, sub
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Name = "Title"
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Position = UDim2.fromScale(0, 0.08)
+    titleLabel.Size = UDim2.fromScale(1, 0.36)
+    titleLabel.FontFace = Font.new("rbxasset://fonts/families/FredokaOne.json")
+    titleLabel.TextScaled = true
+    titleLabel.TextColor3 = Color3.fromRGB(255, 214, 96)
+    titleLabel.Parent = plate
+    local subLabel = Instance.new("TextLabel")
+    subLabel.Name = "Sub"
+    subLabel.BackgroundTransparency = 1
+    subLabel.Position = UDim2.fromScale(0.04, 0.48)
+    subLabel.Size = UDim2.fromScale(0.92, 0.46)
+    subLabel.TextWrapped = true
+    subLabel.FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold)
+    subLabel.TextScaled = true
+    subLabel.TextColor3 = Color3.fromRGB(240, 226, 196)
+    subLabel.Parent = plate
+    return titleLabel, subLabel
 end
 
 local function addPodium(podium)
@@ -330,8 +353,8 @@ local function addPodium(podium)
         return
     end
     local rank = tonumber(podium:GetAttribute("PodiumRank")) or tonumber(podium.Name:match("^Podium(%d+)$"))
-    local stat = podium:GetAttribute("PodiumStat") or C.Stat
-    if not rank or rank % 1 ~= 0 or rank < 1 or rank > C.Count or not Config.StatById[stat] then
+    local stat = podium:GetAttribute("PodiumStat") or ChampionsConfig.Stat
+    if not rank or rank % 1 ~= 0 or rank < 1 or rank > ChampionsConfig.Count or not Config.StatById[stat] then
         return
     end
     local face = podium:FindFirstChild("PlaqueFace")
@@ -339,12 +362,13 @@ local function addPodium(podium)
     if not face or not spot or not spot:IsA("Attachment") then
         return
     end
-    local old = face:FindFirstChild("ChampionPlaque")
-    if old then
-        old:Destroy()
+    local oldPlaque = face:FindFirstChild("ChampionPlaque")
+    if oldPlaque then
+        oldPlaque:Destroy()
     end
-    local title, sub = makePlaque(face)
-    spots[podium] = { stat = stat, rank = rank, podium = podium, spot = spot, title = title, sub = sub, token = 0 }
+    local titleLabel, subLabel = makePlaque(face)
+    spots[podium] =
+        { stat = stat, rank = rank, podium = podium, spot = spot, title = titleLabel, sub = subLabel, token = 0 }
     podium.Destroying:Connect(function()
         local state = spots[podium]
         if state then
@@ -380,6 +404,7 @@ local function removeBoard(board)
         end
     end
 end
+-- ===== 4. Init =====
 for _, board in CollectionService:GetTagged(Config.Tag) do
     addBoard(board)
 end
@@ -388,15 +413,15 @@ table.insert(connections, CollectionService:GetInstanceRemovedSignal(Config.Tag)
 table.insert(connections, Service.GlobalUpdated.Event:Connect(queueRefresh))
 
 if RunService:IsStudio() then
-    local hook = Instance.new("BindableFunction")
-    hook.Name = "ChampionsStudioPreview"
-    hook.OnInvoke = function(list)
+    local previewHook = Instance.new("BindableFunction")
+    previewHook.Name = "ChampionsStudioPreview"
+    previewHook.OnInvoke = function(list)
         -- Legacy array or {Cash = entries, Hatches = entries}. Never exists outside Studio.
-        preview = list and (list[1] and { [C.Stat] = list } or list) or nil
+        preview = list and (list[1] and { [ChampionsConfig.Stat] = list } or list) or nil
         refresh()
         return true
     end
-    hook.Parent = script
+    previewHook.Parent = script
 end
 
 script.Destroying:Connect(function()
@@ -408,8 +433,9 @@ script.Destroying:Connect(function()
         removeBoard(board)
     end
 end)
+-- Periodic refresh (also retries failed avatars); runs on this script's main thread until it is destroyed.
 while not stopped do
-    task.wait(C.Refresh)
+    task.wait(ChampionsConfig.Refresh)
     if stopped then
         break
     end

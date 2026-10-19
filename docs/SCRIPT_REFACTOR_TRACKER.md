@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 59 |
+| Pending | 53 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 125 |
+| Refactored | 131 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -223,12 +223,12 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/UI/Controllers/LeaderboardClientStart.client.luau` | LocalScript | 3 | 3 | Pending | — | — |
-| `server/Services/Leaderboard/LeaderboardChampions.server.luau` | Script | 349 | 420 | Pending | — | — |
-| `server/Services/Leaderboard/LeaderboardServer.server.luau` | Script | 2 | 2 | Pending | — | — |
-| `server/Services/Leaderboard/LeaderboardService.luau` | ModuleScript | 486 | 608 | Pending | — | — |
-| `shared/UI/Leaderboard/LeaderboardClient.luau` | ModuleScript | 431 | 568 | Pending | — | — |
-| `shared/UI/Leaderboard/LeaderboardView.luau` | ModuleScript | 769 | 1230 | Pending | — | — |
+| `client/UI/Controllers/LeaderboardClientStart.client.luau` | LocalScript | 3 | 4 | Refactored | SAME | Added one-line purpose comment |
+| `server/Services/Leaderboard/LeaderboardChampions.server.luau` | Script | 349 | 446 | Refactored | SAME | Header (podium setup, attributes, Studio preview); ChampionsConfig, createChampionTag, isCurrent/failAvatar, userId; _RANK_WORD/_entry; banners |
+| `server/Services/Leaderboard/LeaderboardServer.server.luau` | Script | 2 | 3 | Refactored | SAME | Added one-line purpose comment |
+| `server/Services/Leaderboard/LeaderboardService.luau` | ModuleScript | 486 | 642 | Refactored | SAME | Header documents DataStore data model, remote payloads and public API; ServerConfig/*_REQUEST/HIDDEN_USER_IDS; record/statId/userId renames; banners (persistence logic untouched) |
+| `shared/UI/Leaderboard/LeaderboardClient.luau` | ModuleScript | 431 | 614 | Refactored | SAME | Header moved to top + network/gamepad contract; ClientConfig/Theme/ROOF_HEIGHT; panel/cacheEntry/dimmer renames; banners and why-comments |
+| `shared/UI/Leaderboard/LeaderboardView.luau` | ModuleScript | 769 | 1289 | Refactored | CHANGED | Renamed locals/helpers (Theme, metrics, create, createLabel...), *_FONT/*_TWEEN constants, banners; _build split into 8 section builders; yourRankNote extracted from Render |
 
 ## Batch 17 — Client UI — tutorial and bootstrap
 
@@ -1489,57 +1489,57 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/UI/Controllers/LeaderboardClientStart.client.luau`
 
-- **Type:** LocalScript · **Batch:** 16 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 16 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** StarterPlayer.StarterPlayerScripts.LeaderboardClientStart  (LocalScript)
 - **Dependencies:** LeaderboardClient
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** No description of purpose
 
 ### `server/Services/Leaderboard/LeaderboardChampions.server.luau`
 
-- **Type:** Script · **Batch:** 16 · **Priority:** Medium · **Status:** Pending
+- **Type:** Script · **Batch:** 16 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Global Cash and Eggs Hatched podiums. Avatar failures never remove a winner's identity.
 - **Dependencies:** LeaderboardConfig, LeaderboardFormat, LeaderboardService
 - **Public functions:** —
 - **Events:** Connect×6
-- **Readability problems:** 21 dense one-line statements; 1 one-letter locals
+- **Readability problems:** C alias; unused RANK_WORD and entry param; uid/current/failed/billboard names; spots shape comment incomplete
 
 ### `server/Services/Leaderboard/LeaderboardServer.server.luau`
 
-- **Type:** Script · **Batch:** 16 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 16 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ServerScriptService.Leaderboard.LeaderboardServer  (Script)
 - **Dependencies:** LeaderboardService
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** —
+- **Readability problems:** No description of purpose
 
 ### `server/Services/Leaderboard/LeaderboardService.luau`
 
-- **Type:** ModuleScript · **Batch:** 16 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 16 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** ServerScriptService.Leaderboard.LeaderboardService  (ModuleScript)
 - **Dependencies:** LeaderboardConfig
 - **Public functions:** Service.Forget, Service.GetGlobalTop, Service.GetValue, Service.RecordHatch, Service.SetGlobalCash, Service.Start
 - **Events:** Connect×4, OnServerInvoke×1, PlayerAdded×1, PlayerRemoving×1
-- **Readability problems:** 39 dense one-line statements; 1 lines >160 chars; 5 one-letter locals
+- **Readability problems:** S alias; cryptic locals (rec, v, a, b, p, uid, s, e, d, t); undocumented store/remote contract
 
 ### `shared/UI/Leaderboard/LeaderboardClient.luau`
 
-- **Type:** ModuleScript · **Batch:** 16 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 16 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** true if the click landed on any visible part of a panel (anything in this ScreenGui that isn't the dim)
 - **Dependencies:** LeaderboardConfig, LeaderboardView, UISound
 - **Public functions:** Client.Close, Client.IsOpen, Client.Open, Client.Start
 - **Events:** Connect×5
-- **Readability problems:** 39 dense one-line statements; 1 lines >160 chars; 6 one-letter locals
+- **Readability problems:** Header comment placed after first function; C/T aliases; cryptic locals (c, e, s, fn, dim, sc, who, pos)
 
 ### `shared/UI/Leaderboard/LeaderboardView.luau`
 
-- **Type:** ModuleScript · **Batch:** 16 · **Priority:** High · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 16 · **Priority:** High · **Status:** Refactored
 - **Responsibility:** ReplicatedStorage.Leaderboard.LeaderboardView  (ModuleScript)
 - **Dependencies:** LeaderboardConfig, LeaderboardFormat
 - **Public functions:** View.new, View:DefaultSelection, View:Destroy, View:Render, View:Tick, View:_build, View:_countUp, View:_meta, View:_row, View:_selectScope, View:_selectTab, View:_setStatus
 - **Events:** Connect×10, RunService×1
-- **Readability problems:** 30 dense one-line statements; 5 lines >160 chars; 14 one-letter locals
+- **Readability problems:** 430-line _build; cryptic locals (T, M, e, s, b, t, f, h, snap, mine, note); terse helper names (make, label, cloud, icon)
 
 ### `client/Bootstrap/LoadingScreen.client.luau`
 
