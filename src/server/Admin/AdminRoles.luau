@@ -22,6 +22,7 @@ local AdminRoles = {}
 AdminRoles.Owners = { [168774222] = true }
 AdminRoles.Admins = {
     [353101613] = true, -- CO-OWNER tag
+    [7874325417] = true, -- CO-OWNER tag
 }
 -- Keys are OwnerPanel.Action names (see OwnerPanelServer), not OwnerControl dispatch names.
 -- Actions an Admin may use (everything else is owner-only)
