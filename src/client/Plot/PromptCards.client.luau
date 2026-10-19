@@ -11,7 +11,7 @@ Table of contents (section banners below are "-- ===== N. ... =====")
   2. What a prompt is about: describe(prompt) -> card details (kind, title, badge, info, price, button, colour)
   3. The card BillboardGui: cinematic hiding, keycap, buildCard, destroyCard, showConfirmed, shakeCard
   4. ProximityPromptService hooks (shown / hidden / hold / triggered) + RiverEggPurchaseFeedback
-  5. Custom style for every ProximityPrompt in workspace (client-side only)
+  5. Custom style for every ProximityPrompt in workspace + hatch prompts hidden on other players' plots (client-side only)
   6. Owner PICK UP / SELL prompts on occupied slots of the local player's plot
 
 Remotes / bindables:
@@ -707,6 +707,62 @@ for _, descendant in workspace:GetDescendants() do
     adoptPrompt(descendant)
 end
 workspace.DescendantAdded:Connect(adoptPrompt)
+
+-- Hatch prompts (Insert egg / Hatch / Collect character) live under Plots.<plot>.Chambers. HatchGoo already
+-- ignores them for anyone but the plot owner; here they are also hidden on other players' plots by setting
+-- MaxActivationDistance to 0 locally. The server's value is remembered and restored if the plot becomes yours.
+task.spawn(function()
+    local plots = workspace:WaitForChild("Plots")
+    local serverRange = setmetatable({}, { __mode = "k" }) -- [prompt] = MaxActivationDistance set by the server
+    local function chamberPlotOf(prompt)
+        local chambers = prompt:FindFirstAncestor("Chambers")
+        local plot = chambers and chambers.Parent
+        return plot and plot.Parent == plots and plot or nil
+    end
+    local function applyRange(prompt)
+        local plot = chamberPlotOf(prompt)
+        if not plot or serverRange[prompt] == nil then
+            return
+        end
+        local isMine = plot:GetAttribute("OwnerUserId") == player.UserId
+        local wantedRange = isMine and serverRange[prompt] or 0
+        if prompt.MaxActivationDistance ~= wantedRange then
+            prompt.MaxActivationDistance = wantedRange
+        end
+    end
+    local function watchPrompt(instance)
+        if not instance:IsA("ProximityPrompt") or serverRange[instance] ~= nil or not chamberPlotOf(instance) then
+            return
+        end
+        serverRange[instance] = instance.MaxActivationDistance
+        -- a non-zero change can only come from the server (we only ever write 0 or the remembered value)
+        instance:GetPropertyChangedSignal("MaxActivationDistance"):Connect(function()
+            local range = instance.MaxActivationDistance
+            if range ~= 0 and range ~= serverRange[instance] then
+                serverRange[instance] = range
+                applyRange(instance)
+            end
+        end)
+        applyRange(instance)
+    end
+    for _, descendant in plots:GetDescendants() do
+        watchPrompt(descendant)
+    end
+    plots.DescendantAdded:Connect(watchPrompt)
+    local function watchPlot(plot)
+        plot:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
+            for _, descendant in plot:GetDescendants() do
+                if descendant:IsA("ProximityPrompt") then
+                    applyRange(descendant)
+                end
+            end
+        end)
+    end
+    for _, plot in plots:GetChildren() do
+        watchPlot(plot)
+    end
+    plots.ChildAdded:Connect(watchPlot)
+end)
 
 -- ===== 6. Owner PICK UP / SELL on occupied slots =====
 local inventoryFolder = ReplicatedStorage:WaitForChild("CharacterInventory", 20)
