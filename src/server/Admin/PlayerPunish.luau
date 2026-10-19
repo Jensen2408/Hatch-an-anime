@@ -1,125 +1,154 @@
--- PlayerPunish (owner only, used by the owner panel "Punish" page): take money from a player or wipe their save + leaderboard.
--- Works for online (this server) and offline players. A player playing in ANOTHER server is refused (their server owns the save).
--- Wipes keep the DataStore version history, so the Restore page can still bring an old save back.
-local Players = game:GetService("Players")
-local DSS = game:GetService("DataStoreService")
-local SSS = game:GetService("ServerScriptService")
-local LOCK_TIMEOUT = 150
-local store = DSS:GetDataStore("PlayerData_v1")
-local Leaderboard = require(SSS:WaitForChild("Leaderboard"):WaitForChild("LeaderboardService"))
-local M = {}
+--[[ ServerScriptService.PlayerPunish  (ModuleScript, server only)
+Owner panel "Punish" page: take money from a player or wipe their save + global leaderboard entries. Works for players
+in this server and for offline players. A player playing in ANOTHER server is refused (their server owns the save).
+Wipes keep the DataStore version history, so the Restore page (SaveRestore) can still bring an old save back.
 
-local function resolve(who)
-    local id = tonumber(who)
-    if not id and type(who) == "string" and #who > 0 then
-        local p = Players:FindFirstChild(who)
-        if p then
-            return p.UserId, p.Name
+Who is authorized: the owner only. This module does NOT check permissions itself; OwnerPanelServer's TakeCash /
+WipePlayer handlers check role == "Owner" and args.confirmed == true before calling. byPlayer is that owner.
+Trusted input: nameOrId / amount come from the owner's client and are validated here (resolvePlayer, amount > 0).
+Errors (error / assert) are caught by OwnerPanelServer's pcall and shown to the owner as the message.
+
+DataStore contract: "PlayerData_v1", key "u" .. userId (same store as PlayerData). Fields used: cash, lock = { job, t }.
+A lock whose job is another JobId and is younger than LOCK_TIMEOUT seconds means "playing elsewhere".
+Wipe writes { v = 1, wipedAt, wipedBy }, i.e. a brand-new save.
+]]
+-- ===== 1. Services, store and helpers =====
+local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
+local ServerScriptService = game:GetService("ServerScriptService")
+-- Seconds after which another server's session lock is treated as stale (keep in sync with PlayerData).
+local LOCK_TIMEOUT = 150
+local playerDataStore = DataStoreService:GetDataStore("PlayerData_v1")
+local Leaderboard = require(ServerScriptService:WaitForChild("Leaderboard"):WaitForChild("LeaderboardService"))
+local PlayerPunish = {}
+
+-- Username (online first, then web lookup) or UserId -> userId, username. Errors when nothing matches.
+local function resolvePlayer(nameOrId)
+    local userId = tonumber(nameOrId)
+    if not userId and type(nameOrId) == "string" and #nameOrId > 0 then
+        local onlinePlayer = Players:FindFirstChild(nameOrId)
+        if onlinePlayer then
+            return onlinePlayer.UserId, onlinePlayer.Name
         end
-        local ok, r = pcall(Players.GetUserIdFromNameAsync, Players, who)
+        local ok, lookedUpId = pcall(Players.GetUserIdFromNameAsync, Players, nameOrId)
         if ok then
-            id = r
+            userId = lookedUpId
         end
     end
-    if not id then
+    if not userId then
         error("Couldn't find that player. Use their exact username or User ID.")
     end
-    local ok, n = pcall(Players.GetNameFromUserIdAsync, Players, id)
-    return id, ok and n or tostring(id)
+    local ok, userName = pcall(Players.GetNameFromUserIdAsync, Players, userId)
+    return userId, ok and userName or tostring(userId)
 end
-local function fmt(n)
-    return tostring(math.floor(n)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+-- 1234567 -> "1,234,567" (floors; negative numbers are not expected here).
+local function formatCash(amount)
+    return tostring(math.floor(amount)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
 end
-local function lockedElsewhere(d)
-    return type(d) == "table" and d.lock and d.lock.job ~= game.JobId and os.time() - (d.lock.t or 0) < LOCK_TIMEOUT
+local function lockedElsewhere(save)
+    return type(save) == "table"
+        and save.lock
+        and save.lock.job ~= game.JobId
+        and os.time() - (save.lock.t or 0) < LOCK_TIMEOUT
 end
 
+-- ===== 2. Public API =====
 -- amount = number to take, or "all" to set them to $0
-function M.TakeCash(by, who, amount)
-    local id, name = resolve(who)
-    local all = amount == "all"
+function PlayerPunish.TakeCash(byPlayer, nameOrId, amount)
+    local userId, name = resolvePlayer(nameOrId)
+    local takeAll = amount == "all"
     amount = tonumber(amount)
-    assert(all or (amount and amount > 0), "Enter an amount to take.")
-    local here = Players:GetPlayerByUserId(id)
-    if here then
-        local ls = here:FindFirstChild("leaderstats")
-        local cash = ls and ls:FindFirstChild("Cash")
+    assert(takeAll or (amount and amount > 0), "Enter an amount to take.")
+    local onlinePlayer = Players:GetPlayerByUserId(userId)
+    if onlinePlayer then
+        local leaderstats = onlinePlayer:FindFirstChild("leaderstats")
+        local cash = leaderstats and leaderstats:FindFirstChild("Cash")
         assert(cash, "Their cash isn't loaded yet. Try again in a moment.")
         local before = cash.Value
-        cash.Value = all and 0 or math.max(0, before - amount)
+        cash.Value = takeAll and 0 or math.max(0, before - amount)
         -- money already sitting on their stands goes too when taking everything
-        if all then
+        if takeAll then
             for _, plot in workspace.Plots:GetChildren() do
-                if plot:GetAttribute("OwnerUserId") == id then
+                if plot:GetAttribute("OwnerUserId") == userId then
                     for _, slot in plot.Slots:GetChildren() do
-                        local st = slot:FindFirstChild("MoneyStand")
-                        if st then
-                            st:SetAttribute("Stored", 0)
+                        local moneyStand = slot:FindFirstChild("MoneyStand")
+                        if moneyStand then
+                            moneyStand:SetAttribute("Stored", 0)
                         end
                     end
                 end
             end
         end
-        warn(("[OwnerPunish] %s took $%s from @%s (online)"):format(by.Name, fmt(before - cash.Value), name))
-        return ("Took $%s from @%s. They now have $%s."):format(fmt(before - cash.Value), name, fmt(cash.Value))
+        warn(
+            ("[OwnerPunish] %s took $%s from @%s (online)"):format(byPlayer.Name, formatCash(before - cash.Value), name)
+        )
+        return ("Took $%s from @%s. They now have $%s."):format(
+            formatCash(before - cash.Value),
+            name,
+            formatCash(cash.Value)
+        )
     end
     local blocked, before, after = false, 0, 0
-    store:UpdateAsync("u" .. id, function(d)
-        if type(d) ~= "table" then
+    playerDataStore:UpdateAsync("u" .. userId, function(save)
+        if type(save) ~= "table" then
             return nil
         end
-        if lockedElsewhere(d) then
+        if lockedElsewhere(save) then
             blocked = true
             return nil
         end
-        before = tonumber(d.cash) or 0
-        after = all and 0 or math.max(0, before - amount)
-        d.cash = after
-        return d
+        before = tonumber(save.cash) or 0
+        after = takeAll and 0 or math.max(0, before - amount)
+        save.cash = after
+        return save
     end)
     if blocked then
         error("@" .. name .. " is playing in another server right now. Try again when they leave.")
     end
-    Leaderboard.SetGlobalCash(id, after)
-    warn(("[OwnerPunish] %s took $%s from @%s (offline)"):format(by.Name, fmt(before - after), name))
-    return ("Took $%s from @%s (offline). They now have $%s."):format(fmt(before - after), name, fmt(after))
+    Leaderboard.SetGlobalCash(userId, after)
+    warn(("[OwnerPunish] %s took $%s from @%s (offline)"):format(byPlayer.Name, formatCash(before - after), name))
+    return ("Took $%s from @%s (offline). They now have $%s."):format(
+        formatCash(before - after),
+        name,
+        formatCash(after)
+    )
 end
 
 -- Full reset: save back to a brand-new player + removed from every global leaderboard.
-function M.Wipe(by, who)
-    local id, name = resolve(who)
-    assert(id ~= by.UserId, "You can't wipe yourself here.")
-    local here = Players:GetPlayerByUserId(id)
-    if here then
-        here:Kick("Your progress was reset by the game owner.")
+function PlayerPunish.Wipe(byPlayer, nameOrId)
+    local userId, name = resolvePlayer(nameOrId)
+    assert(userId ~= byPlayer.UserId, "You can't wipe yourself here.")
+    local onlinePlayer = Players:GetPlayerByUserId(userId)
+    if onlinePlayer then
+        onlinePlayer:Kick("Your progress was reset by the game owner.")
         -- wait for this server's leave-save + leaderboard flush to finish, so they can't write the old data back
-        local t = os.clock()
+        local waitStart = os.clock()
         repeat
             task.wait(1)
-            local ok, d = pcall(store.GetAsync, store, "u" .. id)
-            if ok and not (type(d) == "table" and d.lock) then
+            local ok, save = pcall(playerDataStore.GetAsync, playerDataStore, "u" .. userId)
+            if ok and not (type(save) == "table" and save.lock) then
                 break
             end
-        until os.clock() - t > 20
+        until os.clock() - waitStart > 20
         task.wait(2)
     end
     local blocked = false
-    store:UpdateAsync("u" .. id, function(d)
-        if lockedElsewhere(d) and not here then
+    playerDataStore:UpdateAsync("u" .. userId, function(save)
+        if lockedElsewhere(save) and not onlinePlayer then
             blocked = true
             return nil
         end
-        return { v = 1, wipedAt = os.time(), wipedBy = by.UserId }
+        return { v = 1, wipedAt = os.time(), wipedBy = byPlayer.UserId }
     end)
     if blocked then
         error("@" .. name .. " is playing in another server right now. Try again when they leave.")
     end
-    local lbOk = Leaderboard.Forget(id)
-    warn(("[OwnerPunish] %s wiped @%s (save + leaderboards)"):format(by.Name, name))
+    local lbOk = Leaderboard.Forget(userId)
+    warn(("[OwnerPunish] %s wiped @%s (save + leaderboards)"):format(byPlayer.Name, name))
     return "Wiped @"
         .. name
         .. ": fresh save"
         .. (lbOk and " and removed from all leaderboards." or ", but a leaderboard removal failed — try again.")
 end
 
-return M
+return PlayerPunish

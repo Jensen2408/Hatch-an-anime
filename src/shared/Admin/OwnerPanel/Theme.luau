@@ -1,3 +1,6 @@
+--[[ ReplicatedStorage.OwnerPanel.Theme  (ModuleScript)
+Colour palette of the legacy v2 owner panel (Components / ConfirmDialog / PlayerRow / Toast). StudPanel does not use it.
+]]
 return {
     Panel = Color3.fromRGB(24, 21, 26),
     Sidebar = Color3.fromRGB(17, 14, 18),

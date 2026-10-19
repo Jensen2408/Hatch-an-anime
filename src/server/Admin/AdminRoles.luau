@@ -1,14 +1,31 @@
--- Who can open the panel. Owner = everything. Admin = events, river spawns, announcements, teleports, respawn, kick.
--- Add permanent admins here by User ID, or use the Admins page in the owner panel (saved in a DataStore).
+--[[ ServerScriptService.AdminRoles  (ModuleScript, server only)
+Single source of truth for staff permissions. Owner = every action. Admin = only the actions in AdminRoles.AdminActions.
+
+Who is authorized
+  Owners  hard-coded UserIds in AdminRoles.Owners (168774222).
+  Admins  hard-coded UserIds in AdminRoles.Admins (353101613, CO-OWNER) plus the ones added on the owner panel's Admins
+          page (SetAdmin), persisted in DataStore "PanelAdmins_v1", key "list" = { [tostring(userId)] = name }.
+How it is checked
+  AdminRoles.Role(playerOrId) -> "Owner" | "Admin" | nil, from the tables above (pure lookup, never trusts the client).
+  AdminRoles.Can(player, action) -> Owner always, Admin only when AdminActions[action] == true.
+  Studio only: workspace attribute StudioTestRole = "Admin" makes an owner resolve as "Admin" (to test the admin view).
+Replicated output
+  Player attribute "PanelRole" (Role result) is set on join and after SetAdmin. Clients only use it to decide whether to
+  build the panel UI; every server entry point calls Role / Can again.
+Known issue (docs/PROJECT_AUDIT.md): the saved list is read once at server start, so a revoked admin keeps access on
+other running servers until they restart. SetAdmin only updates this server's copy.
+]]
+-- ===== 1. Services and role tables =====
 local Players = game:GetService("Players")
-local DSS = game:GetService("DataStoreService")
-local M = {}
-M.Owners = { [168774222] = true }
-M.Admins = {
+local DataStoreService = game:GetService("DataStoreService")
+local AdminRoles = {}
+AdminRoles.Owners = { [168774222] = true }
+AdminRoles.Admins = {
     [353101613] = true, -- CO-OWNER tag
 }
+-- Keys are OwnerPanel.Action names (see OwnerPanelServer), not OwnerControl dispatch names.
 -- Actions an Admin may use (everything else is owner-only)
-M.AdminActions = {
+AdminRoles.AdminActions = {
     Snapshot = true,
     SpawnEgg = true,
     EggShower = true,
@@ -28,87 +45,101 @@ M.AdminActions = {
     ReturnToPublic = true,
     AnnounceUpdate = true,
 }
-local saved = {} -- [userId]=name (from DataStore)
-local store
+
+-- ===== 2. Panel-added admins (DataStore, loaded once at require time; GetAsync yields) =====
+local savedAdmins = {} -- [userId]=name (from DataStore)
+local adminStore
 do
-    local ok, s = pcall(DSS.GetDataStore, DSS, "PanelAdmins_v1")
-    store = ok and s or nil
+    local ok, dataStore = pcall(DataStoreService.GetDataStore, DataStoreService, "PanelAdmins_v1")
+    adminStore = ok and dataStore or nil
 end
 pcall(function()
-    local data = store and store:GetAsync("list")
+    local data = adminStore and adminStore:GetAsync("list")
     if type(data) == "table" then
-        for k, v in pairs(data) do
-            saved[tonumber(k)] = v
+        for userIdKey, adminName in pairs(data) do
+            savedAdmins[tonumber(userIdKey)] = adminName
         end
     end
 end)
-function M.Role(who)
-    local id = typeof(who) == "Instance" and who.UserId or tonumber(who)
-    if not id then
+
+-- ===== 3. Public API =====
+-- playerOrId: a Player instance or a UserId (number or numeric string).
+function AdminRoles.Role(playerOrId)
+    local userId = typeof(playerOrId) == "Instance" and playerOrId.UserId or tonumber(playerOrId)
+    if not userId then
         return nil
     end
     -- Studio testing only: workspace attribute StudioTestRole="Admin" makes the owner act as an admin
     if
         game:GetService("RunService"):IsStudio()
-        and M.Owners[id]
+        and AdminRoles.Owners[userId]
         and workspace:GetAttribute("StudioTestRole") == "Admin"
     then
         return "Admin"
     end
-    if M.Owners[id] then
+    if AdminRoles.Owners[userId] then
         return "Owner"
     end
-    if M.Admins[id] or saved[id] then
+    if AdminRoles.Admins[userId] or savedAdmins[userId] then
         return "Admin"
     end
     return nil
 end
-function M.Can(player, action)
-    local r = M.Role(player)
-    return r == "Owner" or (r == "Admin" and M.AdminActions[action] == true)
+function AdminRoles.Can(player, action)
+    local role = AdminRoles.Role(player)
+    return role == "Owner" or (role == "Admin" and AdminRoles.AdminActions[action] == true)
 end
-function M.List()
-    local t = {}
-    for id in pairs(M.Admins) do
-        table.insert(t, { userId = id, name = saved[id] or tostring(id), fixed = true })
+-- For the owner panel's Admins page. fixed = true means hard-coded here (cannot be removed from the panel).
+function AdminRoles.List()
+    local list = {}
+    for userId in pairs(AdminRoles.Admins) do
+        table.insert(list, { userId = userId, name = savedAdmins[userId] or tostring(userId), fixed = true })
     end
-    for id, name in pairs(saved) do
-        if not M.Admins[id] then
-            table.insert(t, { userId = id, name = name, fixed = false })
+    for userId, name in pairs(savedAdmins) do
+        if not AdminRoles.Admins[userId] then
+            table.insert(list, { userId = userId, name = name, fixed = false })
         end
     end
-    return t
+    return list
 end
-local function publish(id)
-    local p = Players:GetPlayerByUserId(id)
-    if p then
-        p:SetAttribute("PanelRole", M.Role(p))
+-- Refreshes the PanelRole attribute if that user is in this server.
+local function publishRole(userId)
+    local player = Players:GetPlayerByUserId(userId)
+    if player then
+        player:SetAttribute("PanelRole", AdminRoles.Role(player))
     end
 end
-function M.SetAdmin(id, name, on)
-    id = tonumber(id)
-    assert(id and id > 0 and id % 1 == 0, "Enter a numeric User ID.")
-    assert(not M.Owners[id], "The owner can't be changed.")
-    assert(not (M.Admins[id] and not on), "That admin is in the AdminRoles script; remove them there.")
-    saved[id] = on and (name or tostring(id)) or nil
+-- Owner-only (OwnerPanelServer checks the caller is Owner before calling). Updates this server immediately and
+-- the DataStore list; returns whether the DataStore write succeeded. assert messages are shown to the owner.
+function AdminRoles.SetAdmin(userId, name, isAdmin)
+    userId = tonumber(userId)
+    assert(userId and userId > 0 and userId % 1 == 0, "Enter a numeric User ID.")
+    assert(not AdminRoles.Owners[userId], "The owner can't be changed.")
+    assert(
+        not (AdminRoles.Admins[userId] and not isAdmin),
+        "That admin is in the AdminRoles script; remove them there."
+    )
+    savedAdmins[userId] = isAdmin and (name or tostring(userId)) or nil
     local persisted = false
-    if store then
+    if adminStore then
         persisted = pcall(function()
-            store:UpdateAsync("list", function(old)
+            adminStore:UpdateAsync("list", function(old)
                 old = type(old) == "table" and old or {}
-                old[tostring(id)] = on and (name or tostring(id)) or nil
+                old[tostring(userId)] = isAdmin and (name or tostring(userId)) or nil
                 return old
             end)
         end)
     end
-    publish(id)
+    publishRole(userId)
     return persisted
 end
-local function onJoin(p)
-    p:SetAttribute("PanelRole", M.Role(p))
+
+-- ===== 4. Publish PanelRole for every player =====
+local function onPlayerAdded(player)
+    player:SetAttribute("PanelRole", AdminRoles.Role(player))
 end
-Players.PlayerAdded:Connect(onJoin)
-for _, p in ipairs(Players:GetPlayers()) do
-    onJoin(p)
+Players.PlayerAdded:Connect(onPlayerAdded)
+for _, player in ipairs(Players:GetPlayers()) do
+    onPlayerAdded(player)
 end
-return M
+return AdminRoles

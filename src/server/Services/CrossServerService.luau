@@ -1,6 +1,23 @@
 --!strict
--- CrossServerService: Handles universe-wide announcements and update notifications using MessagingService.
+--[[ ServerScriptService.CrossServerService  (ModuleScript, server only)
+Universe-wide announcements and "game update" soft shutdowns over MessagingService topic "GameGlobalAnnouncements_v1".
 
+Who is authorized: AnnounceUpdate / GlobalAnnounce require AdminRoles.Role(sender) (any staff; AnnounceUpdate also
+accepts sender = nil for server-initiated calls). Callers: OwnerPanelServer (Announce with allServers, AnnounceUpdate)
+and the /update, /announceupdate, /globalannounce, /gannounce chat commands below (staff only).
+Trusted input
+  - Staff text is filtered with TextService (PublicChat) before it is broadcast.
+  - Messages from other servers (tables) are trusted as-is and forwarded to this server's clients; isUpdate == true
+    starts the rejoin countdown here. Messages sent from outside (Open Cloud, a JSON string) are decoded and can never
+    trigger a rejoin (isUpdate is cleared).
+  - TeleportData.SoftShutdown on join (client-controlled) only bounces that player back to a public server.
+Replicated output: ReplicatedStorage.OwnerPanel.Announcement (shared with OwnerPanelServer) gets every banner payload;
+workspace attribute "ServerUpdating" = true while this server is shutting down (new joins are kicked).
+PerformRejoin: 5 s countdown, PlayerDataSaveAll, then teleport everyone through a reserved "bounce" server
+(TeleportData { SoftShutdown = true }) and kick whoever is left after 15 s.
+]]
+
+-- ===== 1. Services, topic and remote =====
 local MessagingService = game:GetService("MessagingService")
 local TeleportService = game:GetService("TeleportService")
 local RunService = game:GetService("RunService")
@@ -15,7 +32,7 @@ local AdminRoles = require(script.Parent:WaitForChild("AdminRoles"))
 local CrossServerService = {}
 
 local TOPIC = "GameGlobalAnnouncements_v1"
-local serverId = (game.JobId and #game.JobId > 0) and game.JobId or HttpService:GenerateGUID(false)
+local SERVER_ID = (game.JobId and #game.JobId > 0) and game.JobId or HttpService:GenerateGUID(false)
 
 local folder = ReplicatedStorage:FindFirstChild("OwnerPanel") or Instance.new("Folder")
 folder.Name = "OwnerPanel"
@@ -25,6 +42,7 @@ local announceEvent = folder:FindFirstChild("Announcement") or Instance.new("Rem
 announceEvent.Name = "Announcement"
 announceEvent.Parent = folder
 
+-- ===== 2. Cross-server listener =====
 -- Cross-server listener
 local subOk, subErr = pcall(function()
     return MessagingService:SubscribeAsync(TOPIC, function(message)
@@ -38,7 +56,7 @@ local subOk, subErr = pcall(function()
         end
         if type(data) == "table" then
             -- Avoid duplicating banner on the originating server
-            if data.ServerId == serverId then
+            if data.ServerId == SERVER_ID then
                 return
             end
             announceEvent:FireAllClients(data)
@@ -55,8 +73,10 @@ if not subOk then
     warn("[CrossServerService] MessagingService subscribe unavailable:", subErr)
 end
 
+-- ===== 3. Public API =====
+-- Raw publish (no permission check: server code only). Stamps SERVER_ID so this server ignores its own echo.
 function CrossServerService.Broadcast(payload: { [string]: any })
-    payload.ServerId = serverId
+    payload.ServerId = SERVER_ID
     local ok, err = pcall(function()
         MessagingService:PublishAsync(TOPIC, payload)
     end)
@@ -92,14 +112,14 @@ function CrossServerService.AnnounceUpdate(sender: Player?, customMessage: strin
         color = "gold",
         by = sender and sender.DisplayName or "Server",
         isUpdate = true,
-        ServerId = serverId,
+        ServerId = SERVER_ID,
     }
 
     -- 1. Display immediately in this server
     announceEvent:FireAllClients(payload)
 
     -- 2. Broadcast across all servers
-    local pubOk, pubErr = pcall(function()
+    local pubOk, _pubErr = pcall(function()
         MessagingService:PublishAsync(TOPIC, payload)
     end)
 
@@ -141,7 +161,7 @@ function CrossServerService.GlobalAnnounce(sender: Player, message: string, colo
         by = sender.DisplayName,
         byId = sender.UserId,
         style = "chat",
-        ServerId = serverId,
+        ServerId = SERVER_ID,
     }
 
     announceEvent:FireAllClients(payload)
@@ -157,14 +177,15 @@ function CrossServerService.GlobalAnnounce(sender: Player, message: string, colo
     end
 end
 
+-- ===== 4. Chat commands (staff only) =====
 -- Chat Commands: /update, /announceupdate, /globalannounce
-local updateCmd = TextChatService:FindFirstChild("AnnounceUpdateCommand") or Instance.new("TextChatCommand")
-updateCmd.Name = "AnnounceUpdateCommand"
-updateCmd.PrimaryAlias = "/update"
-updateCmd.SecondaryAlias = "/announceupdate"
-updateCmd.Parent = TextChatService
+local updateCommand = TextChatService:FindFirstChild("AnnounceUpdateCommand") or Instance.new("TextChatCommand")
+updateCommand.Name = "AnnounceUpdateCommand"
+updateCommand.PrimaryAlias = "/update"
+updateCommand.SecondaryAlias = "/announceupdate"
+updateCommand.Parent = TextChatService
 
-updateCmd.Triggered:Connect(function(source, text)
+updateCommand.Triggered:Connect(function(source, text)
     local who = source and Players:GetPlayerByUserId(source.UserId)
     if who and AdminRoles.Role(who) then
         local custom = nil
@@ -178,13 +199,13 @@ updateCmd.Triggered:Connect(function(source, text)
     end
 end)
 
-local globalCmd = TextChatService:FindFirstChild("GlobalAnnounceCommand") or Instance.new("TextChatCommand")
-globalCmd.Name = "GlobalAnnounceCommand"
-globalCmd.PrimaryAlias = "/globalannounce"
-globalCmd.SecondaryAlias = "/gannounce"
-globalCmd.Parent = TextChatService
+local globalCommand = TextChatService:FindFirstChild("GlobalAnnounceCommand") or Instance.new("TextChatCommand")
+globalCommand.Name = "GlobalAnnounceCommand"
+globalCommand.PrimaryAlias = "/globalannounce"
+globalCommand.SecondaryAlias = "/gannounce"
+globalCommand.Parent = TextChatService
 
-globalCmd.Triggered:Connect(function(source, text)
+globalCommand.Triggered:Connect(function(source, text)
     local who = source and Players:GetPlayerByUserId(source.UserId)
     if who and AdminRoles.Role(who) then
         local msg = ""
@@ -197,6 +218,8 @@ globalCmd.Triggered:Connect(function(source, text)
     end
 end)
 
+-- ===== 5. Soft shutdown =====
+-- Runs at most once per server (ServerUpdating gate; reset only in Studio or when the server is empty).
 function CrossServerService.PerformRejoin()
     if workspace:GetAttribute("ServerUpdating") == true then
         return
@@ -211,7 +234,7 @@ function CrossServerService.PerformRejoin()
             color = "gold",
             by = "Server",
             isUpdate = true,
-            ServerId = serverId,
+            ServerId = SERVER_ID,
         })
         task.wait(1)
     end
@@ -240,9 +263,9 @@ function CrossServerService.PerformRejoin()
     end
 
     -- save everyone and release their save lock BEFORE they leave (stops wipes on rejoin)
-    local sa = game.ServerStorage:FindFirstChild("PlayerDataSaveAll")
-    if sa then
-        pcall(sa.Invoke, sa)
+    local saveAllFunction = game.ServerStorage:FindFirstChild("PlayerDataSaveAll")
+    if saveAllFunction then
+        pcall(saveAllFunction.Invoke, saveAllFunction)
     end
 
     -- Create bounce pad reserved server
@@ -259,24 +282,25 @@ function CrossServerService.PerformRejoin()
         end)
         if not tpOk then
             warn("[Update] TeleportAsync failed:", tpErr)
-            for _, p in ipairs(players) do
-                pcall(TeleportService.Teleport, TeleportService, game.PlaceId, p)
+            for _, player in ipairs(players) do
+                pcall(TeleportService.Teleport, TeleportService, game.PlaceId, player)
             end
         end
     else
-        for _, p in ipairs(players) do
-            pcall(TeleportService.Teleport, TeleportService, game.PlaceId, p)
+        for _, player in ipairs(players) do
+            pcall(TeleportService.Teleport, TeleportService, game.PlaceId, player)
         end
     end
 
     -- Safeguard: kick remaining players after 15 seconds
     task.delay(15, function()
-        for _, p in ipairs(Players:GetPlayers()) do
-            p:Kick("Game updated! Please rejoin to load the newest version.")
+        for _, player in ipairs(Players:GetPlayers()) do
+            player:Kick("Game updated! Please rejoin to load the newest version.")
         end
     end)
 end
 
+-- ===== 6. Join handling =====
 -- Rejoin listeners: soft shutdown bounce handler and updating server gate
 local function onPlayerAdded(player: Player)
     if workspace:GetAttribute("ServerUpdating") == true then
@@ -298,8 +322,8 @@ local function onPlayerAdded(player: Player)
 end
 
 Players.PlayerAdded:Connect(onPlayerAdded)
-for _, p in ipairs(Players:GetPlayers()) do
-    onPlayerAdded(p)
+for _, player in ipairs(Players:GetPlayers()) do
+    onPlayerAdded(player)
 end
 
 return CrossServerService

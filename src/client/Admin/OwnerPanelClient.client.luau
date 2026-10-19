@@ -1,79 +1,85 @@
 --[[ StarterPlayerScripts.OwnerPanelClient (LocalScript)
 Stud-style Owner / Admin panel. Opens with F8, /owner (owner) or /admin (any staff).
 UI lives in ReplicatedStorage.OwnerPanel.StudPanel. The server re-checks every action.
+The panel is (re)built from the "PanelRole" attribute (set by AdminRoles); non-staff never get a GUI. That attribute
+only hides UI: OwnerPanelServer checks AdminRoles on every OwnerPanel.Action invoke.
+Remotes: OwnerPanel.Action (via StudPanel's invoke callback), OwnerPanelOpen (server asks to open the panel).
 ]]
 local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
-local RS = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
-local folder = RS:WaitForChild("OwnerPanel")
-local Remote = folder:WaitForChild("Action")
-local StudPanel = require(folder:WaitForChild("StudPanel"))
-local api, gui
-local function build()
-    if gui then
-        gui:Destroy()
-        gui = nil
-        api = nil
+local panelFolder = ReplicatedStorage:WaitForChild("OwnerPanel")
+local actionRemote = panelFolder:WaitForChild("Action")
+local StudPanel = require(panelFolder:WaitForChild("StudPanel"))
+local panelApi, panelGui
+-- Destroys any previous panel, then builds a fresh one if this player is staff.
+local function buildPanel()
+    if panelGui then
+        panelGui:Destroy()
+        panelGui = nil
+        panelApi = nil
     end
     local role = player:GetAttribute("PanelRole")
     if role ~= "Owner" and role ~= "Admin" then
         return
     end
-    gui = Instance.new("ScreenGui")
-    gui.Name = "OwnerPanel"
-    gui.ResetOnSpawn = false
-    gui.Enabled = false
-    gui.IgnoreGuiInset = true
-    gui.DisplayOrder = 50
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    gui.Parent = player:WaitForChild("PlayerGui")
-    api = StudPanel.Build(gui, {
+    panelGui = Instance.new("ScreenGui")
+    panelGui.Name = "OwnerPanel"
+    panelGui.ResetOnSpawn = false
+    panelGui.Enabled = false
+    panelGui.IgnoreGuiInset = true
+    panelGui.DisplayOrder = 50
+    panelGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    panelGui.Parent = player:WaitForChild("PlayerGui")
+    panelApi = StudPanel.Build(panelGui, {
         role = role,
         userId = player.UserId,
         userName = player.Name,
         invoke = function(action, args)
-            return Remote:InvokeServer(action, args)
+            return actionRemote:InvokeServer(action, args)
         end,
     })
 end
-build()
-player:GetAttributeChangedSignal("PanelRole"):Connect(build)
-UIS.InputBegan:Connect(function(i, gp)
-    if gp or not api then
+buildPanel()
+-- Rebuild when an admin is added / removed while in game.
+player:GetAttributeChangedSignal("PanelRole"):Connect(buildPanel)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed or not panelApi then
         return
     end
-    if i.KeyCode == Enum.KeyCode.F8 then
-        api.toggle()
-    elseif i.KeyCode == Enum.KeyCode.Escape and gui.Enabled then
-        api.close()
+    if input.KeyCode == Enum.KeyCode.F8 then
+        panelApi.toggle()
+    elseif input.KeyCode == Enum.KeyCode.Escape and panelGui.Enabled then
+        panelApi.close()
     end
 end)
-RS:WaitForChild("OwnerPanelOpen").OnClientEvent:Connect(function()
-    if api then
-        api.open()
+ReplicatedStorage:WaitForChild("OwnerPanelOpen").OnClientEvent:Connect(function()
+    if panelApi then
+        panelApi.open()
     end
 end)
-player.Chatted:Connect(function(msg)
-    local m = msg:lower():gsub("%s+", "")
-    if m == "/admin" then
-        if api then
-            api.open()
+-- Legacy chat fallback. selene if_same_then_else (pre-existing): both branches open the panel; kept as-is.
+player.Chatted:Connect(function(message)
+    local command = message:lower():gsub("%s+", "")
+    if command == "/admin" then
+        if panelApi then
+            panelApi.open()
         end
-    elseif m == "/owner" and player:GetAttribute("PanelRole") == "Owner" then
-        if api then
-            api.open()
+    elseif command == "/owner" and player:GetAttribute("PanelRole") == "Owner" then
+        if panelApi then
+            panelApi.open()
         end
     end
 end)
 Players.PlayerAdded:Connect(function()
-    if api then
-        api.refresh()
+    if panelApi then
+        panelApi.refresh()
     end
 end)
 Players.PlayerRemoving:Connect(function()
-    if api then
+    if panelApi then
         task.wait()
-        api.refresh()
+        panelApi.refresh()
     end
 end)

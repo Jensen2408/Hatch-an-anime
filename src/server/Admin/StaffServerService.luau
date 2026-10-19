@@ -1,7 +1,22 @@
 --!strict
--- StaffServerService: Manages reserved server access for Admins and Owner.
--- Cross-server sync via MemoryStoreService ensures all staff join the same reserved instance.
+--[[ ServerScriptService.StaffServerService  (ModuleScript, server only)
+Reserved "staff server": one private server shared by all staff. The access code is cached for 4 hours in MemoryStore
+sorted map "StaffServerCode_v2" (key "active_code"), with DataStore "StaffServerBackup_v1" ({ code, created }) as a
+fallback, so every staff member who joins ends up in the same instance.
 
+Who is authorized: any AdminRoles role (Owner or Admin). TeleportToStaffServer / ReturnToPublic check
+AdminRoles.Role(player) themselves; callers are OwnerPanelServer (JoinStaffServer / ReturnToPublic actions, which also
+pass AdminRoles.Can) and the /staffserver, /staff chat command below.
+
+Trusted input / known issue: the server marks itself as a staff server (workspace attribute "IsStaffServer") when ANY
+joining player's TeleportData has isStaffServer == true. TeleportData is client-controlled, so a non-staff player can
+mark a public server as staff-only and every non-staff player who joins afterwards is kicked. guardPlayer also skips
+anyone whose TeleportData has SoftShutdown == true, which is equally client-controlled.
+See docs/PROJECT_AUDIT.md ("StaffServer TeleportData trust"); not fixed here (behaviour-preserving refactor).
+Studio: workspace attribute StudioStaffServer = true simulates a staff server; teleports are refused in Studio.
+]]
+
+-- ===== 1. Services and dependencies =====
 local TeleportService = game:GetService("TeleportService")
 local MemoryStoreService = game:GetService("MemoryStoreService")
 local DataStoreService = game:GetService("DataStoreService")
@@ -13,6 +28,7 @@ local AdminRoles = require(script.Parent:WaitForChild("AdminRoles"))
 
 local StaffServerService = {}
 
+-- ===== 2. Staff-server detection (trusts TeleportData, see header) =====
 -- Determine if current server is a reserved staff server
 local function checkStaffServer(player: Player)
     local joinData = player:GetJoinData()
@@ -22,14 +38,15 @@ local function checkStaffServer(player: Player)
     end
 end
 Players.PlayerAdded:Connect(checkStaffServer)
-for _, p in ipairs(Players:GetPlayers()) do
-    checkStaffServer(p)
+for _, player in ipairs(Players:GetPlayers()) do
+    checkStaffServer(player)
 end
 
 if workspace:GetAttribute("StudioStaffServer") == true then
     workspace:SetAttribute("IsStaffServer", true)
 end
 
+-- ===== 3. Shared access-code storage =====
 -- MemoryStore with DataStore fallback
 local memoryStore = nil
 pcall(function()
@@ -41,6 +58,8 @@ pcall(function()
     backupStore = DataStoreService:GetDataStore("StaffServerBackup_v1")
 end)
 
+-- ===== 4. Public API =====
+-- Returns the shared reserved-server code (cached -> backup -> newly reserved), or nil + a message for the player.
 function StaffServerService.GetOrCreateStaffServerCode(): (string?, string?)
     if RunService:IsStudio() then
         return nil, "Teleportation only works in the live published game."
@@ -147,6 +166,7 @@ function StaffServerService.ReturnToPublic(player: Player): (boolean, string)
     return true, "Returning to public server..."
 end
 
+-- ===== 5. Join guard and chat command =====
 -- Security guard: if this server is a reserved staff server, kick any non-staff
 local function guardPlayer(player: Player)
     local joinData = player:GetJoinData()
@@ -164,8 +184,8 @@ local function guardPlayer(player: Player)
 end
 
 Players.PlayerAdded:Connect(guardPlayer)
-for _, p in ipairs(Players:GetPlayers()) do
-    guardPlayer(p)
+for _, player in ipairs(Players:GetPlayers()) do
+    guardPlayer(player)
 end
 
 -- Register /staffserver and /staff chat commands

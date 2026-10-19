@@ -1,29 +1,47 @@
--- Owner / Admin panel server. Every request is checked here against AdminRoles.
--- Owner: everything. Admin: events, river spawns, announcements, teleports, respawn, kick (not staff).
+--[[ ServerScriptService.OwnerPanelServer  (Script)
+Server side of the owner / admin panel (StudPanel UI) and the admin terminal.
+
+Remotes (created here if missing; names and payload shapes are contracts)
+  ReplicatedStorage.OwnerPanel.Action        RemoteFunction: InvokeServer(action: string, args: table) -> (ok, result)
+  ReplicatedStorage.OwnerPanel.Announcement  RemoteEvent, server -> clients: banner payloads (see StaffAnnouncements)
+  ReplicatedStorage.OwnerPanelOpen           RemoteEvent, server -> client: open the panel (/admin chat command)
+
+Who is authorized (checked on every invoke, in this order)
+  1. AdminRoles.Role(player) must be "Owner" or "Admin", else "Staff access only."
+  2. AdminRoles.Can(player, action) (owner: all, admin: AdminRoles.AdminActions); SetAdmin additionally owner-only.
+  3. Owner-only handlers (SaveList, SaveRestore, TakeCash, WipePlayer) re-check role == "Owner" themselves.
+  4. Mapped actions go through OwnerControlServer's Dispatch bindable, which checks again (owner, or ADMIN_BRIDGE).
+Trusted input: action must be a string and args a table; individual args fields are validated by the handlers / the
+dispatcher. args.color (announcements) is passed through unvalidated; clients fall back to red for unknown colours.
+Rate limit: one request per player at a time, >= 0.2 s apart. Errors are caught and returned as (false, message).
+]]
+-- ===== 1. Services and remotes =====
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextService = game:GetService("TextService")
 
-local folder = RS:FindFirstChild("OwnerPanel") or Instance.new("Folder")
+local folder = ReplicatedStorage:FindFirstChild("OwnerPanel") or Instance.new("Folder")
 folder.Name = "OwnerPanel"
-folder.Parent = RS
-local remote = folder:FindFirstChild("Action") or Instance.new("RemoteFunction")
-remote.Name = "Action"
-remote.Parent = folder
-local announce = folder:FindFirstChild("Announcement") or Instance.new("RemoteEvent")
-announce.Name = "Announcement"
-announce.Parent = folder
-local openEvent = RS:FindFirstChild("OwnerPanelOpen") or Instance.new("RemoteEvent")
+folder.Parent = ReplicatedStorage
+local actionRemote = folder:FindFirstChild("Action") or Instance.new("RemoteFunction")
+actionRemote.Name = "Action"
+actionRemote.Parent = folder
+local announceEvent = folder:FindFirstChild("Announcement") or Instance.new("RemoteEvent")
+announceEvent.Name = "Announcement"
+announceEvent.Parent = folder
+local openEvent = ReplicatedStorage:FindFirstChild("OwnerPanelOpen") or Instance.new("RemoteEvent")
 openEvent.Name = "OwnerPanelOpen"
-openEvent.Parent = RS
+openEvent.Parent = ReplicatedStorage
 
-local Roles = require(script.Parent:WaitForChild("AdminRoles"))
-local StaffService = require(script.Parent:WaitForChild("StaffServerService"))
+-- ===== 2. Dependencies, action tables and state =====
+local AdminRoles = require(script.Parent:WaitForChild("AdminRoles"))
+local StaffServerService = require(script.Parent:WaitForChild("StaffServerService"))
 local CrossServerService = require(script.Parent:WaitForChild("CrossServerService"))
-local Catalog = require(RS:WaitForChild("CharacterCatalog"))
+local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
 local bridge = game.ServerScriptService:WaitForChild("OwnerControlServer"):WaitForChild("Dispatch")
-local last, busy = {}, {}
-local mapping = {
+local lastRequestAt, busy = {}, {}
+-- Panel action name -> OwnerControlServer dispatch action name.
+local PANEL_TO_DISPATCH_ACTION = {
     GiveCash = "GiveCash",
     SetCash = "SetCash",
     GiveEgg = "SpawnEgg",
@@ -48,7 +66,8 @@ local mapping = {
     Ban = "Ban24h",
     Unban = "Unban",
 }
-local dangerous = {
+-- Panel actions that require args.confirmed == true.
+local NEEDS_CONFIRM = {
     SetCash = true,
     ClearInventory = true,
     ClearPlaced = true,
@@ -58,7 +77,8 @@ local dangerous = {
     Ban = true,
     Unban = true,
 }
-local single = {
+-- Panel actions that can never target the whole lobby.
+local SINGLE_TARGET_ONLY = {
     SetCash = true,
     UpgradeTemple = true,
     UnlockSlot = true,
@@ -77,20 +97,23 @@ local single = {
     Unban = true,
 }
 local lastShower, lastAnnounce = -1e9, {}
-local function plotOf(p)
+
+-- ===== 3. Helpers =====
+-- Temple level / unlocked slot count / incubator levels for the roster (nil when the player has no plot).
+local function plotSummary(player)
     for _, plot in workspace.Plots:GetChildren() do
-        if plot:GetAttribute("OwnerUserId") == p.UserId then
+        if plot:GetAttribute("OwnerUserId") == player.UserId then
             local slots = 0
-            for _, s in plot.Slots:GetChildren() do
-                if s:GetAttribute("Unlocked") then
+            for _, slot in plot.Slots:GetChildren() do
+                if slot:GetAttribute("Unlocked") then
                     slots += 1
                 end
             end
             local chambers = {}
             for i = 1, 3 do
-                local c = plot.Chambers:FindFirstChild("Chamber" .. i)
-                if c then
-                    chambers[i] = c:GetAttribute("UpgradeLevel") or 1
+                local chamber = plot.Chambers:FindFirstChild("Chamber" .. i)
+                if chamber then
+                    chambers[i] = chamber:GetAttribute("UpgradeLevel") or 1
                 end
             end
             return {
@@ -103,77 +126,82 @@ local function plotOf(p)
     end
 end
 local function releasableEggs()
-    local t = {}
-    for _, e in ipairs(Catalog.Order) do
-        local tpl = game.ServerStorage.AuxEggTemplates:FindFirstChild(e.Id)
-        if tpl and tpl:GetAttribute("ReleaseEnabled") ~= false then
-            table.insert(t, e)
+    local eggs = {}
+    for _, entry in ipairs(Catalog.Order) do
+        local template = game.ServerStorage.AuxEggTemplates:FindFirstChild(entry.Id)
+        if template and template:GetAttribute("ReleaseEnabled") ~= false then
+            table.insert(eggs, entry)
         end
     end
-    return t
+    return eggs
 end
+
+-- ===== 4. Direct handlers: handlers[action](player, args, role) -> (ok, result) =====
 local handlers = {}
 local SaveRestore = require(script.Parent:WaitForChild("SaveRestore"))
-handlers.SaveList = function(p, a, role)
+handlers.SaveList = function(_player, args, role)
     if role ~= "Owner" then
         return false, "Only the owner can do that."
     end
-    return true, SaveRestore.List(a.who)
+    return true, SaveRestore.List(args.who)
 end
-handlers.SaveRestore = function(p, a, role)
+handlers.SaveRestore = function(_player, args, role)
     if role ~= "Owner" then
         return false, "Only the owner can do that."
     end
-    if a.confirmed ~= true then
+    if args.confirmed ~= true then
         return false, "Confirm first."
     end
-    return true, SaveRestore.Restore(a.who, a.version)
+    return true, SaveRestore.Restore(args.who, args.version)
 end
-local Punish = require(script.Parent:WaitForChild("PlayerPunish"))
-handlers.TakeCash = function(p, a, role)
+local PlayerPunish = require(script.Parent:WaitForChild("PlayerPunish"))
+handlers.TakeCash = function(player, args, role)
     if role ~= "Owner" then
         return false, "Only the owner can do that."
     end
-    if a.confirmed ~= true then
+    if args.confirmed ~= true then
         return false, "Confirm first."
     end
-    return true, Punish.TakeCash(p, a.who, a.amount)
+    return true, PlayerPunish.TakeCash(player, args.who, args.amount)
 end
-handlers.WipePlayer = function(p, a, role)
+handlers.WipePlayer = function(player, args, role)
     if role ~= "Owner" then
         return false, "Only the owner can do that."
     end
-    if a.confirmed ~= true then
+    if args.confirmed ~= true then
         return false, "Confirm first."
     end
-    return true, Punish.Wipe(p, a.who)
+    return true, PlayerPunish.Wipe(player, args.who)
 end
-handlers.Snapshot = function(p, a, role)
-    local info = bridge:Invoke(p, "Info", {})
+handlers.Snapshot = function(player, _args, role)
+    local info = bridge:Invoke(player, "Info", {})
     if not info.Ok then
         return false, info.Message
     end
     local catalog = {}
-    for _, it in info.Items do
+    for _, item in info.Items do
         local entry = {
-            id = it.Id,
-            name = it.Name,
-            rarity = it.Rarity,
-            eggAvailable = it.EggAvailable,
-            charAvailable = it.CharacterAvailable,
-            noRiver = it.NoRiver == true,
-            price = it.Price,
+            id = item.Id,
+            name = item.Name,
+            rarity = item.Rarity,
+            eggAvailable = item.EggAvailable,
+            charAvailable = item.CharacterAvailable,
+            noRiver = item.NoRiver == true,
+            price = item.Price,
         }
-        if role == "Owner" or (it.EggAvailable and not it.NoRiver) then
+        if role == "Owner" or (item.EggAvailable and not item.NoRiver) then
             table.insert(catalog, entry)
         end
     end
     local roster = {}
     for _, who in Players:GetPlayers() do
-        table.insert(
-            roster,
-            { userId = who.UserId, name = who.DisplayName, user = who.Name, role = Roles.Role(who), plot = plotOf(who) }
-        )
+        table.insert(roster, {
+            userId = who.UserId,
+            name = who.DisplayName,
+            user = who.Name,
+            role = AdminRoles.Role(who),
+            plot = plotSummary(who),
+        })
     end
     return true,
         {
@@ -181,183 +209,191 @@ handlers.Snapshot = function(p, a, role)
             catalog = catalog,
             event = info.Event,
             role = role,
-            admins = role == "Owner" and Roles.List() or nil,
+            admins = role == "Owner" and AdminRoles.List() or nil,
             eventEnds = workspace:GetAttribute("OwnerEventEnds"),
             isStaffServer = workspace:GetAttribute("IsStaffServer") == true,
         }
 end
-handlers.EggShower = function(p, a)
+handlers.EggShower = function(player, args)
     assert(os.clock() - lastShower > 20, "Egg Shower is cooling down. Try again in a few seconds.")
     local eggs = releasableEggs()
     assert(#eggs > 0, "No eggs available.")
     local request = workspace.PirateEggConveyor:FindFirstChild("RequestOwnerRiverEgg")
     assert(request, "River is not ready.")
-    local n = math.clamp(math.floor(tonumber(a.amount) or 8), 3, 15)
+    local eggCount = math.clamp(math.floor(tonumber(args.amount) or 8), 3, 15)
     lastShower = os.clock()
     task.spawn(function()
-        for i = 1, n do
-            if not p.Parent then
+        for _ = 1, eggCount do
+            if not player.Parent then
                 break
             end
-            request:Fire(p, eggs[math.random(#eggs)].Id)
+            request:Fire(player, eggs[math.random(#eggs)].Id)
             task.wait(1.1)
         end
     end)
-    announce:FireAllClients({
+    announceEvent:FireAllClients({
         title = "EGG SHOWER!",
-        text = n .. " eggs are coming down the river!",
+        text = eggCount .. " eggs are coming down the river!",
         color = "green",
-        by = p.DisplayName,
+        by = player.DisplayName,
     })
-    return true, n .. " eggs are coming down the river."
+    return true, eggCount .. " eggs are coming down the river."
 end
-handlers.StartNight = function(p, a)
-    local secs = math.clamp(math.floor(tonumber(a.seconds) or 20), 10, 600)
+handlers.StartNight = function(player, args)
+    local secs = math.clamp(math.floor(tonumber(args.seconds) or 20), 10, 600)
     workspace:SetAttribute("NightForcedUntil", workspace:GetServerTimeNow() + secs)
-    announce:FireAllClients({
+    announceEvent:FireAllClients({
         title = "NIGHTTIME!",
         text = "Night has fallen — 3x cash, 2x hatch speed and 3x river luck! (" .. secs .. "s)",
         color = "purple",
-        by = p.DisplayName,
+        by = player.DisplayName,
     })
     return true, "Nighttime started for " .. secs .. " seconds."
 end
-handlers.StopNight = function(p, a)
+handlers.StopNight = function(_player, _args)
     workspace:SetAttribute("NightForcedUntil", nil)
     return true, "Forced nighttime stopped (the regular 5-minute cycle still runs)."
 end
-handlers.Announce = function(p, a)
-    local msg = type(a.text) == "string" and a.text:sub(1, 120) or ""
-    assert(#msg:gsub("%s", "") > 0, "Write a message first.")
-    assert(os.clock() - (lastAnnounce[p] or -1e9) > 8, "Wait a few seconds between announcements.")
-    lastAnnounce[p] = os.clock()
-    if a.allServers == true then
-        return CrossServerService.GlobalAnnounce(p, msg, a.color or "purple")
+handlers.Announce = function(player, args)
+    local message = type(args.text) == "string" and args.text:sub(1, 120) or ""
+    assert(#message:gsub("%s", "") > 0, "Write a message first.")
+    assert(os.clock() - (lastAnnounce[player] or -1e9) > 8, "Wait a few seconds between announcements.")
+    lastAnnounce[player] = os.clock()
+    if args.allServers == true then
+        return CrossServerService.GlobalAnnounce(player, message, args.color or "purple")
     else
         local ok, filtered = pcall(function()
-            return TextService:FilterStringAsync(msg, p.UserId, Enum.TextFilterContext.PublicChat)
+            return TextService:FilterStringAsync(message, player.UserId, Enum.TextFilterContext.PublicChat)
                 :GetNonChatStringForBroadcastAsync()
         end)
         assert(ok, "Couldn't check that message. Try again.")
-        announce:FireAllClients({
-            title = (Roles.Role(p) == "Owner" and "OWNER" or "ADMIN") .. " ANNOUNCEMENT",
+        announceEvent:FireAllClients({
+            title = (AdminRoles.Role(player) == "Owner" and "OWNER" or "ADMIN") .. " ANNOUNCEMENT",
             text = filtered,
-            color = a.color or "red",
-            by = p.DisplayName,
-            byId = p.UserId,
+            color = args.color or "red",
+            by = player.DisplayName,
+            byId = player.UserId,
             style = "chat",
         })
         return true, "Announcement sent to everyone in this server."
     end
 end
-handlers.AnnounceUpdate = function(p, a)
-    local msg = type(a.text) == "string" and a.text or nil
-    return CrossServerService.AnnounceUpdate(p, msg)
+handlers.AnnounceUpdate = function(player, args)
+    local msg = type(args.text) == "string" and args.text or nil
+    return CrossServerService.AnnounceUpdate(player, msg)
 end
-handlers.SetAdmin = function(p, a)
-    local id = tonumber(a.userId)
+handlers.SetAdmin = function(_player, args)
+    local id = tonumber(args.userId)
     assert(id, "Enter a numeric User ID.")
-    local name = a.name
+    local name = args.name
     local who = Players:GetPlayerByUserId(id)
     if who then
         name = who.Name
     end
     if not name then
-        local ok, n = pcall(Players.GetNameFromUserIdAsync, Players, id)
-        name = ok and n or tostring(id)
+        local ok, fetchedName = pcall(Players.GetNameFromUserIdAsync, Players, id)
+        name = ok and fetchedName or tostring(id)
     end
-    local saved = Roles.SetAdmin(id, name, a.on == true)
+    local persisted = AdminRoles.SetAdmin(id, name, args.on == true)
     return true,
-        (a.on and "@" .. name .. " is now an admin" or "@" .. name .. " is no longer an admin")
-            .. (saved and "." or " (this server only; saving works in the published game).")
+        (args.on and "@" .. name .. " is now an admin" or "@" .. name .. " is no longer an admin")
+            .. (persisted and "." or " (this server only; saving works in the published game).")
 end
-handlers.JoinStaffServer = function(p, a, role)
-    return StaffService.TeleportToStaffServer(p)
+handlers.JoinStaffServer = function(player, _args, _role)
+    return StaffServerService.TeleportToStaffServer(player)
 end
-handlers.ReturnToPublic = function(p, a, role)
-    return StaffService.ReturnToPublic(p)
+handlers.ReturnToPublic = function(player, _args, _role)
+    return StaffServerService.ReturnToPublic(player)
 end
-local function eventAnnouncement(p, a)
-    local names = { rush = "EGG RUSH", cash = "DOUBLE CASH", gold = "GOLDEN HOUR" }
-    local txt =
+
+-- ===== 5. Main remote =====
+local function eventAnnouncement(player, args)
+    local titles = { rush = "EGG RUSH", cash = "DOUBLE CASH", gold = "GOLDEN HOUR" }
+    local blurbs =
         { rush = "Eggs spawn twice as fast!", cash = "All income is doubled!", gold = "Golden sunset across the map!" }
-    if names[a.eventId] then
-        announce:FireAllClients({
-            title = names[a.eventId] .. " STARTED!",
-            text = txt[a.eventId] .. " (" .. math.floor((tonumber(a.seconds) or 0) / 60) .. " min)",
+    if titles[args.eventId] then
+        announceEvent:FireAllClients({
+            title = titles[args.eventId] .. " STARTED!",
+            text = blurbs[args.eventId] .. " (" .. math.floor((tonumber(args.seconds) or 0) / 60) .. " min)",
             color = "gold",
-            by = p.DisplayName,
+            by = player.DisplayName,
         })
     end
 end
-remote.OnServerInvoke = function(p, action, a)
-    local role = Roles.Role(p)
+actionRemote.OnServerInvoke = function(player, action, args)
+    local role = AdminRoles.Role(player)
     if not role then
         return false, "Staff access only."
     end
-    if type(action) ~= "string" or type(a) ~= "table" then
+    if type(action) ~= "string" or type(args) ~= "table" then
         return false, "Invalid request."
     end
-    if not Roles.Can(p, action) and action ~= "SetAdmin" then
+    if not AdminRoles.Can(player, action) and action ~= "SetAdmin" then
         return false, "Only the owner can do that."
     end
     if action == "SetAdmin" and role ~= "Owner" then
         return false, "Only the owner can do that."
     end
-    if busy[p] or os.clock() - (last[p] or -100) < 0.2 then
+    if busy[player] or os.clock() - (lastRequestAt[player] or -100) < 0.2 then
         return false, "Please wait a moment."
     end
-    last[p] = os.clock()
-    busy[p] = true
-    local ok, res, msg = pcall(function()
+    lastRequestAt[player] = os.clock()
+    busy[player] = true
+    local ok, success, message = pcall(function()
+        -- Direct handlers first, then the dispatcher bridge for mapped actions.
         if handlers[action] then
-            return handlers[action](p, a, role)
+            return handlers[action](player, args, role)
         end
-        local mapped = mapping[action]
+        local mapped = PANEL_TO_DISPATCH_ACTION[action]
         if not mapped then
             return false, "Unknown action."
         end
-        if dangerous[action] and a.confirmed ~= true then
+        if NEEDS_CONFIRM[action] and args.confirmed ~= true then
             return false, "Confirm this action first."
         end
-        if a.scope == "lobby" and role ~= "Owner" then
+        -- Lobby-wide requests: owner only; then (except events, spawn rate and river eggs) they need confirmation and
+        -- are never allowed for SINGLE_TARGET_ONLY actions.
+        if args.scope == "lobby" and role ~= "Owner" then
             return false, "Choose one player."
         end
         if
-            a.scope == "lobby"
+            args.scope == "lobby"
             and action ~= "StartEvent"
             and action ~= "StopEvent"
             and action ~= "SetSpawnInterval"
             and action ~= "SpawnEgg"
-            and (single[action] or a.confirmed ~= true)
+            and (SINGLE_TARGET_ONLY[action] or args.confirmed ~= true)
         then
             return false, "Choose one player or confirm gifting to the lobby."
         end
         local target
+        -- Resolve the dispatch Target. selene if_same_then_else (pre-existing): this branch and the scope == "me" branch
+        -- are identical on purpose (lobby-wide actions always run as the caller).
         if action == "SpawnEgg" or action == "StartEvent" or action == "StopEvent" or action == "SetSpawnInterval" then
-            target = tostring(p.UserId)
+            target = tostring(player.UserId)
         elseif action == "Unban" then
-            target = tostring(a.userId or "")
-        elseif a.scope == "me" then
-            target = tostring(p.UserId)
-        elseif a.scope == "lobby" then
+            target = tostring(args.userId or "")
+        elseif args.scope == "me" then
+            target = tostring(player.UserId)
+        elseif args.scope == "lobby" then
             target = "ALL"
         else
-            local who = Players:GetPlayerByUserId(tonumber(a.userId) or 0)
+            local who = Players:GetPlayerByUserId(tonumber(args.userId) or 0)
             if not who then
                 return false, "Select an online player first."
             end
             target = tostring(who.UserId)
         end
+        -- Staff can never be kicked from the panel; admin kicks happen here (dispatch-level Kick is owner-only).
         if action == "Kick" then
             local who = Players:GetPlayerByUserId(tonumber(target) or 0)
             if not who then
                 return false, "That player is not in this server."
             end
-            if who == p then
+            if who == player then
                 return false, "You can't kick yourself."
             end
-            if Roles.Role(who) then
+            if AdminRoles.Role(who) then
                 return false, "Staff can't be kicked from the panel."
             end
             if role == "Admin" then
@@ -367,46 +403,48 @@ remote.OnServerInvoke = function(p, action, a)
         end
         local payload = {
             Target = target,
-            Confirmed = a.confirmed == true,
-            Amount = a.amount,
-            Id = a.itemId,
-            Index = a.index,
-            Destination = tostring(a.destination or ""),
-            Kind = ({ rush = "EggRush", cash = "DoubleCash", gold = "GoldenHour" })[a.eventId],
-            Duration = a.seconds,
-            Mutation = type(a.mutation) == "string" and a.mutation or nil,
+            Confirmed = args.confirmed == true,
+            Amount = args.amount,
+            Id = args.itemId,
+            Index = args.index,
+            Destination = tostring(args.destination or ""),
+            Kind = ({ rush = "EggRush", cash = "DoubleCash", gold = "GoldenHour" })[args.eventId],
+            Duration = args.seconds,
+            Mutation = type(args.mutation) == "string" and args.mutation or nil,
         }
         if action == "SetSpawnInterval" then
-            payload.Amount = a.seconds
+            payload.Amount = args.seconds
         end
-        local result = bridge:Invoke(p, mapped, payload)
+        local result = bridge:Invoke(player, mapped, payload)
         if result.Ok and action == "StartEvent" then
-            eventAnnouncement(p, a)
+            eventAnnouncement(player, args)
         end
         return result.Ok, result.Message
     end)
-    busy[p] = nil
+    busy[player] = nil
     if not ok then
-        warn("[StaffPanel]", action, res)
-        return false, (tostring(res):gsub("^.-:%d+: ", ""))
+        warn("[StaffPanel]", action, success)
+        return false, (tostring(success):gsub("^.-:%d+: ", ""))
     end
-    return res, msg
+    return success, message
 end
-Players.PlayerRemoving:Connect(function(p)
-    last[p] = nil
-    busy[p] = nil
-    lastAnnounce[p] = nil
+Players.PlayerRemoving:Connect(function(player)
+    lastRequestAt[player] = nil
+    busy[player] = nil
+    lastAnnounce[player] = nil
 end)
+
+-- ===== 6. Cleanup and chat command =====
 -- /admin opens the panel for any staff member (/owner still works for the owner)
-local chat = game:GetService("TextChatService")
-local command = chat:FindFirstChild("OpenStaffPanel") or Instance.new("TextChatCommand")
+local TextChatService = game:GetService("TextChatService")
+local command = TextChatService:FindFirstChild("OpenStaffPanel") or Instance.new("TextChatCommand")
 command.Name = "OpenStaffPanel"
 command.PrimaryAlias = "/admin"
 command.SecondaryAlias = ""
-command.Parent = chat
+command.Parent = TextChatService
 command.Triggered:Connect(function(source)
     local who = source and Players:GetPlayerByUserId(source.UserId)
-    if who and Roles.Role(who) then
+    if who and AdminRoles.Role(who) then
         openEvent:FireClient(who)
     end
 end)

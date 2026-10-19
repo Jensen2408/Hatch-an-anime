@@ -1,14 +1,17 @@
--- Gold [VIP] prefix in chat for players with the VIP attribute (set by ShopService)
+--[[ StarterPlayerScripts.VIPChatTag  (LocalScript)
+Gold [VIP] prefix in chat for players with the VIP attribute (set by ShopService).
+Note: it assigns TextChatService.OnIncomingMessage, so any other script assigning that callback replaces this one.
+]]
 local TextChatService = game:GetService("TextChatService")
 local Players = game:GetService("Players")
 TextChatService.OnIncomingMessage = function(message)
-    local props = Instance.new("TextChatMessageProperties")
-    local src = message.TextSource
-    local p = src and Players:GetPlayerByUserId(src.UserId)
-    if p and p:GetAttribute("VIP") then
-        props.PrefixText = '<font color="#F2BE55">[VIP]</font> <font color="#FFD978">'
+    local properties = Instance.new("TextChatMessageProperties")
+    local textSource = message.TextSource
+    local sender = textSource and Players:GetPlayerByUserId(textSource.UserId)
+    if sender and sender:GetAttribute("VIP") then
+        properties.PrefixText = '<font color="#F2BE55">[VIP]</font> <font color="#FFD978">'
             .. message.PrefixText
             .. "</font>"
     end
-    return props
+    return properties
 end

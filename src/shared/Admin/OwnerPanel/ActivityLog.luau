@@ -1,17 +1,21 @@
-local M = { Rows = {} }
-function M.Add(action, target, result)
-    table.insert(M.Rows, 1, {
+--[[ ReplicatedStorage.OwnerPanel.ActivityLog  (ModuleScript)
+Newest-first in-memory log of panel actions (max 50 rows). Legacy v2 panel helper: nothing in src requires it
+any more (StudPanel is self-contained). Row = { Time, Action, Target, Ok, Response }.
+]]
+local ActivityLog = { Rows = {} }
+function ActivityLog.Add(action, target, result)
+    table.insert(ActivityLog.Rows, 1, {
         Time = os.date("%H:%M:%S"),
         Action = action,
         Target = target,
         Ok = result.Ok == true,
         Response = result.Message or "",
     })
-    while #M.Rows > 50 do
-        table.remove(M.Rows)
+    while #ActivityLog.Rows > 50 do
+        table.remove(ActivityLog.Rows)
     end
 end
-function M.Clear()
-    table.clear(M.Rows)
+function ActivityLog.Clear()
+    table.clear(ActivityLog.Rows)
 end
-return M
+return ActivityLog

@@ -8,9 +8,9 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | Status | Scripts |
 |---|---:|
-| Pending | 42 |
+| Pending | 22 |
 | Reviewed — No Changes Needed | 5 |
-| Refactored | 142 |
+| Refactored | 162 |
 | Blocked — Requires Manual Review | 0 |
 | **Total** | **189** |
 
@@ -260,26 +260,26 @@ Bytecode: `SAME` = `luau-compile --text -g0` output identical to the pre-refacto
 
 | File | Type | Original Lines | Final Lines | Status | Bytecode | Notes |
 |---|---|---:|---:|---|---|---|
-| `client/Admin/AdminTerminal.client.luau` | LocalScript | 244 | 601 | Pending | — | — |
-| `client/Admin/OwnerPanelClient.client.luau` | LocalScript | 38 | 79 | Pending | — | — |
-| `client/Admin/StaffAnnouncements.client.luau` | LocalScript | 110 | 360 | Pending | — | — |
-| `client/Admin/VIPChatTag.client.luau` | LocalScript | 12 | 14 | Pending | — | — |
-| `server/Admin/AdminRoles.luau` | ModuleScript | 49 | 114 | Pending | — | — |
-| `server/Admin/OwnerControlServer.server.luau` | Script | 129 | 324 | Pending | — | — |
-| `server/Admin/OwnerGameActions.luau` | ModuleScript | 97 | 220 | Pending | — | — |
-| `server/Admin/OwnerOverheadBanner.server.luau` | Script | 88 | 102 | Pending | — | — |
-| `server/Admin/OwnerPanelServer.server.luau` | Script | 145 | 412 | Pending | — | — |
-| `server/Admin/OwnerShowcase.server.luau` | Script | 66 | 109 | Pending | — | — |
-| `server/Admin/PlayerPunish.luau` | ModuleScript | 84 | 125 | Pending | — | — |
-| `server/Admin/RoleTagServer.server.luau` | Script | 13 | 20 | Pending | — | — |
-| `server/Admin/StaffServerService.luau` | ModuleScript | 185 | 185 | Pending | — | — |
-| `server/Services/CrossServerService.luau` | ModuleScript | 295 | 305 | Pending | — | — |
-| `shared/Admin/OwnerPanel/ActivityLog.luau` | ModuleScript | 1 | 17 | Pending | — | — |
-| `shared/Admin/OwnerPanel/Components.luau` | ModuleScript | 26 | 134 | Pending | — | — |
-| `shared/Admin/OwnerPanel/ConfirmDialog.luau` | ModuleScript | 10 | 36 | Pending | — | — |
-| `shared/Admin/OwnerPanel/PlayerRow.luau` | ModuleScript | 8 | 42 | Pending | — | — |
-| `shared/Admin/OwnerPanel/Theme.luau` | ModuleScript | 1 | 16 | Pending | — | — |
-| `shared/Admin/OwnerPanel/Toast.luau` | ModuleScript | 6 | 37 | Pending | — | — |
+| `client/Admin/AdminTerminal.client.luau` | LocalScript | 244 | 644 | Refactored | SAME | Full service names, WHITE, make/printLine/sendAction/defineCommand/targetOrError etc.; header documents staff probe + server authority; 7 section banners |
+| `client/Admin/OwnerPanelClient.client.luau` | LocalScript | 38 | 85 | Refactored | SAME | Renamed (panelApi, panelGui, buildPanel, input, gameProcessed); header notes PanelRole only hides UI; selene if_same_then_else documented |
+| `client/Admin/StaffAnnouncements.client.luau` | LocalScript | 110 | 400 | Refactored | SAME | Renames, header with Announcement payload contract and queue rules, 4 banners. makeHolder extraction tried then reverted (strcheck constant-folding DIFF) |
+| `client/Admin/VIPChatTag.client.luau` | LocalScript | 12 | 17 | Refactored | SAME | Renamed (properties, textSource, sender); header notes OnIncomingMessage is a single-assignment callback |
+| `server/Admin/AdminRoles.luau` | ModuleScript | 49 | 145 | Refactored | SAME | Renames only (AdminRoles, savedAdmins, adminStore, userId...); header: who is authorized, Role/Can checks, PanelRole attribute, DataStore key, revocation known issue |
+| `server/Admin/OwnerControlServer.server.luau` | Script | 129 | 363 | Refactored | SAME | Renames (OWNER_USER_ID, GOLD_ENTRY, resolveTarget, part/weld...), header documents both entry points, ADMIN_BRIDGE, rate limit; 5 banners; unreachable GiveCash noted |
+| `server/Admin/OwnerGameActions.luau` | ModuleScript | 97 | 246 | Refactored | SAME | Renames (OwnerGameActions, TempleSlotUnlocks, getRootPart, findPlot, targetPlayer, recipient...); header documents who calls Run and its role re-check; 3 banners |
+| `server/Admin/OwnerOverheadBanner.server.luau` | Script | 88 | 108 | Refactored | SAME | Renames (ROLE_BY_USER_ID, ROLE_BY_USERNAME, attachBanner, banner, titleLabel); header; 3 banners |
+| `server/Admin/OwnerPanelServer.server.luau` | Script | 145 | 450 | Refactored | SAME | Renames (player/args, PANEL_TO_DISPATCH_ACTION, NEEDS_CONFIRM, SINGLE_TARGET_ONLY, unused -> _x); header lists the 4-step authorization chain; selene 12->1 |
+| `server/Admin/OwnerShowcase.server.luau` | Script | 66 | 116 | Refactored | SAME | Renames (OWNER_USER_ID, currentStatue, buildStatue, plotSpawn, spawnCFrame...), header, 3 banners, deprecated Instance.new parent arg documented |
+| `server/Admin/PlayerPunish.luau` | ModuleScript | 84 | 154 | Refactored | SAME | Renames (PlayerPunish, playerDataStore, resolvePlayer, formatCash, save, byPlayer...); header: owner-only via OwnerPanelServer, DataStore key/lock contract |
+| `server/Admin/RoleTagServer.server.luau` | Script | 13 | 29 | Refactored | SAME | Renames (AdminRoles, TAG_BY_USER_ID, assignRoleTag, watchPlayer); header says the RoleTag attribute is cosmetic |
+| `server/Admin/StaffServerService.luau` | ModuleScript | 185 | 205 | Refactored | SAME | Loop vars p -> player; header documents storage keys, who is authorized and the client-controlled TeleportData (audit item, not fixed); 5 banners |
+| `server/Services/CrossServerService.luau` | ModuleScript | 295 | 329 | Refactored | SAME | Renames (SERVER_ID, updateCommand, globalCommand, saveAllFunction, _pubErr); header: topic, auth, trusted inputs, soft-shutdown flow; 6 banners |
+| `shared/Admin/OwnerPanel/ActivityLog.luau` | ModuleScript | 1 | 21 | Refactored | SAME | M -> ActivityLog; header (legacy v2 module, not required anywhere) |
+| `shared/Admin/OwnerPanel/Components.luau` | ModuleScript | 26 | 146 | Refactored | SAME | Renames (Components, Theme, TweenService, instance, button, card...), width -> _width; header + short function comments |
+| `shared/Admin/OwnerPanel/ConfirmDialog.luau` | ModuleScript | 10 | 40 | Refactored | SAME | Renames (Components, Theme, ConfirmDialog, descendant); header (client-only confirmation, server re-checks) |
+| `shared/Admin/OwnerPanel/PlayerRow.luau` | ModuleScript | 8 | 46 | Refactored | SAME | Renames (button, rowPlayer, headshot, thumbnailCache...); header |
+| `shared/Admin/OwnerPanel/Theme.luau` | ModuleScript | 1 | 19 | Refactored | SAME | Header only |
+| `shared/Admin/OwnerPanel/Toast.luau` | ModuleScript | 6 | 47 | Refactored | SAME | Renames (toast, label, showToken, myToken, isSuccess...); header incl. identical ternary branches note |
 
 ## Batch 21 — Admin — StudPanel
 
@@ -1642,183 +1642,183 @@ Responsibility, dependencies (`require` targets), public functions, event usage,
 
 ### `client/Admin/AdminTerminal.client.luau`
 
-- **Type:** LocalScript · **Batch:** 20 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 20 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** AdminTerminal (LocalScript): command line for staff (owner + admins from AdminRoles). Open with F2 or the ` key, or type /terminal in chat. Every command goes through ReplicatedStorage.OwnerPanel.Acti
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×4
-- **Readability problems:** 46 dense one-line statements; 24 lines >160 chars; 8 one-letter locals
+- **Readability problems:** Cryptic names (UIS/TS/RS, W, new, win, box, sug, hi, n shadowed by loop n, d/c/t/p reused), staff probe undocumented
 
 ### `client/Admin/OwnerPanelClient.client.luau`
 
-- **Type:** LocalScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** StarterPlayerScripts.OwnerPanelClient (LocalScript)
 - **Dependencies:** StudPanel
 - **Public functions:** —
 - **Events:** Connect×6, OnClientEvent×1, PlayerAdded×1, PlayerRemoving×1
-- **Readability problems:** 9 dense one-line statements; 1 lines >160 chars; 1 one-letter locals
+- **Readability problems:** UIS/RS aliases, api/gui/i/gp/m names; if_same_then_else in Chatted handler
 
 ### `client/Admin/StaffAnnouncements.client.luau`
 
-- **Type:** LocalScript · **Batch:** 20 · **Priority:** Medium · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 20 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Announcement banner (staff announcements, events, /update). Rounded 3D card in the game's clean style: no pill studs. /update countdown ticks update ONE banner in place instead of stacking five.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×1, OnClientEvent×1
-- **Readability problems:** 5 dense one-line statements; 24 lines >160 chars; 4 one-letter locals
+- **Readability problems:** TS/RS/F/mk/th/W/H/eg/sg/av/st/gl/d/c names; payload contract undocumented; holder+UIScale block duplicated in both builders
 
 ### `client/Admin/VIPChatTag.client.luau`
 
-- **Type:** LocalScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** LocalScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Gold [VIP] prefix in chat for players with the VIP attribute (set by ShopService)
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 1 one-letter locals
+- **Readability problems:** props/src/p names
 
 ### `server/Admin/AdminRoles.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** Who can open the panel. Owner = everything. Admin = events, river spawns, announcements, teleports, respawn, kick. Add permanent admins here by User ID, or use the Admins page in the owner panel (save
 - **Dependencies:** —
 - **Public functions:** M.Can, M.List, M.Role, M.SetAdmin
 - **Events:** Connect×1, PlayerAdded×1
-- **Readability problems:** 7 dense one-line statements; 1 lines >160 chars; 4 one-letter locals
+- **Readability problems:** DSS/M/saved/store/r/t/p names; permission model only in a 2-line comment
 
 ### `server/Admin/OwnerControlServer.server.luau`
 
-- **Type:** Script · **Batch:** 20 · **Priority:** Medium · **Status:** Pending
+- **Type:** Script · **Batch:** 20 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** AdminRoles, CharacterCatalog, EggCharacterRewards, OwnerGameActions
 - **Public functions:** —
 - **Events:** Connect×2, OnServerInvoke×1, PlayerRemoving×1
-- **Readability problems:** 19 dense one-line statements; 13 lines >160 chars; 2 one-letter locals
+- **Readability problems:** No header; RS/OWNER/Roles/GoldEntry/target/p/e/w/mut names; two entry points (remote + bindable) undocumented
 
 ### `server/Admin/OwnerGameActions.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** AdminRoles, TempleSlotUnlocks
 - **Public functions:** Actions.Run
 - **Events:** —
-- **Readability problems:** 14 dense one-line statements; 8 lines >160 chars; 5 one-letter locals
+- **Readability problems:** No header; Slots/Actions/root/p/n/t/a/b/i names
 
 ### `server/Admin/OwnerOverheadBanner.server.luau`
 
-- **Type:** Script · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** ServerScriptService.OwnerOverheadBanner Verified account usernames are used, never DisplayName.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×2, PlayerAdded×1
-- **Readability problems:** 5 dense one-line statements
+- **Readability problems:** Minimal header; old/gui/text/joined names
 
 ### `server/Admin/OwnerPanelServer.server.luau`
 
-- **Type:** Script · **Batch:** 20 · **Priority:** Medium · **Status:** Pending
+- **Type:** Script · **Batch:** 20 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** Owner / Admin panel server. Every request is checked here against AdminRoles. Owner: everything. Admin: events, river spawns, announcements, teleports, respawn, kick (not staff).
 - **Dependencies:** AdminRoles, CharacterCatalog, CrossServerService, PlayerPunish, SaveRestore, StaffServerService
 - **Public functions:** —
 - **Events:** Connect×2, OnServerInvoke×1, PlayerRemoving×1
-- **Readability problems:** 37 dense one-line statements; 17 lines >160 chars; 3 one-letter locals
+- **Readability problems:** p/a params everywhere, RS/Roles/mapping/dangerous/single names, unused handler params, if_same_then_else in target resolution
 
 ### `server/Admin/OwnerShowcase.server.luau`
 
-- **Type:** Script · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** OwnerShowcase: a statue of the owner (real avatar) with the KitsBlox aura, ONLY on the owner's own temple.
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** Connect×3
-- **Readability problems:** 8 dense one-line statements; 3 one-letter locals
+- **Readability problems:** OWNER/current/mk/spawn (shadows global)/hum/s/fwd/rel/h/w/anim/ok2/ok3 names
 
 ### `server/Admin/PlayerPunish.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** PlayerPunish (owner only, used by the owner panel "Punish" page): take money from a player or wipe their save + leaderboard. Works for online (this server) and offline players. A player playing in ANO
 - **Dependencies:** LeaderboardService
 - **Public functions:** M.TakeCash, M.Wipe
 - **Events:** —
-- **Readability problems:** 10 dense one-line statements; 3 one-letter locals
+- **Readability problems:** DSS/SSS/M/store/fmt/resolve/d/p/r/n/ls/st/here/all names; no note that it has no own permission check
 
 ### `server/Admin/RoleTagServer.server.luau`
 
-- **Type:** Script · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** Script · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** AdminRoles
 - **Public functions:** —
 - **Events:** Connect×2, PlayerAdded×1
-- **Readability problems:** —
+- **Readability problems:** No header; Roles/ROLES/assign/hook/p names
 
 ### `server/Admin/StaffServerService.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** !strict StaffServerService: Manages reserved server access for Admins and Owner. Cross-server sync via MemoryStoreService ensures all staff join the same reserved instance.
 - **Dependencies:** AdminRoles
 - **Public functions:** StaffServerService.GetOrCreateStaffServerCode, StaffServerService.ReturnToPublic, StaffServerService.TeleportToStaffServer
 - **Events:** Connect×3, PlayerAdded×2
-- **Readability problems:** —
+- **Readability problems:** Header did not document authorization or the TeleportData trust issue
 
 ### `server/Services/CrossServerService.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Medium · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Medium · **Status:** Refactored
 - **Responsibility:** !strict CrossServerService: Handles universe-wide announcements and update notifications using MessagingService.
 - **Dependencies:** AdminRoles
 - **Public functions:** CrossServerService.AnnounceUpdate, CrossServerService.Broadcast, CrossServerService.GlobalAnnounce, CrossServerService.PerformRejoin
 - **Events:** Connect×3, PlayerAdded×4
-- **Readability problems:** 2 dense one-line statements
+- **Readability problems:** serverId/updateCmd/globalCmd/sa/p names, unused pubErr, trust of cross-server messages undocumented
 
 ### `shared/Admin/OwnerPanel/ActivityLog.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** M.Add, M.Clear
 - **Events:** —
-- **Readability problems:** 1 lines >160 chars; 1 one-letter locals
+- **Readability problems:** No header (was a one-liner), M name
 
 ### `shared/Admin/OwnerPanel/Components.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** Theme
 - **Public functions:** C.Border, C.Button, C.Card, C.Disable, C.Format, C.Grid, C.Input, C.Label, C.Make, C.Round, C.Stack
 - **Events:** Connect×3
-- **Readability problems:** 5 dense one-line statements; 9 lines >160 chars; 6 one-letter locals
+- **Readability problems:** No header; C/T/Tween/o/r/str/fn/b/l/f/u/n names; unused width param
 
 ### `shared/Admin/OwnerPanel/ConfirmDialog.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** Components, Theme
 - **Public functions:** M.Show
 - **Events:** —
-- **Readability problems:** 2 dense one-line statements; 1 lines >160 chars; 3 one-letter locals
+- **Readability problems:** No header; C/T/M/o names
 
 ### `shared/Admin/OwnerPanel/PlayerRow.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** Components, Theme
 - **Public functions:** M.New
 - **Events:** —
-- **Readability problems:** 1 dense one-line statements; 1 lines >160 chars; 4 one-letter locals
+- **Readability problems:** No header; C/T/M/b/p/cache names
 
 ### `shared/Admin/OwnerPanel/Theme.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** —
 - **Public functions:** —
 - **Events:** —
-- **Readability problems:** 1 lines >160 chars
+- **Readability problems:** No header (was a one-liner)
 
 ### `shared/Admin/OwnerPanel/Toast.luau`
 
-- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Pending
+- **Type:** ModuleScript · **Batch:** 20 · **Priority:** Low · **Status:** Refactored
 - **Responsibility:** —
 - **Dependencies:** Components, Theme
 - **Public functions:** M.Show
 - **Events:** —
-- **Readability problems:** 2 dense one-line statements; 3 lines >160 chars; 5 one-letter locals
+- **Readability problems:** No header; C/T/Tween/M/f/l/id/ok names
 
 ### `shared/Admin/OwnerPanel/StudPanel.luau`
 

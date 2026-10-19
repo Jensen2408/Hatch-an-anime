@@ -1,42 +1,46 @@
-local C = require(script.Parent.Components)
-local T = require(script.Parent.Theme)
+--[[ ReplicatedStorage.OwnerPanel.PlayerRow  (ModuleScript)
+Legacy v2 panel: one roster button (headshot, "Display · @name", UserId + tags). Headshot URLs are cached per UserId
+for the session.
+]]
+local Components = require(script.Parent.Components)
+local Theme = require(script.Parent.Theme)
 local Players = game:GetService("Players")
-local M = {}
-local cache = {}
-function M.New(parent, p, tags, callback)
-    local b = C.Button(parent, "", callback)
-    b.Size = UDim2.new(1, 0, 0, 74)
-    b.Name = "Player_" .. p.UserId
-    local image = C.Make(
+local PlayerRow = {}
+local thumbnailCache = {}
+function PlayerRow.New(parent, rowPlayer, tags, callback)
+    local button = Components.Button(parent, "", callback)
+    button.Size = UDim2.new(1, 0, 0, 74)
+    button.Name = "Player_" .. rowPlayer.UserId
+    local headshot = Components.Make(
         "ImageLabel",
         { BackgroundTransparency = 1, Size = UDim2.fromOffset(40, 40), Position = UDim2.fromOffset(12, 16) },
-        b
+        button
     )
-    local name = C.Label(b, p.DisplayName .. " · @" .. p.Name, 14)
-    name.Position = UDim2.fromOffset(64, 7)
-    name.Size = UDim2.new(1, -76, 0, 28)
-    local detail = C.Label(b, tostring(p.UserId) .. "   " .. tags, 12, T.Muted)
-    detail.Position = UDim2.fromOffset(64, 37)
-    detail.Size = UDim2.new(1, -76, 0, 28)
-    if cache[p.UserId] then
-        image.Image = cache[p.UserId]
+    local nameLabel = Components.Label(button, rowPlayer.DisplayName .. " · @" .. rowPlayer.Name, 14)
+    nameLabel.Position = UDim2.fromOffset(64, 7)
+    nameLabel.Size = UDim2.new(1, -76, 0, 28)
+    local detailLabel = Components.Label(button, tostring(rowPlayer.UserId) .. "   " .. tags, 12, Theme.Muted)
+    detailLabel.Position = UDim2.fromOffset(64, 37)
+    detailLabel.Size = UDim2.new(1, -76, 0, 28)
+    if thumbnailCache[rowPlayer.UserId] then
+        headshot.Image = thumbnailCache[rowPlayer.UserId]
     else
         task.spawn(function()
             local ok, url = pcall(
                 Players.GetUserThumbnailAsync,
                 Players,
-                p.UserId,
+                rowPlayer.UserId,
                 Enum.ThumbnailType.HeadShot,
                 Enum.ThumbnailSize.Size100x100
             )
             if ok then
-                cache[p.UserId] = url
-                if image.Parent then
-                    image.Image = url
+                thumbnailCache[rowPlayer.UserId] = url
+                if headshot.Parent then
+                    headshot.Image = url
                 end
             end
         end)
     end
-    return b
+    return button
 end
-return M
+return PlayerRow

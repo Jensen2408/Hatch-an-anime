@@ -1,12 +1,31 @@
+--[[ ServerScriptService.OwnerControlServer  (Script)
+Owner game-control dispatcher (gifts, river eggs, live events, moderation, plus everything in OwnerGameActions).
+
+Entry points
+  ReplicatedStorage.OwnerControl (RemoteFunction, legacy owner UI): OnServerInvoke(player, action, payload) ->
+      { Ok = boolean, Message = string, ... }. Only OWNER_USER_ID gets past the first check.
+  script.Dispatch (BindableFunction, server only): OnInvoke(player, action, payload). Used by OwnerPanelServer, which
+      has already checked AdminRoles.Can for the panel action and maps it to the dispatch action name.
+  TextChatCommand "OpenOwnerPanel" (/owner): fires ReplicatedStorage.OwnerPanelOpen to the owner.
+
+Who is authorized (checked in dispatch): OWNER_USER_ID for every action; an AdminRoles "Admin" only for the dispatch
+actions listed in ADMIN_BRIDGE. OwnerGameActions.Run re-checks AdminRoles.Role ~= nil.
+Trusted input: action must be a string and payload a table (or nil); every payload field is validated per action
+(asserts). Per-player rate limit: one request at a time and >= 0.2 s apart. Errors become { Ok = false, Message }.
+Kick / Ban24h / Unban refuse the owner account; bans use Players:BanAsync (universe-wide, 24 h).
+Owner UserId is hard-coded here (also in AdminRoles, OwnerShowcase, OwnerOverheadBanner...).
+]]
+-- ===== 1. Services and dependencies =====
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
-local OWNER = 168774222
-local Catalog = require(RS:WaitForChild("CharacterCatalog"))
-local Rewards = require(script.Parent:WaitForChild("EggCharacterRewards"))
-local GameActions = require(script.Parent:WaitForChild("OwnerGameActions"))
-local Roles = require(script.Parent:WaitForChild("AdminRoles"))
+local OWNER_USER_ID = 168774222
+local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
+local EggCharacterRewards = require(script.Parent:WaitForChild("EggCharacterRewards"))
+local OwnerGameActions = require(script.Parent:WaitForChild("OwnerGameActions"))
+local AdminRoles = require(script.Parent:WaitForChild("AdminRoles"))
+-- Dispatch actions an Admin may run through the Dispatch bindable (everything else is owner-only).
 local ADMIN_BRIDGE = {
     Info = true,
     SpawnRiverEgg = true,
@@ -19,17 +38,24 @@ local ADMIN_BRIDGE = {
     SendToPlayer = true,
     Respawn = true,
 }
-local remote = RS:WaitForChild("OwnerControl")
-local last = {}
+
+-- ===== 2. State =====
+local ownerControlRemote = ReplicatedStorage:WaitForChild("OwnerControl")
+-- lastRequestAt / busy: per-player rate limit. activeEvent: the one running live event in this server.
+local lastRequestAt = {}
 local busy = {}
 local activeEvent = nil
-local GoldEntry = { Id = "Pirate", Name = "Golden Pirate", Rarity = "Legendary", Price = 0, OwnerGold = true }
+-- Owner-only gift entry (Golden Pirate). Its templates live in ServerStorage.FutureUpdateContent.<kind>.
+local GOLD_ENTRY = { Id = "Pirate", Name = "Golden Pirate", Rarity = "Legendary", Price = 0, OwnerGold = true }
+
+-- ===== 3. Helpers =====
 local function goldTemplate(kind)
     local future = game.ServerStorage:FindFirstChild("FutureUpdateContent")
     local folder = future and future:FindFirstChild(kind)
     return folder and folder:FindFirstChild("Golden Pirate")
 end
-local function target(raw)
+-- Username or UserId -> userId, player-in-this-server (player is nil when offline). nil for invalid input.
+local function resolveTarget(raw)
     if type(raw) ~= "string" or #raw > 50 then
         return nil
     end
@@ -40,9 +66,9 @@ local function target(raw)
         end
         return id, Players:GetPlayerByUserId(id)
     end
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Name:lower() == raw:lower() then
-            return p.UserId, p
+    for _, onlinePlayer in ipairs(Players:GetPlayers()) do
+        if onlinePlayer.Name:lower() == raw:lower() then
+            return onlinePlayer.UserId, onlinePlayer
         end
     end
     local ok, result = pcall(Players.GetUserIdFromNameAsync, Players, raw)
@@ -50,6 +76,7 @@ local function target(raw)
         return result, Players:GetPlayerByUserId(result)
     end
 end
+-- Restores whatever the active event changed and clears the replicated event attributes.
 local function stopEvent()
     if not activeEvent then
         return
@@ -66,17 +93,19 @@ local function stopEvent()
     workspace:SetAttribute("OwnerEventName", nil)
     workspace:SetAttribute("OwnerEventEnds", nil)
 end
+
+-- ===== 4. Dispatcher (permission check, validation, rate limit, actions) =====
 local dispatch = function(player, action, payload)
-    if player.UserId ~= OWNER and not (Roles.Role(player) == "Admin" and ADMIN_BRIDGE[action]) then
+    if player.UserId ~= OWNER_USER_ID and not (AdminRoles.Role(player) == "Admin" and ADMIN_BRIDGE[action]) then
         return { Ok = false, Message = "Owner access only." }
     end
     if type(action) ~= "string" or (payload ~= nil and type(payload) ~= "table") then
         return { Ok = false, Message = "Invalid request." }
     end
-    if busy[player] or os.clock() - (last[player] or -100) < 0.2 then
+    if busy[player] or os.clock() - (lastRequestAt[player] or -100) < 0.2 then
         return { Ok = false, Message = "Please wait a moment." }
     end
-    last[player] = os.clock()
+    lastRequestAt[player] = os.clock()
     busy[player] = true
     payload = payload or {}
     if type(payload.Target) == "string" then
@@ -86,19 +115,21 @@ local dispatch = function(player, action, payload)
         end
     end
     local ok, result = pcall(function()
-        if GameActions.Handles[action] then
-            return GameActions.Run(player, action, payload)
+        -- Plot / cash / teleport actions live in OwnerGameActions (it re-checks the role).
+        if OwnerGameActions.Handles[action] then
+            return OwnerGameActions.Run(player, action, payload)
+        -- Catalog + roster snapshot for the panel.
         elseif action == "Info" then
             local items = {}
-            for _, e in ipairs(Catalog.Order) do
+            for _, catalogEntry in ipairs(Catalog.Order) do
                 table.insert(items, {
-                    Id = e.Id,
-                    Name = e.Name,
-                    Rarity = e.Rarity,
-                    Price = e.Price,
-                    CharacterAvailable = game.ServerStorage.BrainrotModels:FindFirstChild(e.Id) ~= nil,
+                    Id = catalogEntry.Id,
+                    Name = catalogEntry.Name,
+                    Rarity = catalogEntry.Rarity,
+                    Price = catalogEntry.Price,
+                    CharacterAvailable = game.ServerStorage.BrainrotModels:FindFirstChild(catalogEntry.Id) ~= nil,
                     Reserved = false,
-                    EggAvailable = game.ServerStorage.AuxEggTemplates:FindFirstChild(e.Id) ~= nil,
+                    EggAvailable = game.ServerStorage.AuxEggTemplates:FindFirstChild(catalogEntry.Id) ~= nil,
                 })
             end
             table.insert(items, {
@@ -112,33 +143,37 @@ local dispatch = function(player, action, payload)
                 NoRiver = true,
             })
             local roster = {}
-            for _, p in ipairs(Players:GetPlayers()) do
-                table.insert(roster, { Id = p.UserId, Name = p.Name, Display = p.DisplayName })
+            for _, rosterPlayer in ipairs(Players:GetPlayers()) do
+                table.insert(
+                    roster,
+                    { Id = rosterPlayer.UserId, Name = rosterPlayer.Name, Display = rosterPlayer.DisplayName }
+                )
             end
             return { Ok = true, Items = items, Players = roster, Event = activeEvent and activeEvent.Kind or "None" }
         elseif action == "SpawnRiverEgg" then
             assert(payload.Id ~= "Golden Pirate", "Golden items are owner gifts only; river spawning is disabled.")
             local entry = type(payload.Id) == "string" and Catalog.ById[payload.Id]
             assert(entry, "Choose an egg.")
-            local isMut = ({ Silver = 1, Gold = 1, Diamond = 1, Rainbow = 1 })[payload.Mutation]
+            local isMutation = ({ Silver = 1, Gold = 1, Diamond = 1, Rainbow = 1 })[payload.Mutation]
             local template = game.ServerStorage.AuxEggTemplates:FindFirstChild(entry.Id)
-            assert(isMut or (template and template:GetAttribute("ReleaseEnabled") ~= false), "Egg unavailable.")
+            assert(isMutation or (template and template:GetAttribute("ReleaseEnabled") ~= false), "Egg unavailable.")
             local request = workspace.PirateEggConveyor:FindFirstChild("RequestOwnerRiverEgg")
             assert(request, "River is not ready.")
-            local mut = ({ Silver = 1, Gold = 1, Diamond = 1, Rainbow = 1 })[payload.Mutation] and payload.Mutation
+            local mutation = ({ Silver = 1, Gold = 1, Diamond = 1, Rainbow = 1 })[payload.Mutation] and payload.Mutation
                 or nil
-            request:Fire(player, entry.Id, mut)
+            request:Fire(player, entry.Id, mutation)
             return {
                 Ok = true,
-                Message = mut and (mut .. " " .. entry.Id .. " egg queued: it's the next egg down the river.")
+                Message = mutation
+                        and (mutation .. " " .. entry.Id .. " egg queued: it's the next egg down the river.")
                     or (entry.Id .. " egg spawned at the waterfall."),
             }
         elseif action == "SpawnEgg" or action == "SpawnCharacter" then
-            local entry = payload.Id == "Golden Pirate" and GoldEntry
+            local entry = payload.Id == "Golden Pirate" and GOLD_ENTRY
                 or (type(payload.Id) == "string" and Catalog.ById[payload.Id])
             assert(entry, "Choose an egg or character.")
             local recipients = payload.Target == "ALL" and Players:GetPlayers()
-                or { GameActions.GetPlayer(player, payload.Target) }
+                or { OwnerGameActions.GetPlayer(player, payload.Target) }
             if payload.Target == "ALL" then
                 assert(payload.Confirmed == true, "Confirm gifting to the whole lobby.")
             end
@@ -152,7 +187,7 @@ local dispatch = function(player, action, payload)
                     local template = entry.OwnerGold and goldTemplate("Characters")
                         or game.ServerStorage.BrainrotModels:FindFirstChild(entry.Id)
                     assert(template, "Character unavailable.")
-                    local gift = Rewards.Tool(template, entry.Id)
+                    local gift = EggCharacterRewards.Tool(template, entry.Id)
                     if entry.OwnerGold then
                         gift:SetAttribute("GoldVariant", true)
                         gift:SetAttribute("Golden", true)
@@ -193,24 +228,25 @@ local dispatch = function(player, action, payload)
                     handle.CanCollide = false
                     handle.Massless = true
                     handle.Parent = tool
-                    for _, p in ipairs(visual:GetDescendants()) do
-                        if p:IsA("BasePart") then
-                            p.Anchored = false
-                            p.CanCollide = false
-                            p.CanTouch = false
-                            p.Massless = true
-                            local w = Instance.new("WeldConstraint")
-                            w.Part0 = handle
-                            w.Part1 = p
-                            w.Parent = handle
-                        elseif p:IsA("BaseScript") then
-                            p:Destroy()
+                    for _, part in ipairs(visual:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.Anchored = false
+                            part.CanCollide = false
+                            part.CanTouch = false
+                            part.Massless = true
+                            local weld = Instance.new("WeldConstraint")
+                            weld.Part0 = handle
+                            weld.Part1 = part
+                            weld.Parent = handle
+                        elseif part:IsA("BaseScript") then
+                            part:Destroy()
                         end
                     end
                     tool.Parent = bag
                 end
             end
             return { Ok = true, Message = entry.Name .. " given to " .. #recipients .. " player(s)." }
+        -- Unreachable: OwnerGameActions.Handles.GiveCash is checked first (kept as-is).
         elseif action == "GiveCash" then
             local amount = tonumber(payload.Amount)
             assert(
@@ -254,14 +290,15 @@ local dispatch = function(player, action, payload)
         elseif action == "StopEvent" then
             stopEvent()
             return { Ok = true, Message = "Event stopped; original settings restored." }
+        -- Moderation. Note: dispatch-level Kick is owner-only; admin kicks are handled in OwnerPanelServer.
         elseif action == "Kick" or action == "Ban24h" or action == "Unban" then
             assert(payload.Confirmed == true, "Confirm this moderation action first.")
-            local id, p = target(payload.Target)
-            assert(id, "Enter an exact username or numeric User ID.")
-            assert(id ~= OWNER, "Your owner account is protected.")
+            local targetId, targetPlayer = resolveTarget(payload.Target)
+            assert(targetId, "Enter an exact username or numeric User ID.")
+            assert(targetId ~= OWNER_USER_ID, "Your owner account is protected.")
             if action == "Kick" then
-                assert(p, "That player is not in this server.")
-                p:Kick("Removed by the game owner.")
+                assert(targetPlayer, "That player is not in this server.")
+                targetPlayer:Kick("Removed by the game owner.")
             else
                 assert(
                     not RunService:IsStudio(),
@@ -269,7 +306,7 @@ local dispatch = function(player, action, payload)
                 )
                 if action == "Ban24h" then
                     Players:BanAsync({
-                        UserIds = { id },
+                        UserIds = { targetId },
                         Duration = 86400,
                         ApplyToUniverse = true,
                         DisplayReason = "Temporarily banned by the game owner.",
@@ -278,10 +315,10 @@ local dispatch = function(player, action, payload)
                         ApplyDeviceBlock = false,
                     })
                 else
-                    Players:UnbanAsync({ UserIds = { id }, ApplyToUniverse = true })
+                    Players:UnbanAsync({ UserIds = { targetId }, ApplyToUniverse = true })
                 end
             end
-            return { Ok = true, Message = action .. " completed for User ID " .. id .. "." }
+            return { Ok = true, Message = action .. " completed for User ID " .. targetId .. "." }
         end
         return { Ok = false, Message = "Unknown action." }
     end)
@@ -291,26 +328,28 @@ local dispatch = function(player, action, payload)
     end
     return result
 end
-remote.OnServerInvoke = function(player, ...)
-    if player.UserId ~= OWNER then
+
+-- ===== 5. Entry points =====
+ownerControlRemote.OnServerInvoke = function(player, ...)
+    if player.UserId ~= OWNER_USER_ID then
         return { Ok = false, Message = "Owner access only." }
     end
     return dispatch(player, ...)
 end
-Players.PlayerRemoving:Connect(function(p)
-    last[p] = nil
-    busy[p] = nil
+Players.PlayerRemoving:Connect(function(leavingPlayer)
+    lastRequestAt[leavingPlayer] = nil
+    busy[leavingPlayer] = nil
 end)
-local chat = game:GetService("TextChatService")
-local command = chat:FindFirstChild("OpenOwnerPanel") or Instance.new("TextChatCommand")
+local TextChatService = game:GetService("TextChatService")
+local command = TextChatService:FindFirstChild("OpenOwnerPanel") or Instance.new("TextChatCommand")
 command.Name = "OpenOwnerPanel"
 command.PrimaryAlias = "/owner"
-command.Parent = chat
+command.Parent = TextChatService
 command.Triggered:Connect(function(source)
-    if source and source.UserId == OWNER then
-        local p = Players:GetPlayerByUserId(OWNER)
-        if p then
-            RS.OwnerPanelOpen:FireClient(p)
+    if source and source.UserId == OWNER_USER_ID then
+        local ownerPlayer = Players:GetPlayerByUserId(OWNER_USER_ID)
+        if ownerPlayer then
+            ReplicatedStorage.OwnerPanelOpen:FireClient(ownerPlayer)
         end
     end
 end)

@@ -1,85 +1,94 @@
--- AdminTerminal (LocalScript): command line for staff (owner + admins from AdminRoles).
--- Open with F2 or the ` key, or type /terminal in chat. Every command goes through ReplicatedStorage.OwnerPanel.Action,
--- so the server checks permissions exactly like the owner panel (admins can't use owner-only commands).
+--[[ StarterPlayerScripts.AdminTerminal  (LocalScript)
+Command line for staff (owner + admins from AdminRoles).
+Open with F2 or the ` key, or type /terminal in chat. Every command goes through ReplicatedStorage.OwnerPanel.Action,
+so the server checks permissions exactly like the owner panel (admins can't use owner-only commands).
+
+Staff detection: at start-up the script invokes Action("Announce", { text = "" }). Staff get a validation error
+("Write a message first."), everyone else "Staff access only.", in which case the script returns before building
+any UI. This only hides the UI; the server checks every command. (The probe also counts against the 0.2 s rate limit.)
+Commands accept the prefixes ; : / ! or none. who = @name / me / all. Tab completes, Up / Down walk the history.
+]]
+-- ===== 1. Services, remote and staff probe =====
 local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
-local TS = game:GetService("TweenService")
-local RS = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextChatService = game:GetService("TextChatService")
 local player = Players.LocalPlayer
-local Action = RS:WaitForChild("OwnerPanel"):WaitForChild("Action")
+local actionRemote = ReplicatedStorage:WaitForChild("OwnerPanel"):WaitForChild("Action")
 
 -- staff check: an empty announcement is refused with "Write a message first." only for staff
 local isStaff = false
 do
-    local ok, _, msg = pcall(function()
-        return Action:InvokeServer("Announce", { text = "" })
+    local ok, _, message = pcall(function()
+        return actionRemote:InvokeServer("Announce", { text = "" })
     end)
-    isStaff = ok and msg ~= nil and not tostring(msg):find("Staff access only")
+    isStaff = ok and message ~= nil and not tostring(message):find("Staff access only")
 end
 if not isStaff then
     return
 end
 
+-- ===== 2. Style and window =====
 local MONO = Font.new("rbxasset://fonts/families/RobotoMono.json")
 local BOLD = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Bold)
-local GREEN, DIM, RED, GOLD, CYAN, W =
+local GREEN, DIM, RED, GOLD, CYAN, WHITE =
     Color3.fromRGB(120, 255, 140),
     Color3.fromRGB(150, 160, 190),
     Color3.fromRGB(255, 110, 110),
     Color3.fromRGB(255, 214, 90),
     Color3.fromRGB(110, 210, 255),
     Color3.new(1, 1, 1)
-local function new(c, p, parent)
-    local o = Instance.new(c)
-    for k, v in p do
-        o[k] = v
+local function make(className, props, parent)
+    local o = Instance.new(className)
+    for key, value in props do
+        o[key] = value
     end
     o.Parent = parent
     return o
 end
 
-local gui = new("ScreenGui", {
+local gui = make("ScreenGui", {
     Name = "AdminTerminal",
     ResetOnSpawn = false,
     DisplayOrder = 200,
     Enabled = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 }, player:WaitForChild("PlayerGui"))
-local win = new("Frame", {
+local window = make("Frame", {
     AnchorPoint = Vector2.new(0.5, 0),
     Position = UDim2.new(0.5, 0, 0, 70),
     Size = UDim2.fromOffset(720, 400),
     BackgroundColor3 = Color3.fromRGB(10, 12, 20),
     BackgroundTransparency = 0.06,
 }, gui)
-new("UICorner", { CornerRadius = UDim.new(0, 12) }, win)
-local edge = new("UIStroke", { Color = W, Thickness = 2 }, win)
-new("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(120, 255, 140), Color3.fromRGB(110, 210, 255)) }, edge)
-new("UIScale", { Scale = math.clamp(workspace.CurrentCamera.ViewportSize.X / 800, 0.55, 1) }, win)
-local bar = new(
+make("UICorner", { CornerRadius = UDim.new(0, 12) }, window)
+local edge = make("UIStroke", { Color = WHITE, Thickness = 2 }, window)
+make("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(120, 255, 140), Color3.fromRGB(110, 210, 255)) }, edge)
+make("UIScale", { Scale = math.clamp(workspace.CurrentCamera.ViewportSize.X / 800, 0.55, 1) }, window)
+local titleBar = make(
     "Frame",
     { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Color3.fromRGB(22, 26, 40), BorderSizePixel = 0 },
-    win
+    window
 )
-new("UICorner", { CornerRadius = UDim.new(0, 12) }, bar)
-for i, c in { Color3.fromRGB(255, 95, 86), Color3.fromRGB(255, 189, 46), Color3.fromRGB(39, 201, 63) } do
-    local d = new(
-        "Frame",
-        { Position = UDim2.fromOffset(12 + (i - 1) * 20, 11), Size = UDim2.fromOffset(12, 12), BackgroundColor3 = c },
-        bar
-    )
-    new("UICorner", { CornerRadius = UDim.new(1, 0) }, d)
+make("UICorner", { CornerRadius = UDim.new(0, 12) }, titleBar)
+for i, dotColor in { Color3.fromRGB(255, 95, 86), Color3.fromRGB(255, 189, 46), Color3.fromRGB(39, 201, 63) } do
+    local dot = make("Frame", {
+        Position = UDim2.fromOffset(12 + (i - 1) * 20, 11),
+        Size = UDim2.fromOffset(12, 12),
+        BackgroundColor3 = dotColor,
+    }, titleBar)
+    make("UICorner", { CornerRadius = UDim.new(1, 0) }, dot)
 end
-new("TextLabel", {
+make("TextLabel", {
     BackgroundTransparency = 1,
     Size = UDim2.fromScale(1, 1),
     Text = "velm@hatch-an-anime: ~  (F2 to close · /help)",
     FontFace = BOLD,
     TextSize = 14,
     TextColor3 = DIM,
-}, bar)
-local log = new("ScrollingFrame", {
+}, titleBar)
+local logFrame = make("ScrollingFrame", {
     Position = UDim2.fromOffset(12, 42),
     Size = UDim2.new(1, -24, 1, -92),
     BackgroundTransparency = 1,
@@ -88,16 +97,16 @@ local log = new("ScrollingFrame", {
     ScrollBarImageColor3 = DIM,
     CanvasSize = UDim2.new(),
     AutomaticCanvasSize = Enum.AutomaticSize.Y,
-}, win)
-new("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, log)
-local inputBg = new("Frame", {
+}, window)
+make("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, logFrame)
+local inputBg = make("Frame", {
     AnchorPoint = Vector2.new(0, 1),
     Position = UDim2.new(0, 12, 1, -12),
     Size = UDim2.new(1, -24, 0, 34),
     BackgroundColor3 = Color3.fromRGB(20, 24, 36),
-}, win)
-new("UICorner", { CornerRadius = UDim.new(0, 8) }, inputBg)
-new("TextLabel", {
+}, window)
+make("UICorner", { CornerRadius = UDim.new(0, 8) }, inputBg)
+make("TextLabel", {
     BackgroundTransparency = 1,
     Position = UDim2.fromOffset(10, 0),
     Size = UDim2.new(0, 20, 1, 0),
@@ -106,7 +115,7 @@ new("TextLabel", {
     TextSize = 18,
     TextColor3 = GREEN,
 }, inputBg)
-local box = new("TextBox", {
+local inputBox = make("TextBox", {
     BackgroundTransparency = 1,
     Position = UDim2.fromOffset(32, 0),
     Size = UDim2.new(1, -40, 1, 0),
@@ -115,32 +124,34 @@ local box = new("TextBox", {
     PlaceholderColor3 = Color3.fromRGB(90, 100, 125),
     FontFace = MONO,
     TextSize = 16,
-    TextColor3 = W,
+    TextColor3 = WHITE,
     TextXAlignment = Enum.TextXAlignment.Left,
     ClearTextOnFocus = false,
 }, inputBg)
 
-local n = 0
-local function out(text, color)
-    n += 1
-    new("TextLabel", {
-        LayoutOrder = n,
+-- ===== 3. Output and targeting helpers =====
+local logLineCount = 0
+local function printLine(text, color)
+    logLineCount += 1
+    make("TextLabel", {
+        LayoutOrder = logLineCount,
         BackgroundTransparency = 1,
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
         Text = text,
         FontFace = MONO,
         TextSize = 15,
-        TextColor3 = color or W,
+        TextColor3 = color or WHITE,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextWrapped = true,
-    }, log)
+    }, logFrame)
     task.defer(function()
-        log.CanvasPosition = Vector2.new(0, 1e6)
+        logFrame.CanvasPosition = Vector2.new(0, 1e6)
     end)
 end
 
 -- helpers
+-- Exact username / display name first, then a username prefix. "me" is the local player.
 local function findPlayer(name)
     if not name or name == "" then
         return nil
@@ -149,293 +160,314 @@ local function findPlayer(name)
     if name == "me" then
         return player
     end
-    for _, p in Players:GetPlayers() do
-        if p.Name:lower() == name or p.DisplayName:lower() == name then
-            return p
+    for _, candidate in Players:GetPlayers() do
+        if candidate.Name:lower() == name or candidate.DisplayName:lower() == name then
+            return candidate
         end
     end
-    for _, p in Players:GetPlayers() do
-        if p.Name:lower():sub(1, #name) == name then
-            return p
+    for _, candidate in Players:GetPlayers() do
+        if candidate.Name:lower():sub(1, #name) == name then
+            return candidate
         end
     end
     return nil
 end
-local function target(name)
+-- who -> panel targeting args ({ scope = "me" } / lobby / { userId }) or nil + error text.
+local function buildTarget(name)
     if not name then
         return nil, "Say who: a username, me or all."
     end
-    local l = name:lower()
-    if l == "me" then
+    local lowered = name:lower()
+    if lowered == "me" then
         return { scope = "me" }
     end
-    if l == "all" or l == "lobby" then
+    if lowered == "all" or lowered == "lobby" then
         return { scope = "lobby", confirmed = true }
     end
-    local p = findPlayer(name)
-    if not p then
+    local found = findPlayer(name)
+    if not found then
         return nil, "No player called '" .. name .. "' in this server."
     end
-    return { userId = p.UserId }
+    return { userId = found.UserId }
 end
-local function send(action, a)
-    local ok, res, msg = pcall(function()
-        return Action:InvokeServer(action, a)
+-- Invokes OwnerPanel.Action and prints the server's (ok, message) reply.
+local function sendAction(action, args)
+    local ok, success, message = pcall(function()
+        return actionRemote:InvokeServer(action, args)
     end)
     if not ok then
-        out("✖ " .. tostring(res), RED)
+        printLine("✖ " .. tostring(success), RED)
         return
     end
-    out((res and "✔ " or "✖ ") .. tostring(msg or (res and "Done." or "Failed.")), res and GREEN or RED)
+    printLine(
+        (success and "✔ " or "✖ ") .. tostring(message or (success and "Done." or "Failed.")),
+        success and GREEN or RED
+    )
 end
 local EVENTS =
     { rush = "rush", eggrush = "rush", cash = "cash", doublecash = "cash", gold = "gold", goldenhour = "gold" }
-local function merge(t, extra)
-    t = table.clone(t)
-    for k, v in extra do
-        t[k] = v
+-- Shallow copy of base with extra's fields on top.
+local function withFields(base, extra)
+    base = table.clone(base)
+    for key, value in extra do
+        base[key] = value
     end
-    return t
+    return base
 end
 
--- ===== commands (prefix ; : / ! or none) =====
+-- ===== 4. Command table =====
+-- Commands (prefix ; : / ! or none). Each callback gets (args, rest) where rest is the raw text after the name.
 local SocialService = game:GetService("SocialService")
-local CMDS, ORDER = {}, {}
-local function cmd(names, usage, desc, fn)
+local COMMANDS, COMMAND_ORDER = {}, {}
+local function defineCommand(names, usage, desc, fn)
     local def = { names = names, usage = usage, desc = desc, fn = fn }
-    for _, n in names do
-        CMDS[n] = def
+    for _, alias in names do
+        COMMANDS[alias] = def
     end
-    table.insert(ORDER, def)
+    table.insert(COMMAND_ORDER, def)
 end
-local function need(t, err)
-    if not t then
-        out("✖ " .. err, RED)
+-- Prints err when value is missing; returns value.
+local function need(value, err)
+    if not value then
+        printLine("✖ " .. err, RED)
     end
-    return t
+    return value
 end
-local function who(name)
-    local t, err = target(name)
-    if not t then
-        out("✖ " .. err, RED)
+local function targetOrError(name)
+    local targetArgs, err = buildTarget(name)
+    if not targetArgs then
+        printLine("✖ " .. err, RED)
     end
-    return t
+    return targetArgs
 end
 local GIVE_TYPES =
     { cash = "cash", money = "cash", egg = "egg", eggs = "egg", char = "char", character = "char", pet = "char" }
-local function give(kind, whoName, a3, a4)
-    local t = who(whoName)
-    if not t then
+local function give(kind, whoName, value, mutation)
+    local targetArgs = targetOrError(whoName)
+    if not targetArgs then
         return
     end
     if kind == "cash" then
-        local amt = need(tonumber(a3), "Amount needed: ;cash <who> <amount>")
-        if amt then
-            send("GiveCash", merge(t, { amount = amt, confirmed = true }))
+        local amount = need(tonumber(value), "Amount needed: ;cash <who> <amount>")
+        if amount then
+            sendAction("GiveCash", withFields(targetArgs, { amount = amount, confirmed = true }))
         end
     elseif kind == "egg" then
-        if need(a3, "Egg needed: ;egg <who> <EggId> [mutation]") then
-            send("GiveEgg", merge(t, { itemId = a3, mutation = a4, confirmed = true }))
+        if need(value, "Egg needed: ;egg <who> <EggId> [mutation]") then
+            sendAction("GiveEgg", withFields(targetArgs, { itemId = value, mutation = mutation, confirmed = true }))
         end
     else
-        if need(a3, "Character needed: ;char <who> <Id> [mutation]") then
-            send("GiveCharacter", merge(t, { itemId = a3, mutation = a4, confirmed = true }))
+        if need(value, "Character needed: ;char <who> <Id> [mutation]") then
+            sendAction(
+                "GiveCharacter",
+                withFields(targetArgs, { itemId = value, mutation = mutation, confirmed = true })
+            )
         end
     end
 end
 
-cmd({ "help", "cmds", "commands", "?" }, "/help [command]", "list commands", function(a)
-    local d = a[1] and CMDS[a[1]:lower()]
-    if d then
-        out("  " .. d.usage .. "   — " .. d.desc, GOLD)
-        out("  aliases: " .. table.concat(d.names, ", "), DIM)
+defineCommand({ "help", "cmds", "commands", "?" }, "/help [command]", "list commands", function(args)
+    local definition = args[1] and COMMANDS[args[1]:lower()]
+    if definition then
+        printLine("  " .. definition.usage .. "   — " .. definition.desc, GOLD)
+        printLine("  aliases: " .. table.concat(definition.names, ", "), DIM)
         return
     end
-    for _, c in ORDER do
-        out(string.format("  %-40s %s", c.usage, c.desc), DIM)
+    for _, command in COMMAND_ORDER do
+        printLine(string.format("  %-40s %s", command.usage, command.desc), DIM)
     end
-    out("  who = @name · me · all      Tab completes names      ↑/↓ history", CYAN)
+    printLine("  who = @name · me · all      Tab completes names      ↑/↓ history", CYAN)
 end)
-cmd({ "players", "plrs", "list" }, "/players", "everyone in this server", function()
-    for _, p in Players:GetPlayers() do
-        out(string.format("  @%-20s %-18s %d", p.Name, p.DisplayName, p.UserId), W)
-    end
-end)
-cmd({ "invite", "inv" }, "/invite [username]", "invite a friend (or get the game link for anyone)", function(a)
-    local name = a[1] and a[1]:gsub("^@", "")
-    if not name then
-        local ok, can = pcall(SocialService.CanSendGameInviteAsync, SocialService, player)
-        if ok and can then
-            SocialService:PromptGameInvite(player)
-            out("✔ Invite window opened.", GREEN)
-        else
-            out("✖ Invites aren't available here (works in the live game).", RED)
-        end
-        return
-    end
-    local okId, id = pcall(Players.GetUserIdFromNameAsync, Players, name)
-    if not okId or not id then
-        out("✖ No Roblox user called '" .. name .. "'.", RED)
-        return
-    end
-    local okF, friends = pcall(player.IsFriendsWith, player, id)
-    if okF and friends then
-        local opts = Instance.new("ExperienceInviteOptions")
-        opts.InviteUser = id
-        opts.PromptMessage = "Join me in Hatch an Anime!"
-        local ok, can = pcall(SocialService.CanSendGameInviteAsync, SocialService, player, id)
-        if ok and can then
-            SocialService:PromptGameInvite(player, opts)
-            out("✔ Invite sent to @" .. name .. " — they get a Roblox notification.", GREEN)
-        else
-            out("✖ Roblox won't let you invite @" .. name .. " right now (their settings, or Studio).", RED)
-        end
-    else
-        out("✖ @" .. name .. " isn't on your friends list — Roblox only allows game invites to friends.", RED)
-        out("  Send them this link instead (they'll join a public server):", DIM)
-        out("  https://www.roblox.com/games/" .. game.PlaceId, GOLD)
-        out("  Or friend them first, then /invite " .. name .. " again.", DIM)
+defineCommand({ "players", "plrs", "list" }, "/players", "everyone in this server", function()
+    for _, other in Players:GetPlayers() do
+        printLine(string.format("  @%-20s %-18s %d", other.Name, other.DisplayName, other.UserId), WHITE)
     end
 end)
-cmd({ "link" }, "/link", "the game link to send to anyone", function()
-    out("  https://www.roblox.com/games/" .. game.PlaceId, GOLD)
-end)
-cmd({ "give" }, "/give <who> <cash|egg|char> <amount|Id> [mutation]", "give anything", function(a)
-    local k1, k2 = GIVE_TYPES[(a[1] or ""):lower()], GIVE_TYPES[(a[2] or ""):lower()]
-    if k1 then
-        give(k1, a[2], a[3], a[4])
-    elseif k2 then
-        give(k2, a[1], a[3], a[4])
-    else
-        out("✖ ;give <who> <cash|egg|char> ...", RED)
-    end
-end)
-cmd({ "cash", "money" }, "/cash <who> <amount>", "give cash", function(a)
-    give("cash", a[1], a[2])
-end)
-cmd({ "setcash" }, "/setcash <who> <amount>", "set a player's cash exactly", function(a)
-    local t = who(a[1])
-    local amt = tonumber(a[2])
-    if t and need(amt, "/setcash <who> <amount>") then
-        send("SetCash", merge(t, { amount = amt, confirmed = true }))
-    end
-end)
-cmd({ "egg" }, "/egg <who> <EggId> [mutation]", "give an egg (e.g. ;egg me Pirate Gold)", function(a)
-    give("egg", a[1], a[2], a[3])
-end)
-cmd({ "char", "character" }, "/char <who> <Id> [mutation]", "give a character", function(a)
-    give("char", a[1], a[2], a[3])
-end)
-cmd({ "riveregg", "spawn", "drop" }, "/riveregg <EggId>", "drop an egg on the river", function(a)
-    send("SpawnEgg", { scope = "me", itemId = a[1] })
-end)
-cmd({ "event", "ev" }, "/event <rush|cash|gold|stop> [minutes]", "start / stop a live event", function(a)
-    local k = (a[1] or ""):lower()
-    if k == "stop" or k == "end" then
-        send("StopEvent", { scope = "me" })
-        return
-    end
-    local id = EVENTS[k]
-    if not id then
-        out("✖ ;event <rush|cash|gold|stop> [minutes]", RED)
-        return
-    end
-    send("StartEvent", { scope = "me", eventId = id, seconds = math.floor((tonumber(a[2]) or 10) * 60) })
-end)
-cmd({ "stopevent", "endevent" }, "/stopevent", "end the current event", function()
-    send("StopEvent", { scope = "me" })
-end)
-cmd({ "night" }, "/night", "force night", function()
-    send("StartNight", { scope = "me" })
-end)
-cmd({ "day" }, "/day", "back to day", function()
-    send("StopNight", { scope = "me" })
-end)
-cmd({ "shower", "eggshower" }, "/shower", "egg shower", function()
-    send("EggShower", { scope = "me" })
-end)
-cmd({ "spawnrate", "rate" }, "/spawnrate <seconds>", "river egg spawn interval (1.5–30)", function(a)
-    send("SetSpawnInterval", { scope = "me", seconds = tonumber(a[1]) })
-end)
-cmd({ "announce", "ann", "a", "m" }, "/announce <text>", "banner in this server", function(_, rest)
-    send("Announce", { text = rest, color = "pink" })
-end)
-cmd({ "gannounce", "ga", "global", "sm" }, "/global <text>", "banner in EVERY server", function(_, rest)
-    send("Announce", { text = rest, allServers = true, color = "purple" })
-end)
-cmd({ "update", "shutdown" }, "/update [text]", "update countdown + rejoin all servers", function(_, rest)
-    send("AnnounceUpdate", { text = rest ~= "" and rest or nil })
-end)
-local function onPlayer(action, extra)
-    return function(a)
-        local p = findPlayer(a[1])
-        if not p then
-            out("✖ No player '" .. tostring(a[1]) .. "'", RED)
+defineCommand(
+    { "invite", "inv" },
+    "/invite [username]",
+    "invite a friend (or get the game link for anyone)",
+    function(args)
+        local name = args[1] and args[1]:gsub("^@", "")
+        if not name then
+            local ok, can = pcall(SocialService.CanSendGameInviteAsync, SocialService, player)
+            if ok and can then
+                SocialService:PromptGameInvite(player)
+                printLine("✔ Invite window opened.", GREEN)
+            else
+                printLine("✖ Invites aren't available here (works in the live game).", RED)
+            end
             return
         end
-        send(action, merge({ userId = p.UserId, confirmed = true }, extra or {}))
+        local okId, id = pcall(Players.GetUserIdFromNameAsync, Players, name)
+        if not okId or not id then
+            printLine("✖ No Roblox user called '" .. name .. "'.", RED)
+            return
+        end
+        local okF, friends = pcall(player.IsFriendsWith, player, id)
+        if okF and friends then
+            local opts = Instance.new("ExperienceInviteOptions")
+            opts.InviteUser = id
+            opts.PromptMessage = "Join me in Hatch an Anime!"
+            local ok, can = pcall(SocialService.CanSendGameInviteAsync, SocialService, player, id)
+            if ok and can then
+                SocialService:PromptGameInvite(player, opts)
+                printLine("✔ Invite sent to @" .. name .. " — they get a Roblox notification.", GREEN)
+            else
+                printLine("✖ Roblox won't let you invite @" .. name .. " right now (their settings, or Studio).", RED)
+            end
+        else
+            printLine(
+                "✖ @" .. name .. " isn't on your friends list — Roblox only allows game invites to friends.",
+                RED
+            )
+            printLine("  Send them this link instead (they'll join a public server):", DIM)
+            printLine("  https://www.roblox.com/games/" .. game.PlaceId, GOLD)
+            printLine("  Or friend them first, then /invite " .. name .. " again.", DIM)
+        end
+    end
+)
+defineCommand({ "link" }, "/link", "the game link to send to anyone", function()
+    printLine("  https://www.roblox.com/games/" .. game.PlaceId, GOLD)
+end)
+defineCommand({ "give" }, "/give <who> <cash|egg|char> <amount|Id> [mutation]", "give anything", function(args)
+    local firstKind, secondKind = GIVE_TYPES[(args[1] or ""):lower()], GIVE_TYPES[(args[2] or ""):lower()]
+    if firstKind then
+        give(firstKind, args[2], args[3], args[4])
+    elseif secondKind then
+        give(secondKind, args[1], args[3], args[4])
+    else
+        printLine("✖ ;give <who> <cash|egg|char> ...", RED)
+    end
+end)
+defineCommand({ "cash", "money" }, "/cash <who> <amount>", "give cash", function(args)
+    give("cash", args[1], args[2])
+end)
+defineCommand({ "setcash" }, "/setcash <who> <amount>", "set a player's cash exactly", function(args)
+    local targetArgs = targetOrError(args[1])
+    local amount = tonumber(args[2])
+    if targetArgs and need(amount, "/setcash <who> <amount>") then
+        sendAction("SetCash", withFields(targetArgs, { amount = amount, confirmed = true }))
+    end
+end)
+defineCommand({ "egg" }, "/egg <who> <EggId> [mutation]", "give an egg (e.g. ;egg me Pirate Gold)", function(args)
+    give("egg", args[1], args[2], args[3])
+end)
+defineCommand({ "char", "character" }, "/char <who> <Id> [mutation]", "give a character", function(args)
+    give("char", args[1], args[2], args[3])
+end)
+defineCommand({ "riveregg", "spawn", "drop" }, "/riveregg <EggId>", "drop an egg on the river", function(args)
+    sendAction("SpawnEgg", { scope = "me", itemId = args[1] })
+end)
+defineCommand({ "event", "ev" }, "/event <rush|cash|gold|stop> [minutes]", "start / stop a live event", function(args)
+    local eventName = (args[1] or ""):lower()
+    if eventName == "stop" or eventName == "end" then
+        sendAction("StopEvent", { scope = "me" })
+        return
+    end
+    local eventId = EVENTS[eventName]
+    if not eventId then
+        printLine("✖ ;event <rush|cash|gold|stop> [minutes]", RED)
+        return
+    end
+    sendAction("StartEvent", { scope = "me", eventId = eventId, seconds = math.floor((tonumber(args[2]) or 10) * 60) })
+end)
+defineCommand({ "stopevent", "endevent" }, "/stopevent", "end the current event", function()
+    sendAction("StopEvent", { scope = "me" })
+end)
+defineCommand({ "night" }, "/night", "force night", function()
+    sendAction("StartNight", { scope = "me" })
+end)
+defineCommand({ "day" }, "/day", "back to day", function()
+    sendAction("StopNight", { scope = "me" })
+end)
+defineCommand({ "shower", "eggshower" }, "/shower", "egg shower", function()
+    sendAction("EggShower", { scope = "me" })
+end)
+defineCommand({ "spawnrate", "rate" }, "/spawnrate <seconds>", "river egg spawn interval (1.5–30)", function(args)
+    sendAction("SetSpawnInterval", { scope = "me", seconds = tonumber(args[1]) })
+end)
+defineCommand({ "announce", "ann", "a", "m" }, "/announce <text>", "banner in this server", function(_, rest)
+    sendAction("Announce", { text = rest, color = "pink" })
+end)
+defineCommand({ "gannounce", "ga", "global", "sm" }, "/global <text>", "banner in EVERY server", function(_, rest)
+    sendAction("Announce", { text = rest, allServers = true, color = "purple" })
+end)
+defineCommand({ "update", "shutdown" }, "/update [text]", "update countdown + rejoin all servers", function(_, rest)
+    sendAction("AnnounceUpdate", { text = rest ~= "" and rest or nil })
+end)
+local function onPlayer(action, extra)
+    return function(args)
+        local found = findPlayer(args[1])
+        if not found then
+            printLine("✖ No player '" .. tostring(args[1]) .. "'", RED)
+            return
+        end
+        sendAction(action, withFields({ userId = found.UserId, confirmed = true }, extra or {}))
     end
 end
-cmd({ "kick" }, "/kick <who>", "kick a player", onPlayer("Kick"))
-cmd({ "ban" }, "/ban <who>", "ban for 24 h", onPlayer("Ban"))
-cmd({ "unban" }, "/unban <userId>", "lift a ban", function(a)
-    send("Unban", { userId = tonumber(a[1]) })
+defineCommand({ "kick" }, "/kick <who>", "kick a player", onPlayer("Kick"))
+defineCommand({ "ban" }, "/ban <who>", "ban for 24 h", onPlayer("Ban"))
+defineCommand({ "unban" }, "/unban <userId>", "lift a ban", function(args)
+    sendAction("Unban", { userId = tonumber(args[1]) })
 end)
-cmd({ "bring" }, "/bring <who>", "teleport them to you", onPlayer("Bring"))
-cmd({ "goto", "tp", "to" }, "/tp <who>", "teleport to them", onPlayer("GoTo"))
-cmd({ "home", "base" }, "/home <who>", "send them to their temple", onPlayer("SendHome"))
-cmd({ "respawn", "re", "refresh" }, "/respawn <who>", "respawn a player", onPlayer("Respawn"))
+defineCommand({ "bring" }, "/bring <who>", "teleport them to you", onPlayer("Bring"))
+defineCommand({ "goto", "tp", "to" }, "/tp <who>", "teleport to them", onPlayer("GoTo"))
+defineCommand({ "home", "base" }, "/home <who>", "send them to their temple", onPlayer("SendHome"))
+defineCommand({ "respawn", "re", "refresh" }, "/respawn <who>", "respawn a player", onPlayer("Respawn"))
 local function onTarget(action)
-    return function(a)
-        local t = who(a[1] or "me")
-        if t then
-            send(action, merge(t, { confirmed = true }))
+    return function(args)
+        local targetArgs = targetOrError(args[1] or "me")
+        if targetArgs then
+            sendAction(action, withFields(targetArgs, { confirmed = true }))
         end
     end
 end
-cmd({ "unlock", "slot" }, "/unlock <who>", "unlock their next slot", onTarget("UnlockSlot"))
-cmd({ "temple", "upgrade" }, "/temple <who>", "upgrade their temple", onTarget("UpgradeTemple"))
-cmd({ "addinc", "incubator" }, "/addinc <who>", "give them another incubator", onTarget("AddIncubator"))
-cmd({ "upinc" }, "/upinc <who>", "upgrade their first incubator", function(a)
-    local t = who(a[1] or "me")
-    if t then
-        send("UpgradeIncubator", merge(t, { index = tonumber(a[2]) or 1, confirmed = true }))
+defineCommand({ "unlock", "slot" }, "/unlock <who>", "unlock their next slot", onTarget("UnlockSlot"))
+defineCommand({ "temple", "upgrade" }, "/temple <who>", "upgrade their temple", onTarget("UpgradeTemple"))
+defineCommand({ "addinc", "incubator" }, "/addinc <who>", "give them another incubator", onTarget("AddIncubator"))
+defineCommand({ "upinc" }, "/upinc <who>", "upgrade their first incubator", function(args)
+    local targetArgs = targetOrError(args[1] or "me")
+    if targetArgs then
+        sendAction("UpgradeIncubator", withFields(targetArgs, { index = tonumber(args[2]) or 1, confirmed = true }))
     end
 end)
-cmd({ "clearinv" }, "/clearinv <who>", "clear their backpack", onTarget("ClearInventory"))
-cmd({ "clearplaced" }, "/clearplaced <who>", "clear their placed characters", onTarget("ClearPlaced"))
-cmd({ "resetslots" }, "/resetslots <who>", "reset their slots", onTarget("ResetSlots"))
-cmd({ "staff" }, "/staff", "go to the private staff server", function()
-    send("JoinStaffServer", {})
+defineCommand({ "clearinv" }, "/clearinv <who>", "clear their backpack", onTarget("ClearInventory"))
+defineCommand({ "clearplaced" }, "/clearplaced <who>", "clear their placed characters", onTarget("ClearPlaced"))
+defineCommand({ "resetslots" }, "/resetslots <who>", "reset their slots", onTarget("ResetSlots"))
+defineCommand({ "staff" }, "/staff", "go to the private staff server", function()
+    sendAction("JoinStaffServer", {})
 end)
-cmd({ "public" }, "/public", "back to a public server", function()
-    send("ReturnToPublic", {})
+defineCommand({ "public" }, "/public", "back to a public server", function()
+    sendAction("ReturnToPublic", {})
 end)
-cmd({ "admin" }, "/admin <add|remove> <userId|@name>", "owner: share the terminal", function(a)
-    local id = tonumber(a[2])
-    if not id and a[2] then
-        local p = findPlayer(a[2])
-        id = p and p.UserId
+defineCommand({ "admin" }, "/admin <add|remove> <userId|@name>", "owner: share the terminal", function(args)
+    local userId = tonumber(args[2])
+    if not userId and args[2] then
+        local found = findPlayer(args[2])
+        userId = found and found.UserId
     end
-    if not need(id, "/admin add <userId|@name>") then
+    if not need(userId, "/admin add <userId|@name>") then
         return
     end
-    send("SetAdmin", { userId = id, on = (a[1] or ""):lower() ~= "remove" })
+    sendAction("SetAdmin", { userId = userId, on = (args[1] or ""):lower() ~= "remove" })
 end)
-cmd({ "clear", "cls" }, "/clear", "clear this window", function()
-    for _, c in log:GetChildren() do
-        if c:IsA("TextLabel") then
-            c:Destroy()
+defineCommand({ "clear", "cls" }, "/clear", "clear this window", function()
+    for _, child in logFrame:GetChildren() do
+        if child:IsA("TextLabel") then
+            child:Destroy()
         end
     end
 end)
 
+-- ===== 5. Parsing and running =====
+-- "/give me cash 5" -> "give", { "me", "cash", "5" }, "me cash 5"
 local function parse(line)
     local body = line:gsub("^%s*[;:/!]", "")
     local name, rest = body:match("^%s*(%S+)%s*(.*)$")
     local args = {}
-    for w in (rest or ""):gmatch("%S+") do
-        table.insert(args, w)
+    for word in (rest or ""):gmatch("%S+") do
+        table.insert(args, word)
     end
     return (name or ""):lower(), args, rest or ""
 end
@@ -444,20 +476,21 @@ local function run(line)
     if name == "" then
         return
     end
-    out("❯ " .. line, CYAN)
-    local d = CMDS[name]
-    if not d then
-        out("✖ Unknown command '" .. name .. "'. Try /help", RED)
+    printLine("❯ " .. line, CYAN)
+    local definition = COMMANDS[name]
+    if not definition then
+        printLine("✖ Unknown command '" .. name .. "'. Try /help", RED)
         return
     end
-    local ok, err = pcall(d.fn, args, rest)
+    local ok, err = pcall(definition.fn, args, rest)
     if not ok then
-        out("✖ " .. tostring(err), RED)
+        printLine("✖ " .. tostring(err), RED)
     end
 end
 
+-- ===== 6. Suggestions, Tab completion and history =====
 -- suggestions under the input
-local sug = new("Frame", {
+local suggestionFrame = make("Frame", {
     AnchorPoint = Vector2.new(0, 1),
     Position = UDim2.new(0, 12, 1, -50),
     Size = UDim2.new(1, -24, 0, 0),
@@ -466,136 +499,146 @@ local sug = new("Frame", {
     BackgroundTransparency = 0.05,
     Visible = false,
     ZIndex = 5,
-}, win)
-new("UICorner", { CornerRadius = UDim.new(0, 8) }, sug)
-new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, sug)
-new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, sug)
+}, window)
+make("UICorner", { CornerRadius = UDim.new(0, 8) }, suggestionFrame)
+make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, suggestionFrame)
+make(
+    "UIPadding",
+    { PaddingLeft = UDim.new(0, 10), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) },
+    suggestionFrame
+)
 local firstMatch
-local function refreshSug()
-    for _, c in sug:GetChildren() do
-        if c:IsA("TextLabel") then
-            c:Destroy()
+local function refreshSuggestions()
+    for _, child in suggestionFrame:GetChildren() do
+        if child:IsA("TextLabel") then
+            child:Destroy()
         end
     end
     firstMatch = nil
-    local t = box.Text
-    local name = t:gsub("^%s*[;:/!]", ""):match("^(%S*)$")
+    local text = inputBox.Text
+    local name = text:gsub("^%s*[;:/!]", ""):match("^(%S*)$")
     if not name or name == "" then
-        sug.Visible = false
+        suggestionFrame.Visible = false
         return
     end
-    local k = 0
-    for _, d in ORDER do
-        for _, n in d.names do
-            if n:sub(1, #name) == name:lower() then
-                k += 1
-                firstMatch = firstMatch or n
-                new("TextLabel", {
-                    LayoutOrder = k,
+    local shownCount = 0
+    for _, definition in COMMAND_ORDER do
+        for _, alias in definition.names do
+            if alias:sub(1, #name) == name:lower() then
+                shownCount += 1
+                firstMatch = firstMatch or alias
+                make("TextLabel", {
+                    LayoutOrder = shownCount,
                     BackgroundTransparency = 1,
                     Size = UDim2.new(1, 0, 0, 20),
-                    Text = d.usage .. "   " .. d.desc,
+                    Text = definition.usage .. "   " .. definition.desc,
                     FontFace = MONO,
                     TextSize = 14,
-                    TextColor3 = k == 1 and GOLD or DIM,
+                    TextColor3 = shownCount == 1 and GOLD or DIM,
                     TextXAlignment = Enum.TextXAlignment.Left,
                     ZIndex = 6,
-                }, sug)
+                }, suggestionFrame)
                 break
             end
         end
-        if k >= 6 then
+        if shownCount >= 6 then
             break
         end
     end
-    sug.Visible = k > 0
+    suggestionFrame.Visible = shownCount > 0
 end
-box:GetPropertyChangedSignal("Text"):Connect(refreshSug)
+inputBox:GetPropertyChangedSignal("Text"):Connect(refreshSuggestions)
 local function tabComplete()
-    local t = box.Text
-    if t:gsub("^%s*[;:/!]", ""):match("^%S*$") then
+    local text = inputBox.Text
+    if text:gsub("^%s*[;:/!]", ""):match("^%S*$") then
         if firstMatch then
-            local pre = t:match("^%s*([;:/!]?)") or ";"
-            box.Text = (pre ~= "" and pre or "/") .. firstMatch .. " "
+            local prefix = text:match("^%s*([;:/!]?)") or ";"
+            inputBox.Text = (prefix ~= "" and prefix or "/") .. firstMatch .. " "
         end
     else
-        local head, last = t:match("^(.-)(%S*)$")
-        if last ~= "" then
-            local l = last:lower():gsub("^@", "")
-            for _, p in Players:GetPlayers() do
-                if p.Name:lower():sub(1, #l) == l or p.DisplayName:lower():sub(1, #l) == l then
-                    box.Text = head .. p.Name .. " "
+        local head, lastWord = text:match("^(.-)(%S*)$")
+        if lastWord ~= "" then
+            local partial = lastWord:lower():gsub("^@", "")
+            for _, candidate in Players:GetPlayers() do
+                if
+                    candidate.Name:lower():sub(1, #partial) == partial
+                    or candidate.DisplayName:lower():sub(1, #partial) == partial
+                then
+                    inputBox.Text = head .. candidate.Name .. " "
                     break
                 end
             end
         end
     end
-    box.CursorPosition = #box.Text + 1
+    inputBox.CursorPosition = #inputBox.Text + 1
 end
 
-local history, hi = {}, 0
-box.FocusLost:Connect(function(enter)
-    if not enter then
+local history, historyIndex = {}, 0
+inputBox.FocusLost:Connect(function(enterPressed)
+    if not enterPressed then
         return
     end
-    local line = box.Text
-    box.Text = ""
+    local line = inputBox.Text
+    inputBox.Text = ""
     if line:gsub("%s", "") ~= "" then
         table.insert(history, line)
-        hi = #history + 1
+        historyIndex = #history + 1
         task.spawn(run, line)
     end
     task.defer(function()
-        box:CaptureFocus()
+        inputBox:CaptureFocus()
     end)
 end)
+
+-- ===== 7. Open / close, keys and chat command =====
 local function toggle()
     gui.Enabled = not gui.Enabled
     if gui.Enabled then
-        win.Size = UDim2.fromOffset(720, 0)
-        TS:Create(win, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Size = UDim2.fromOffset(720, 400) }):Play()
+        window.Size = UDim2.fromOffset(720, 0)
+        TweenService:Create(window, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Size = UDim2.fromOffset(720, 400) })
+            :Play()
         task.defer(function()
-            box:CaptureFocus()
+            inputBox:CaptureFocus()
         end)
     end
 end
-UIS.InputBegan:Connect(function(input, gp)
-    if input.KeyCode == Enum.KeyCode.F2 or (input.KeyCode == Enum.KeyCode.Backquote and not gp) then
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if input.KeyCode == Enum.KeyCode.F2 or (input.KeyCode == Enum.KeyCode.Backquote and not gameProcessed) then
         toggle()
         return
     end
-    if not (gui.Enabled and box:IsFocused()) then
+    if not (gui.Enabled and inputBox:IsFocused()) then
         return
     end
     if input.KeyCode == Enum.KeyCode.Tab then
         task.defer(function()
-            box.Text = box.Text:gsub("\t", "")
+            inputBox.Text = inputBox.Text:gsub("\t", "")
             tabComplete()
         end)
         return
     end
     if #history > 0 then
         if input.KeyCode == Enum.KeyCode.Up then
-            hi = math.max(1, hi - 1)
-            box.Text = history[hi] or ""
-            box.CursorPosition = #box.Text + 1
+            historyIndex = math.max(1, historyIndex - 1)
+            inputBox.Text = history[historyIndex] or ""
+            inputBox.CursorPosition = #inputBox.Text + 1
         elseif input.KeyCode == Enum.KeyCode.Down then
-            hi = math.min(#history + 1, hi + 1)
-            box.Text = history[hi] or ""
-            box.CursorPosition = #box.Text + 1
+            historyIndex = math.min(#history + 1, historyIndex + 1)
+            inputBox.Text = history[historyIndex] or ""
+            inputBox.CursorPosition = #inputBox.Text + 1
         end
     end
 end)
 do
-    local c = Instance.new("TextChatCommand")
-    c.Name = "OpenTerminal"
-    c.PrimaryAlias = "/terminal"
-    c.SecondaryAlias = "/t"
-    c.Parent = TextChatService
-    c.Triggered:Connect(function(src)
-        if src.UserId == player.UserId then
+    local command = Instance.new("TextChatCommand")
+    command.Name = "OpenTerminal"
+    command.PrimaryAlias = "/terminal"
+    command.SecondaryAlias = "/t"
+    command.Parent = TextChatService
+    command.Triggered:Connect(function(source)
+        if source.UserId == player.UserId then
             toggle()
         end
     end)
 end
-out("Velm terminal ready. Type /help  (Tab completes, ↑/↓ history)", GREEN)
+printLine("Velm terminal ready. Type /help  (Tab completes, ↑/↓ history)", GREEN)

@@ -1,22 +1,27 @@
--- ServerScriptService.OwnerOverheadBanner
--- Verified account usernames are used, never DisplayName.
+--[[ ServerScriptService.OwnerOverheadBanner  (Script)
+Animated [OWNER] / [CO-OWNER] / [YOUTUBE] BillboardGui ("OwnerBanner") above the head of the listed accounts.
+Cosmetic only. Matches by UserId or by verified username (Player.Name, never DisplayName). UserIds duplicate
+AdminRoles / RoleTagServer. Each banner runs its own shine loop until the GUI or character is gone.
+]]
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 
-local ROLES = {
+-- ===== 1. Who gets a banner =====
+local ROLE_BY_USER_ID = {
     [168774222] = { Text = "OWNER", Size = 25 },
     [353101613] = { Text = "CO-OWNER", Size = 21 },
     [10192461618] = { Text = "YOUTUBE", Size = 21 },
 }
-local USERNAME_ROLES = {
+local ROLE_BY_USERNAME = {
     rofloxreal = { Text = "YOUTUBE", Size = 21 },
 }
 
 local function roleFor(player)
-    return ROLES[player.UserId] or USERNAME_ROLES[player.Name:lower()]
+    return ROLE_BY_USER_ID[player.UserId] or ROLE_BY_USERNAME[player.Name:lower()]
 end
 
-local function attach(player, character)
+-- ===== 2. Banner =====
+local function attachBanner(player, character)
     local role = roleFor(player)
     if not role then
         return
@@ -25,35 +30,35 @@ local function attach(player, character)
     if not head or not character.Parent then
         return
     end
-    local old = head:FindFirstChild("OwnerBanner")
-    if old then
-        old:Destroy()
+    local oldBanner = head:FindFirstChild("OwnerBanner")
+    if oldBanner then
+        oldBanner:Destroy()
     end
 
-    local gui = Instance.new("BillboardGui")
-    gui.Name = "OwnerBanner"
-    gui.Adornee = head
-    gui.Size = UDim2.fromOffset(200, 40)
-    gui.StudsOffsetWorldSpace = Vector3.new(0, 3.1, 0)
-    gui.AlwaysOnTop = false
-    gui.MaxDistance = 100
-    gui.LightInfluence = 0
+    local banner = Instance.new("BillboardGui")
+    banner.Name = "OwnerBanner"
+    banner.Adornee = head
+    banner.Size = UDim2.fromOffset(200, 40)
+    banner.StudsOffsetWorldSpace = Vector3.new(0, 3.1, 0)
+    banner.AlwaysOnTop = false
+    banner.MaxDistance = 100
+    banner.LightInfluence = 0
 
-    local text = Instance.new("TextLabel")
-    text.Name = "Title"
-    text.BackgroundTransparency = 1
-    text.Size = UDim2.fromScale(1, 1)
-    text.Text = "[" .. role.Text .. "]"
-    text.Font = Enum.Font.FredokaOne
-    text.TextSize = role.Size
-    text.TextColor3 = Color3.new(1, 1, 1)
-    text.Parent = gui
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Name = "Title"
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Size = UDim2.fromScale(1, 1)
+    titleLabel.Text = "[" .. role.Text .. "]"
+    titleLabel.Font = Enum.Font.FredokaOne
+    titleLabel.TextSize = role.Size
+    titleLabel.TextColor3 = Color3.new(1, 1, 1)
+    titleLabel.Parent = banner
 
     local outline = Instance.new("UIStroke")
     outline.Color = Color3.fromRGB(12, 7, 9)
     outline.Thickness = 2.4
     outline.LineJoinMode = Enum.LineJoinMode.Round
-    outline.Parent = text
+    outline.Parent = titleLabel
 
     local gradient = Instance.new("UIGradient")
     gradient.Name = "RoleShine"
@@ -67,11 +72,11 @@ local function attach(player, character)
     })
     gradient.Rotation = 18
     gradient.Offset = Vector2.new(-1, 0)
-    gradient.Parent = text
-    gui.Parent = head
+    gradient.Parent = titleLabel
+    banner.Parent = head
 
     task.spawn(function()
-        while gui.Parent and character.Parent do
+        while banner.Parent and character.Parent do
             gradient.Offset = Vector2.new(-1, 0)
             local shine = TweenService:Create(
                 gradient,
@@ -85,18 +90,19 @@ local function attach(player, character)
     end)
 end
 
-local function joined(player)
+-- ===== 3. Players =====
+local function onPlayerAdded(player)
     if not roleFor(player) then
         return
     end
     player.CharacterAdded:Connect(function(character)
-        task.spawn(attach, player, character)
+        task.spawn(attachBanner, player, character)
     end)
     if player.Character then
-        task.spawn(attach, player, player.Character)
+        task.spawn(attachBanner, player, player.Character)
     end
 end
-Players.PlayerAdded:Connect(joined)
+Players.PlayerAdded:Connect(onPlayerAdded)
 for _, player in Players:GetPlayers() do
-    joined(player)
+    onPlayerAdded(player)
 end
