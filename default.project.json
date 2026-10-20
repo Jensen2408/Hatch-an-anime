@@ -209,6 +209,12 @@
         "$ignoreUnknownInstances": true,
         "MenuLogic": {
           "$path": "src/client/UI/Screens/GameMenus/MenuLogic.client.luau"
+        },
+        "LeftMenuConfig": {
+          "$path": "src/client/UI/Screens/GameMenus/LeftMenuConfig.luau"
+        },
+        "LeftMenuComponent": {
+          "$path": "src/client/UI/Screens/GameMenus/LeftMenuComponent.luau"
         }
       },
       "MoneyDisplay": {
@@ -216,6 +222,12 @@
         "$ignoreUnknownInstances": true,
         "MoneyLogic": {
           "$path": "src/client/UI/Screens/MoneyDisplay/MoneyLogic.client.luau"
+        },
+        "CashConfig": {
+          "$path": "src/client/UI/Screens/MoneyDisplay/CashConfig.luau"
+        },
+        "CashComponent": {
+          "$path": "src/client/UI/Screens/MoneyDisplay/CashComponent.luau"
         }
       }
     },
@@ -3403,6 +3415,26 @@
         },
         "LeaderboardView": {
           "$path": "src/shared/UI/Leaderboard/LeaderboardView.luau"
+        }
+      },
+      "QuestsHUD": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "QuestsConfig": {
+          "$path": "src/shared/UI/QuestsHUD/QuestsConfig.luau"
+        },
+        "QuestsComponent": {
+          "$path": "src/shared/UI/QuestsHUD/QuestsComponent.luau"
+        }
+      },
+      "TimeHUD": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "TimeConfig": {
+          "$path": "src/shared/UI/TimeHUD/TimeConfig.luau"
+        },
+        "TimeComponent": {
+          "$path": "src/shared/UI/TimeHUD/TimeComponent.luau"
         }
       },
       "CharacterInventory": {

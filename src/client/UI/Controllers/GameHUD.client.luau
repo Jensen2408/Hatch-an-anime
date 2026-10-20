@@ -1,8 +1,8 @@
 --[[ StarterPlayerScripts.GameHUD (LocalScript)
 Main in-game HUD. Builds two ScreenGuis in PlayerGui:
   GameHUD   custom hotbar (Roblox's backpack stays hidden - ReplicatedFirst.CustomInventoryBootstrap), the
-            Backpack button, the Inventory panel above the hotbar, the hotbar hover tooltip and the PLOT button
-  NightBar  top-centre day/night countdown banner + the big 5..1 countdown before night starts
+            Backpack button, the Inventory panel above the hotbar and the hotbar hover tooltip
+  NightBar  top-centre Day / Night event HUD (ReplicatedStorage.TimeHUD) + the big 5..1 countdown before night
 and disables the legacy NighttimeHUD / NighttimeStatus ScreenGuis (now and whenever they are re-added).
 
 Table of contents (section banners below are "-- ===== N. ... =====")
@@ -17,7 +17,7 @@ Table of contents (section banners below are "-- ===== N. ... =====")
   8. Backpack/character change watchers + the hotbar refresh loop
   9. Night timer (NightBar)
  10. Away-earnings popup (disabled - OfflineEarningsUI replaced it)
- 11. PLOT button (teleport home; key H)
+ 11. Go home: key H + server reply popup (the HOME button is GameMenus.LeftMenu)
 
 Remotes (ReplicatedStorage):
   SellEgg                              (RF, WaitForChild 10 s)  "Quote", tool -> number | other
@@ -29,22 +29,23 @@ Remotes (ReplicatedStorage):
   CharacterInventory.InventoryEvent    (RE)  server -> "Snapshot", snapshot ({ items = { { id, sellValue, power,
                                              income, ... } } })
   GoHome                               (RE, WaitForChild 10 s)  FireServer(); server replies with a message string
-Modules: CharacterCatalog (ById: Name, Rarity, Id, image), UISound (Play), PixelIcon (builds the "bag" icons).
+Modules: CharacterCatalog (ById: Name, Rarity, Id, image), UISound (Play), PixelIcon (builds the "bag" icons),
+  TimeHUD.TimeComponent / TimeConfig (the time HUD).
 Attributes read:
   Tool: CharacterId / BrainrotId, EggType, Mutation, Rarity, UnknownEgg, GoldVariant, DesignName, ItemId, Power,
         IncomePerSecond; tool parts: CarryOriginalTransparency
-  workspace: NighttimeActive, NighttimeEndsAt, NighttimeNextAt (server time)
+  workspace: NighttimeActive, NighttimeEndsAt, NighttimeNextAt (server time), NightBonusCash,
+             NightBonusHatchSpeed, NightBonusRiverLuck
   player: OfflineEarnings (changed signal only), OfflineSeconds
-Attributes written: hotbar slot "Sig" / "ToolRef", slot button "EdgeColor", bag card "ItemId" / "Category",
-  PLOT button parts "KeepRound" (read by SharpUI). Instance names (GameHUD, NightBar, RightButtons.BagButton,
-  HomeButton, EggBag, Inventory, Hotbar, ...) are looked up by FigmaSkin, SharpUI and FirstHatchTutorial.
+Attributes written: hotbar slot "Sig" / "ToolRef", slot button "EdgeColor", bag card "ItemId" / "Category".
+  Instance names (GameHUD, NightBar, RightButtons.BagButton, EggBag, Inventory, Hotbar, ...) are looked up by
+  FigmaSkin, SharpUI and FirstHatchTutorial.
 Input: keys 1-9 (equip hotbar slot), ` (Inventory), H (go home).
 
 Init order (top level, in file order - WaitForChild calls yield):
   PlayerGui -> CharacterCatalog, UISound -> GameHUD ScreenGui -> catalog image map -> hotbar -> 1-9 keys ->
   SellEgg (10 s), CharacterInventory remotes -> right buttons (PixelIcon) -> legacy bag -> Inventory panel ->
-  tooltip -> change watchers + refresh loop -> NightBar -> away earnings -> PLOT button (GoHome, 10 s;
-  GameMenus.SideButtons is waited for in a spawned thread).
+  tooltip -> change watchers + refresh loop -> NightBar -> away earnings -> go home (GoHome, 10 s).
 ]]
 
 -- ===== 1. Services, modules, palette, UI primitives =====
@@ -2237,56 +2238,20 @@ playerGui.ChildAdded:Connect(function(child)
         end)
     end
 end)
+local TimeHUD = ReplicatedStorage:WaitForChild("TimeHUD")
+local TimeComponent = require(TimeHUD:WaitForChild("TimeComponent"))
+local TimeConfig = require(TimeHUD:WaitForChild("TimeConfig"))
 local nightGui = create("ScreenGui", {
     Name = "NightBar",
     ResetOnSpawn = false,
     DisplayOrder = 41,
     ScreenInsets = Enum.ScreenInsets.None,
     IgnoreGuiInset = true,
+    ZIndexBehavior = Enum.ZIndexBehavior.Global, -- TimeComponent orders its outline layers with global ZIndex
 }, playerGui)
+local timeHud = TimeComponent.new(nightGui)
+timeHud.Root.AnchorPoint = Vector2.new(0.5, 0)
 local hudScale = phoneScale()
-local nightBanner = create("Frame", {
-    AnchorPoint = Vector2.new(0.5, 1),
-    Position = UDim2.new(0.5, 0, 0, 38 * hudScale),
-    Size = UDim2.fromOffset(250, 110),
-    BackgroundColor3 = Color3.fromRGB(28, 22, 62),
-}, nightGui)
-addCorner(nightBanner, UDim.new(0, 18))
-local nightBannerStroke = addStroke(nightBanner, 3, Color3.fromRGB(140, 120, 255))
-
-local nightCountdownLabel = create("TextLabel", {
-    AnchorPoint = Vector2.new(0.5, 1),
-    Position = UDim2.new(0.5, 0, 1, -8),
-    Size = UDim2.new(1, -20, 0, 28),
-    BackgroundTransparency = 1,
-    Text = "🌙  NIGHT IN 4:30",
-    FontFace = FONT,
-    TextSize = 22,
-    TextColor3 = Color3.fromRGB(220, 215, 255),
-}, nightBanner)
-local nightTitleLabel = create("TextLabel", {
-    AnchorPoint = Vector2.new(0.5, 0),
-    Position = UDim2.new(0.5, 0, 0, 18),
-    Size = UDim2.new(1, -20, 0, 40),
-    BackgroundTransparency = 1,
-    Text = "🌙 NIGHT TIME!",
-    FontFace = FONT,
-    TextSize = 34,
-    TextColor3 = Color3.fromRGB(255, 230, 120),
-    TextTransparency = 1,
-}, nightBanner)
-addStroke(nightTitleLabel, 3).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-local nightPerksLabel = create("TextLabel", {
-    AnchorPoint = Vector2.new(0.5, 0),
-    Position = UDim2.new(0.5, 0, 0, 58),
-    Size = UDim2.new(1, -20, 0, 20),
-    BackgroundTransparency = 1,
-    Text = "3× CASH • 2× HATCH • 3× LUCK",
-    FontFace = BOLD,
-    TextSize = 14,
-    TextColor3 = Color3.fromRGB(150, 240, 255),
-    TextTransparency = 1,
-}, nightBanner)
 local bigCountdownLabel = create("TextLabel", {
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.fromScale(0.5, 0.32),
@@ -2299,17 +2264,71 @@ local bigCountdownLabel = create("TextLabel", {
     TextTransparency = 1,
 }, nightGui)
 addStroke(bigCountdownLabel, 5).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-local nightBannerScale = create("UIScale", { Scale = hudScale }, nightBanner)
 local bigCountdownScale = create("UIScale", { Scale = hudScale }, bigCountdownLabel)
-local nightState
--- re-applies the phone scale to the hotbar and the night banner (tracks the start-up camera's ViewportSize)
+
+-- Time HUD: top centre. Phones: as large as fits between the screen centre and the cash panel (top-right);
+-- when even the minimum scale would overlap the cash panel, it drops below it instead.
+local function getCashUI()
+    local moneyDisplay = playerGui:FindFirstChild("MoneyDisplay")
+    return moneyDisplay and moneyDisplay:FindFirstChild("CashUI")
+end
+local function layoutTimeHud()
+    local screenSize = nightGui.AbsoluteSize
+    if screenSize.X <= 0 or screenSize.Y <= 0 then
+        return
+    end
+    local compact = math.min(screenSize.X, screenSize.Y) < TimeConfig.CompactBreakpoint
+    nightGui.ScreenInsets = compact and Enum.ScreenInsets.CoreUISafeInsets or Enum.ScreenInsets.None
+    local rootWidth = TimeConfig.RootSize.X
+    local scale, top = TimeConfig.Scale.Desktop, TimeConfig.TopMargin
+    if compact then
+        scale = math.min(TimeConfig.Scale.CompactMax, (screenSize.X - 16) / rootWidth)
+        local cashUI = getCashUI()
+        if cashUI and cashUI.Visible then
+            local origin = nightGui.AbsolutePosition
+            local cashLeft = cashUI.AbsolutePosition.X - origin.X
+            local fitScale = 2 * (math.min(screenSize.X / 2, cashLeft - screenSize.X / 2) - 8) / rootWidth
+            if fitScale >= TimeConfig.Scale.CompactMin then
+                scale = math.min(scale, fitScale)
+            else
+                top = cashUI.AbsolutePosition.Y - origin.Y + cashUI.AbsoluteSize.Y + 6
+            end
+        end
+    end
+    timeHud.Scale.Scale = scale
+    timeHud.Root.Position = UDim2.new(0.5, 0, 0, top)
+end
+nightGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutTimeHud)
+task.spawn(function()
+    local moneyDisplay = playerGui:WaitForChild("MoneyDisplay", 30)
+    local cashUI = moneyDisplay and moneyDisplay:WaitForChild("CashUI", 30)
+    if cashUI then
+        cashUI:GetPropertyChangedSignal("AbsolutePosition"):Connect(layoutTimeHud)
+        cashUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutTimeHud)
+        layoutTimeHud()
+    end
+end)
+layoutTimeHud()
+
+-- the bonuses the night event gives (published by NighttimeService, day or night)
+local function updateNightBonuses()
+    timeHud:SetMultipliers({
+        Cash = workspace:GetAttribute("NightBonusCash") or 1,
+        Hatch = workspace:GetAttribute("NightBonusHatchSpeed") or 1,
+        Luck = workspace:GetAttribute("NightBonusRiverLuck") or 1,
+    })
+end
+for _, attributeName in { "NightBonusCash", "NightBonusHatchSpeed", "NightBonusRiverLuck" } do
+    workspace:GetAttributeChangedSignal(attributeName):Connect(updateNightBonuses)
+end
+updateNightBonuses()
+
+-- re-applies the phone scale to the hotbar and the big countdown (tracks the start-up camera's ViewportSize)
 local function rescale()
     hudScale = phoneScale()
     hotbarScale.Scale = hudScale
-    nightBannerScale.Scale = hudScale
     bigCountdownScale.Scale = hudScale
     renderBar()
-    nightBanner.Position = UDim2.new(0.5, 0, 0, (nightState == "night" and 128 or 38) * hudScale)
 end
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale)
 local lastCountdownSecond, countdownTween = nil, nil
@@ -2322,45 +2341,10 @@ local function hideBigCountdown()
     bigCountdownLabel.TextTransparency = 1
     bigCountdownLabel.Text = ""
 end
-local function formatClock(seconds)
-    seconds = math.max(0, math.ceil(seconds))
-    return string.format("%d:%02d", seconds // 60, seconds % 60)
-end
--- day -> night: grow the banner and drop it lower, then fade in the title and perks
-local function playNightTransition()
-    nightState = "night"
-    tween(
-        nightBanner,
-        1.6,
-        { Position = UDim2.new(0.5, 0, 0, 128 * hudScale), Size = UDim2.fromOffset(340, 136) },
-        Enum.EasingStyle.Quint
-    )
-    task.delay(0.9, function()
-        if nightState == "night" then
-            tween(nightTitleLabel, 0.5, { TextTransparency = 0 })
-            tween(nightPerksLabel, 0.5, { TextTransparency = 0 })
-        end
-    end)
-    nightBannerStroke.Color = Color3.fromRGB(255, 220, 120)
-end
--- night -> day: shrink the banner back to the top and hide the title and perks
-local function playDayTransition()
-    nightState = "day"
-    tween(
-        nightBanner,
-        1,
-        { Position = UDim2.new(0.5, 0, 0, 38 * hudScale), Size = UDim2.fromOffset(250, 110) },
-        Enum.EasingStyle.Quad
-    )
-    tween(nightTitleLabel, 0.2, { TextTransparency = 1 })
-    tween(nightPerksLabel, 0.2, { TextTransparency = 1 })
-    nightBannerStroke.Color = Color3.fromRGB(140, 120, 255)
-end
--- last 5 s before night: red label + a big number that pops in once per second; otherwise normal colour
+-- last 5 s before night: a big number that pops in once per second
 local function updateBigCountdown(secondsLeft)
     local wholeSeconds = math.ceil(secondsLeft)
     if secondsLeft <= 5 and secondsLeft > 0 then
-        nightCountdownLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
         if wholeSeconds ~= lastCountdownSecond then
             lastCountdownSecond = wholeSeconds
             if countdownTween then
@@ -2371,36 +2355,24 @@ local function updateBigCountdown(secondsLeft)
             bigCountdownLabel.TextSize = 150
             countdownTween = tween(bigCountdownLabel, 0.9, { TextSize = 100, TextTransparency = 0.6 })
         end
-    else
-        nightCountdownLabel.TextColor3 = Color3.fromRGB(220, 215, 255)
-        if lastCountdownSecond then
-            hideBigCountdown()
-        end
+    elseif lastCountdownSecond then
+        hideBigCountdown()
     end
 end
--- Every frame. Night: the banner grows, drops to y=128 and shows title + perks (hidden on compact screens).
--- Day: the banner shrinks back and counts down to the next night, with a big 5..1 countdown in the last 5 s.
+-- Every frame, from the server's night attributes and server time (no local timer). The HUD names the NEXT
+-- event: during the day it counts down to the night (Night look), during the night to daylight (Day look).
 RunService.RenderStepped:Connect(function()
     local now = workspace:GetServerTimeNow()
-    local isNight = workspace:GetAttribute("NighttimeActive")
-    local isCompact = math.min(gui.AbsoluteSize.X, gui.AbsoluteSize.Y) < 600
-    nightTitleLabel.Visible = isNight == true and not isCompact
-    nightPerksLabel.Visible = isNight == true and not isCompact
-    if isNight then
-        local secondsLeft = (workspace:GetAttribute("NighttimeEndsAt") or now) - now
-        if nightState ~= "night" then
-            playNightTransition()
-        end
+    if workspace:GetAttribute("NighttimeActive") then
+        timeHud:SetMode("Day")
+        timeHud:SetRemainingTime((workspace:GetAttribute("NighttimeEndsAt") or now) - now)
         if lastCountdownSecond then
             hideBigCountdown()
         end
-        nightCountdownLabel.Text = (isCompact and "🌙 NIGHT • " or "ENDS IN ") .. formatClock(secondsLeft)
     else
         local secondsLeft = (workspace:GetAttribute("NighttimeNextAt") or now) - now
-        if nightState ~= "day" then
-            playDayTransition()
-        end
-        nightCountdownLabel.Text = "🌙  NIGHT IN " .. formatClock(secondsLeft)
+        timeHud:SetMode("Night")
+        timeHud:SetRemainingTime(secondsLeft)
         updateBigCountdown(secondsLeft)
     end
 end)
@@ -2419,113 +2391,12 @@ do
     task.delay(3, showAwayEarnings)
 end
 
--- ===== 11. PLOT button (above the 4 side buttons; rounded by request; key H) =====
+-- ===== 11. Go home: key H + the server's reply (the HOME button itself is GameMenus' left menu) =====
 do
     local goHomeRemote = ReplicatedStorage:WaitForChild("GoHome", 10)
-    local holder =
-        create("Frame", { Name = "HomeButton", Size = UDim2.fromOffset(212, 50), BackgroundTransparency = 1 }, gui)
-    local shadow = create("Frame", {
-        Name = "Shadow",
-        Position = UDim2.fromOffset(0, 5),
-        Size = UDim2.new(1, 0, 1, -5),
-        BackgroundColor3 = Color3.new(0, 0, 0),
-        BorderSizePixel = 0,
-    }, holder)
-    create("UICorner", { CornerRadius = UDim.new(0, 14) }, shadow)
-    shadow:SetAttribute("KeepRound", true)
-    local plotButton = create("TextButton", {
-        Name = "Button",
-        Size = UDim2.new(1, 0, 1, -5),
-        BackgroundColor3 = Color3.fromRGB(255, 176, 40),
-        BorderSizePixel = 0,
-        Text = "",
-        AutoButtonColor = false,
-        ZIndex = 2,
-    }, holder)
-    plotButton:SetAttribute("KeepRound", true)
-    create("UICorner", { CornerRadius = UDim.new(0, 14) }, plotButton)
-    create(
-        "UIStroke",
-        { Color = Color3.new(0, 0, 0), Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-        plotButton
-    )
-    local studsImage = create("ImageLabel", {
-        Name = "Studs",
-        BackgroundTransparency = 1,
-        Size = UDim2.fromScale(1, 1),
-        Image = "rbxassetid://132561191216691",
-        ScaleType = Enum.ScaleType.Tile,
-        TileSize = UDim2.fromOffset(22, 22),
-        ImageTransparency = 0.15,
-        ZIndex = 2,
-    }, plotButton)
-    studsImage:SetAttribute("KeepRound", true)
-    create("UICorner", { CornerRadius = UDim.new(0, 14) }, studsImage)
-    local plotLabel = create("TextLabel", {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        Text = "PLOT",
-        FontFace = FONT,
-        TextSize = 30,
-        TextColor3 = Color3.new(1, 1, 1),
-        ZIndex = 3,
-    }, plotButton)
-    create("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 3 }, plotLabel)
-    -- sit right above the side buttons (GameMenus.SideButtons), same width, follows their responsive scale
-    local sideButtons
-    local function placePlotButton()
-        sideButtons = sideButtons
-            or (playerGui:FindFirstChild("GameMenus") and playerGui.GameMenus:FindFirstChild("SideButtons"))
-        if not sideButtons then
-            return
-        end
-        local sidePosition, sideSize = sideButtons.AbsolutePosition, sideButtons.AbsoluteSize
-        local buttonHeight = math.floor(sideSize.X * 112 / 372)
-        holder.Size = UDim2.fromOffset(sideSize.X, buttonHeight)
-        local screenSize = gui.AbsoluteSize
-        local isCompact = math.min(screenSize.X, screenSize.Y) < 600
-        if isCompact and screenSize.X >= screenSize.Y then
-            local nightBar = playerGui:FindFirstChild("NightBar")
-            local banner = nightBar and nightBar:FindFirstChildWhichIsA("Frame")
-            local bannerWidth = banner and banner.AbsoluteSize.X or 174
-            holder.Position = UDim2.fromOffset(10 + bannerWidth + 10, 0)
-        else
-            holder.Position = UDim2.fromOffset(
-                sidePosition.X - gui.AbsolutePosition.X,
-                sidePosition.Y - gui.AbsolutePosition.Y - buttonHeight - 8
-            )
-        end
-        plotLabel.TextSize = math.floor(buttonHeight * 0.6)
-    end
-    task.spawn(function()
-        local gameMenus = playerGui:WaitForChild("GameMenus", 30)
-        sideButtons = gameMenus and gameMenus:WaitForChild("SideButtons", 30)
-        if not sideButtons then
-            return
-        end
-        sideButtons:GetPropertyChangedSignal("AbsolutePosition"):Connect(placePlotButton)
-        sideButtons:GetPropertyChangedSignal("AbsoluteSize"):Connect(placePlotButton)
-        placePlotButton()
-    end)
-    local function goHome()
-        if goHomeRemote then
-            goHomeRemote:FireServer()
-        end
-        plotButton.Position = UDim2.fromOffset(0, 4)
-        task.delay(0.1, function()
-            plotButton.Position = UDim2.fromOffset(0, 0)
-        end)
-    end
-    plotButton.Activated:Connect(goHome)
-    plotButton.MouseEnter:Connect(function()
-        plotButton.Position = UDim2.fromOffset(0, -2)
-    end)
-    plotButton.MouseLeave:Connect(function()
-        plotButton.Position = UDim2.fromOffset(0, 0)
-    end)
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if not gameProcessed and input.KeyCode == Enum.KeyCode.H then
-            goHome()
+        if not gameProcessed and input.KeyCode == Enum.KeyCode.H and goHomeRemote then
+            goHomeRemote:FireServer()
         end
     end)
     if goHomeRemote then

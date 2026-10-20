@@ -5,8 +5,8 @@ Values are kept on the player as attributes for this session (MusicVolume, SFXVo
 Persistence: PlayerDataService restores saved values onto those attributes; this script first waits up to 8 s for
 the DataLoaded attribute. Changes are sent back via ReplicatedStorage.SaveSettings:FireServer({ <key> = value, ... })
 for the keys in savedKeys, debounced to one send per 1.5 s.
-Other scripts read the attributes (ReducedMotion, NightFX, HideLabels) and the gear button's holder frame
-(FigmaSkin re-parents it into its side-button row; layoutSettings only positions it while it is still in gui).
+Other scripts read the attributes (ReducedMotion, NightFX, HideLabels). The gear button is kept but hidden: the
+left menu's SETTINGS button (GameMenus.MenuLogic) fires the "Toggle" BindableEvent (child of MusicSettingsUI).
 ]]
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -490,21 +490,25 @@ end
 toggle.Activated:Connect(function()
     setOpen(not isOpen)
 end)
+-- the left menu's SETTINGS button (GameMenus.MenuLogic) opens / closes the panel through this bindable
+local toggleEvent = Instance.new("BindableEvent")
+toggleEvent.Name = "Toggle"
+toggleEvent.Event:Connect(function()
+    setOpen(not isOpen)
+end)
+toggleEvent.Parent = gui
+toggle.Parent.Visible = false -- the gear button is replaced by the left menu's SETTINGS button
 closeButton.Activated:Connect(function()
     setOpen(false)
 end)
 
--- Hide Settings toggle when a GameMenu panel is open so it can't cover
--- the panel's Close button on compact screens.
+-- Close the Settings panel when a GameMenu panel opens.
 local gameMenusGui = playerGui:WaitForChild("GameMenus", 10)
 if gameMenusGui then
     local dim = gameMenusGui:WaitForChild("Dim", 5)
     if dim then
         local function onMenuOverlay()
             local menuOpen = dim.Visible
-            -- Hide the settings toggle when a menu panel is covering the screen
-            -- the Settings button now sits in the small row under the side buttons (FigmaSkin), so it never covers a panel: keep it visible
-            toggle.Parent.Visible = true
             -- If the settings panel was open, close it so it doesn't fight the menu
             if menuOpen and isOpen then
                 setOpen(false)

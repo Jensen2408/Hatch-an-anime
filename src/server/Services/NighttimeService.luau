@@ -7,10 +7,13 @@ Update(now) is called ~10x per second by NighttimeClock and publishes workspace 
   NighttimeActive, NighttimeEndsAt, NighttimeNextAt   -> read by NighttimeHUD / NighttimeSky (clients)
   NightCashMultiplier (3 / 1), NightHatchSpeedMultiplier (2 / 1), NightRiverLuckMultiplier (3 / 1)
                                                        -> read by income, HatchGoo and river egg spawners
+  NightBonusCash, NightBonusHatchSpeed, NightBonusRiverLuck (always the night values, day or night)
+                                                       -> read by the time HUD (GameHUD) to show the bonuses
 Returns whether night is active.
 ]]
 local CYCLE_SECONDS = 300 -- a night starts every 5 minutes
 local NIGHT_SECONDS = 20 -- and lasts 20 s
+local NIGHT_BONUS = { Cash = 3, HatchSpeed = 2, RiverLuck = 3 } -- multipliers while night is active
 
 local Service = {}
 
@@ -27,9 +30,12 @@ function Service.Update(now)
     workspace:SetAttribute("NighttimeActive", active)
     workspace:SetAttribute("NighttimeEndsAt", endsAt)
     workspace:SetAttribute("NighttimeNextAt", cycleStart + CYCLE_SECONDS)
-    workspace:SetAttribute("NightCashMultiplier", active and 3 or 1)
-    workspace:SetAttribute("NightHatchSpeedMultiplier", active and 2 or 1)
-    workspace:SetAttribute("NightRiverLuckMultiplier", active and 3 or 1)
+    workspace:SetAttribute("NightCashMultiplier", active and NIGHT_BONUS.Cash or 1)
+    workspace:SetAttribute("NightHatchSpeedMultiplier", active and NIGHT_BONUS.HatchSpeed or 1)
+    workspace:SetAttribute("NightRiverLuckMultiplier", active and NIGHT_BONUS.RiverLuck or 1)
+    workspace:SetAttribute("NightBonusCash", NIGHT_BONUS.Cash)
+    workspace:SetAttribute("NightBonusHatchSpeed", NIGHT_BONUS.HatchSpeed)
+    workspace:SetAttribute("NightBonusRiverLuck", NIGHT_BONUS.RiverLuck)
     return active
 end
 

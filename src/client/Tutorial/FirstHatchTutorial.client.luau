@@ -11,7 +11,7 @@ advances it. Step 13 / Player.TutorialCompleted ends the guide.
 Reads player attributes TutorialDataReady, TutorialCompleted, JoinArrivalStarted / JoinArrivalFinished.
 Depends on instance names owned by other scripts (see the GameHUD / MenuLogic headers):
   PlayerGui.GameHUD.EggBag, GameMenus.Dim / .Plot (attribute Page, child Live with UpgradesTab,
-  TempleUpgrades, IncubatorUpgrades) / .SideButtons.PlotButton, MusicSettingsUI.Panel, CharacterInventory,
+  TempleUpgrades, IncubatorUpgrades) / .LeftMenu (descendant PlotButton), MusicSettingsUI.Panel, CharacterInventory,
   OwnerPanel, StolenEggBanner.Frame, CinematicHatchUI (attribute Active), PromptCard billboards,
   HatchLoading / LaunchLoadingScreen.
 ]]
@@ -576,8 +576,8 @@ local function updateTour()
     nextButton.Visible = false
     nextAction = nil
     if not isPlotOpen then
-        local sideButtons = gameMenus and gameMenus:FindFirstChild("SideButtons")
-        wantedTarget = sideButtons and sideButtons:FindFirstChild("PlotButton")
+        local leftMenu = gameMenus and gameMenus:FindFirstChild("LeftMenu")
+        wantedTarget = leftMenu and leftMenu:FindFirstChild("PlotButton", true)
         coachBody.Text = "You can add more upgrades to your plot. Press Plot to find them."
     elseif currentStep == 9 then
         acknowledge("PlotOpened")

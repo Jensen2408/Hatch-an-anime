@@ -3,7 +3,7 @@ Opens/closes the four ForgeGUI panels and fills them with live data from ServerS
 All positions below are fractions of each panel image, so they scale with it (except the shop, which is
 laid out in pixels at a design width and scaled with its UIScale — see layoutMenus).
 
-Panels (ImageLabel children of this ScreenGui, opened by the SideButtons whose "Panel" attribute names them):
+Panels (ImageLabel children of this ScreenGui, opened by the left menu (LeftMenuComponent / LeftMenuConfig):
   Index    RENDER.Index    character collection: season tabs, rarity filters, 5x3 grid, detail card
   Quests   RENDER.Quests   Daily / Weekly / Milestone quest lists with Claim buttons
   VipShop  RENDER.VipShop  Robux shop (limited deal, boosts, passes, cash packs, daily rewards)
@@ -15,19 +15,20 @@ Remotes (contract documented in GameMenuServer.server.luau / GameAdapter.luau):
   ReplicatedStorage.GameMenu.Remotes.Action    (RF)  runAction(name, args) -> ok   (toast shows the message)
   ReplicatedStorage.GameMenu.Remotes.Changed   (RE)  server says "your data changed" -> refresh()
   ReplicatedStorage.ShopSystem.ShopRemote      (RF)  VipShop only: "State", "Buy", "BuyMoneyLevel", "ClaimDaily"
+  ReplicatedStorage.GoHome                     (RE)  left menu HOME button: FireServer() (GameHUD shows the reply)
+Left menu SETTINGS fires PlayerGui.MusicSettingsUI.Toggle (Bindable, MusicSettings).
 Bindables created here (children of this ScreenGui, used by other LocalScripts):
   LocalRefresh  (fire to re-render the open panel, e.g. Plot/PromptCards)
   OpenMenu      (fire with a panel name to open it, e.g. FigmaSkin)
 Cross-script globals: _G.__shopPrices  [("p"|"d") .. id] = live Robux price | false (lookup pending/failed);
   shared with any script that reads the same cache. Warmed once at start (bottom of file) and by the shop.
 Attributes: panel "Fit" (UIScale for the current screen, written by layoutMenus), "Page" (Plot), card "Inner",
-  workspace "HalloweenMode" / "HalloweenEndsAt", plot "OwnerUserId", slot/chamber attributes (read-only),
-  ReplicatedStorage.GameMenuImages "Tile<ButtonName>" (side-button icon overrides).
+  workspace "HalloweenMode" / "HalloweenEndsAt", plot "OwnerUserId", slot/chamber attributes (read-only).
 
 Init order (all at top level, in this order — WaitForChild calls yield):
-  Dim + SideButtons -> DisplayOrder hook -> responsive layout -> remotes / Config / UISound -> helpers and
-  RENDER fns -> hide all panels -> refresh/close/show -> Dim click, Changed, LocalRefresh, OpenMenu ->
-  side buttons (WaitForChild per panel) -> tile icons -> deferred shop price warm-up.
+  Dim + SideButtons (hidden) -> left menu -> DisplayOrder hook -> responsive layout -> remotes / Config / UISound
+  -> helpers and RENDER fns -> hide all panels -> refresh/close/show -> Dim click, Changed, LocalRefresh, OpenMenu
+  -> panel Close buttons + left menu buttons (WaitForChild per panel) -> deferred shop price warm-up.
 
 Contents: 1 layout · 2 shared UI primitives · 3 clean skin · 4 toast + remotes · 5 v3 cards/tabs ·
   6 Index · 7 Quests · 8 VipShop · 9 Plot (legacy pages + current) · 10 open/close + wiring · 11 price warm-up
@@ -53,9 +54,16 @@ updateOverlayOrder()
 gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
 local SHOP_PHONE_WIDTH = 680
 local closingPanel -- panel playing its close tween
-local sideScale = Instance.new("UIScale")
-sideScale.Name = "ResponsiveScale"
-sideScale.Parent = sideButtons
+-- The left menu (LeftMenuComponent, art buttons) replaces the Studio-built SideButtons, which stay hidden.
+local LeftMenuConfig = require(gui:WaitForChild("LeftMenuConfig"))
+local leftMenu = require(gui:WaitForChild("LeftMenuComponent")).new(gui)
+sideButtons.Visible = false
+leftMenu.Root.ZIndex = sideButtons.ZIndex
+for _, descendant in leftMenu.Root:GetDescendants() do
+    if descendant:IsA("GuiObject") then
+        descendant.ZIndex = sideButtons.ZIndex
+    end
+end
 local function extendDimPastInsets(screenSize)
     -- The ScreenGui sits inside the safe insets (top bar / notch), so the dim backdrop must reach
     -- past them or the screen edges stay undimmed on phones.
@@ -97,13 +105,21 @@ local function layoutMenus()
         return
     end
     extendDimPastInsets(screenSize)
-    local compact = math.min(screenSize.X, screenSize.Y) < 600
-    local desktopScale = compact and math.min(1, screenSize.X / 600, screenSize.Y / 560) or 1
-    -- Phone buttons are 20% smaller; desktop keeps its original size.
-    sideScale.Scale = compact and math.clamp(screenSize.Y * 0.15, 44, 52) / 92 or desktopScale
-    sideButtons.AnchorPoint = compact and Vector2.new(0, 0) or Vector2.new(0, 0.5)
-    sideButtons.Position = compact and UDim2.fromOffset(10, screenSize.X < screenSize.Y and 82 or 48)
-        or UDim2.new(0, 16, 0.5, 0)
+    local compact = math.min(screenSize.X, screenSize.Y) < LeftMenuConfig.CompactBreakpoint
+    -- left menu: desktop = left edge, vertically centred; phones = top-left with smaller buttons
+    if compact then
+        local phone = LeftMenuConfig.Compact
+        leftMenu:SetButtonPx(
+            math.clamp(screenSize.Y * phone.ButtonPxPerScreenHeight, phone.MinButtonPx, phone.MaxButtonPx)
+        )
+        leftMenu.Root.AnchorPoint = Vector2.new(0, 0)
+        leftMenu.Root.Position =
+            UDim2.fromOffset(phone.Margin, screenSize.X < screenSize.Y and phone.TopPortrait or phone.Top)
+    else
+        leftMenu:SetButtonPx(LeftMenuConfig.Desktop.ButtonPx)
+        leftMenu.Root.AnchorPoint = Vector2.new(0, 0.5)
+        leftMenu.Root.Position = UDim2.new(0, LeftMenuConfig.Desktop.Margin, 0.5, 0)
+    end
     for _, name in { "Plot", "Index", "Quests", "VipShop" } do
         fitPanelToScreen(name, screenSize, compact)
     end
@@ -3819,62 +3835,54 @@ do
     end)
 end
 
-for _, sideButton in sideButtons:GetChildren() do
-    if sideButton:IsA("GuiButton") then
-        local panel = gui:WaitForChild(sideButton:GetAttribute("Panel"))
-        panel:WaitForChild("Close").Activated:Connect(closeMenu)
-        local hoverScale = sideButton:FindFirstChildOfClass("UIScale")
-        sideButton.MouseEnter:Connect(function()
-            UISound.Play("Hover")
-            if hoverScale then
-                TweenService:Create(hoverScale, TweenInfo.new(0.12), { Scale = 1.08 }):Play()
-            end
-        end)
-        sideButton.MouseLeave:Connect(function()
-            if hoverScale then
-                TweenService:Create(hoverScale, TweenInfo.new(0.12), { Scale = 1 }):Play()
-            end
-        end)
-        local face = sideButton:FindFirstChild("Face", true)
-        if face then
-            sideButton.MouseButton1Down:Connect(function()
-                TweenService:Create(face, TweenInfo.new(0.06), { Position = UDim2.new(0.5, 0, 0, 9) }):Play()
-            end)
-            local function raiseFace()
-                TweenService
-                    :Create(face, TweenInfo.new(0.12, Enum.EasingStyle.Back), { Position = UDim2.new(0.5, 0, 0, 4) })
-                    :Play()
-            end
-            sideButton.MouseButton1Up:Connect(raiseFace)
-            sideButton.MouseLeave:Connect(raiseFace)
-        end
-        sideButton.Activated:Connect(function()
-            UISound.Play("Click")
-            showPanel(panel)
-        end)
-    end
+for _, panelName in { "Plot", "Index", "Quests", "VipShop" } do
+    gui:WaitForChild(panelName):WaitForChild("Close").Activated:Connect(closeMenu)
 end
 
--- TileIcons: use the object-only icons once they're set in ReplicatedStorage.GameMenuImages
-local menuImages = ReplicatedStorage:FindFirstChild("GameMenuImages")
-if menuImages then
-    for _, sideButton in sideButtons:GetChildren() do
-        if sideButton:IsA("GuiButton") then
-            local tileIcon = sideButton:FindFirstChild("Icon", true)
-            local tileIconShadow = sideButton:FindFirstChild("IconShadow", true)
-            local function applyTileImage()
-                local tileImage = menuImages:GetAttribute("Tile" .. sideButton.Name)
-                if tileIcon and tileImage and tileImage ~= "" then
-                    tileIcon.Image = tileImage
-                    if tileIconShadow then
-                        tileIconShadow.Image = tileImage
-                    end
-                end
-            end
-            menuImages:GetAttributeChangedSignal("Tile" .. sideButton.Name):Connect(applyTileImage)
-            applyTileImage()
+-- Left menu buttons -> the existing actions (same sounds as the old side buttons)
+do
+    local goHomeRemote = ReplicatedStorage:WaitForChild("GoHome", 10)
+    local function toggleSettings()
+        -- MusicSettings owns the Settings panel; its Toggle bindable runs its own open/close
+        local settingsGui = player.PlayerGui:FindFirstChild("MusicSettingsUI")
+        local toggle = settingsGui and settingsGui:FindFirstChild("Toggle")
+        if toggle then
+            toggle:Fire()
         end
     end
+    for _, menuButton in leftMenu.Buttons do
+        menuButton.MouseEnter:Connect(function()
+            UISound.Play("Hover")
+        end)
+    end
+    for _, entry in LeftMenuConfig.Grid do
+        local menuButton = leftMenu.Buttons[entry.Key]
+        if entry.Key == "Settings" then
+            menuButton.Activated:Connect(toggleSettings)
+        elseif entry.Key == "Daily" then
+            -- as before: opens the shop (where the daily rewards are), never closes it
+            local panel = gui:WaitForChild(entry.Panel)
+            menuButton.Activated:Connect(function()
+                UISound.Play("Click")
+                if openPanel ~= panel then
+                    showPanel(panel)
+                end
+            end)
+        else
+            local panel = gui:WaitForChild(entry.Panel)
+            menuButton.Activated:Connect(function()
+                UISound.Play("Click")
+                showPanel(panel)
+            end)
+        end
+    end
+    -- Home: the same GoHome remote as GameHUD's H key (GameHUD shows the server's reply)
+    leftMenu.Buttons.Home.Activated:Connect(function()
+        UISound.Play("Click")
+        if goHomeRemote then
+            goHomeRemote:FireServer()
+        end
+    end)
 end
 
 -- ===== 11. Warm the shared Robux price cache (_G.__shopPrices) without blocking start-up =====
