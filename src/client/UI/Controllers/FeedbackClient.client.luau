@@ -1,10 +1,12 @@
 --[[ StarterPlayerScripts.FeedbackClient (LocalScript)
-Feedback button (right side) + window. Builds the "FeedbackUI" ScreenGui in PlayerGui:
-  FeedbackButton   opens the window (FigmaSkin hides its drawn children and lays Figma art over it)
+Top-right HUD + feedback window. Builds the "FeedbackUI" ScreenGui in PlayerGui:
+  TopRightHUD      ReplicatedStorage.TopRightHUD component: Backpack counter + FeedbackButton (opens the window)
   dimmer (TextButton, full screen) > window: header, close X, BUG / IDEA / OTHER picker, text box, SEND, status line
 Remote: ReplicatedStorage.SendFeedback (RemoteFunction, server: FeedbackService)
   InvokeServer(kind, text) -> ok, message. The server re-validates, trims to 500 characters, filters the text and
   enforces the cooldown; the 500-character limit here is only for the player's benefit.
+Backpack counter = "characters in the Backpack (or held) / unlocked plot slots", from the CharacterInventory
+  snapshot (InventoryRequest "Fetch" once, then every InventoryEvent "Snapshot" the server pushes on change).
 Sounds: UISound "Open" / "Close" (the dimmer is UISoundMuted so its click does not play the default sound).
 ]]
 
@@ -117,42 +119,70 @@ local function setZIndexDeep(root, zIndex)
     end
 end
 
--- ===== 3. Feedback button =====
+-- ===== 3. Top-right HUD: Backpack counter + Feedback button =====
 local gui = create(
     "ScreenGui",
     { Name = "FeedbackUI", ResetOnSpawn = false, DisplayOrder = 55, ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets },
     playerGui
 )
-local openButton, openLabel = createButton3D(
-    gui,
-    "💬 FEEDBACK",
-    Color3.fromRGB(88, 101, 242),
-    UDim2.fromOffset(150, 46),
-    UDim2.new(1, -12, 0.5, 90),
-    Vector2.new(1, 0.5)
-)
-openButton.Name = "FeedbackButton"
-local function layoutFeedbackButton()
+local TopRightHUD = game.ReplicatedStorage:WaitForChild("TopRightHUD")
+local TopRightConfig = require(TopRightHUD:WaitForChild("TopRightConfig"))
+local topRight = require(TopRightHUD:WaitForChild("TopRightComponent")).new(gui)
+local openButton = topRight.FeedbackButton
+-- the whole HUD is scaled as one piece and kept in the top-right corner. Anchored at its centre (like the cash
+-- panel) so the UIScale shrink can't shift the visible panel away from the corner.
+local function layoutTopRight()
     local view = gui.AbsoluteSize
     if view.X <= 0 or view.Y <= 0 then
         return
     end
-    local compact = math.min(view.X, view.Y) < 600
+    local compact = math.min(view.X, view.Y) < TopRightConfig.CompactBreakpoint
+    local scale = compact and TopRightConfig.Scale.Compact or TopRightConfig.Scale.Desktop
+    -- phones: same spots as the old button (top-right; portrait drops below the cash panel). Desktop: 12 / 16 px.
+    local right, top = 12, 16
     if compact then
-        -- Keep the lower-right touch-control area free in either orientation.
-        openButton.AnchorPoint = Vector2.new(1, 0)
-        openButton.Size = UDim2.fromOffset(100, 40)
-        openButton.Position = UDim2.new(1, -10, 0, view.X >= view.Y and 8 or 150)
-        openLabel.TextSize = 14
-    else
-        openButton.AnchorPoint = Vector2.new(1, 0)
-        openButton.Size = UDim2.fromOffset(168, 53)
-        openButton.Position = UDim2.new(1, -12, 0, 16)
-        openLabel.TextSize = 18
+        right, top = 10, view.X >= view.Y and 8 or 150
     end
+    local rootSize = topRight.Root.Size
+    local width, height = rootSize.X.Offset * scale, rootSize.Y.Offset * scale
+    topRight.Scale.Scale = scale
+    topRight.Root.AnchorPoint = Vector2.new(0.5, 0.5)
+    topRight.Root.Position = UDim2.new(1, -(right + width / 2), 0, top + height / 2)
 end
-gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutFeedbackButton)
-layoutFeedbackButton()
+gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutTopRight)
+layoutTopRight()
+
+-- Backpack counter: characters in the Backpack (or held) / unlocked plot slots
+local function applySnapshot(snapshot)
+    if type(snapshot) ~= "table" then
+        return
+    end
+    local count = 0
+    for _, item in snapshot.items or {} do
+        if item.state == "Backpack" or item.state == "Held" then
+            count += 1
+        end
+    end
+    topRight:SetCapacity(count, snapshot.capacity and snapshot.capacity.unlocked or 0)
+end
+task.spawn(function()
+    local inventoryFolder = game.ReplicatedStorage:WaitForChild("CharacterInventory")
+    inventoryFolder:WaitForChild("InventoryEvent").OnClientEvent:Connect(function(kind, payload)
+        if kind == "Snapshot" then
+            applySnapshot(payload)
+        end
+    end)
+    -- the first snapshot; the server rate-limits requests ("Busy"), so retry a few times
+    local inventoryRequest = inventoryFolder:WaitForChild("InventoryRequest")
+    for attempt = 1, 5 do
+        local ok, response = pcall(inventoryRequest.InvokeServer, inventoryRequest, "Fetch")
+        if ok and type(response) == "table" and response.ok then
+            applySnapshot(response.snapshot)
+            return
+        end
+        task.wait(attempt)
+    end
+end)
 -- ===== 4. Window =====
 local dimmer = create("TextButton", {
     Text = "",

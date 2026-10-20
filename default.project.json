@@ -3437,6 +3437,16 @@
           "$path": "src/shared/UI/TimeHUD/TimeComponent.luau"
         }
       },
+      "TopRightHUD": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "TopRightConfig": {
+          "$path": "src/shared/UI/TopRightHUD/TopRightConfig.luau"
+        },
+        "TopRightComponent": {
+          "$path": "src/shared/UI/TopRightHUD/TopRightComponent.luau"
+        }
+      },
       "CharacterInventory": {
         "$className": "Folder",
         "$ignoreUnknownInstances": true,
