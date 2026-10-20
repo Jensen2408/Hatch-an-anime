@@ -344,10 +344,14 @@ local function runCycle(player, resumeTool, resumeLeft)
                 * (player and player:GetAttribute("HatchMultiplier") or 1)
             workLeft = math.max(0, workLeft - (now - previousTime) * speed)
             previousTime = now
-            local remaining = math.ceil(workLeft / speed)
-            timerText.Text = EggHatchTiming.Format(remaining) .. (speed > 1 and "  •  2×" or "")
-            chamber:SetAttribute("CycleEnd", now + workLeft / speed)
-            chamber:SetAttribute("HatchDuration", hatchSeconds / speed)
+            -- The countdown shows unboosted seconds, so a boost makes it tick faster instead of
+            -- cutting the shown time down at once. CycleEnd / HatchDuration stay unboosted too
+            -- (PlayerDataService saves CycleEnd - now as the resume workLeft).
+            local remaining = math.ceil(workLeft)
+            timerText.Text = EggHatchTiming.Format(remaining)
+                .. (speed > 1 and string.format("  •  %g×", speed) or "")
+            chamber:SetAttribute("CycleEnd", now + workLeft)
+            chamber:SetAttribute("HatchDuration", hatchSeconds)
             statusLabel.Text = string.format("INCUBATING • %02d:%02d", math.floor(remaining / 60), remaining % 60)
             local progress = 1 - workLeft / hatchSeconds
             tankLiquid.Size = liquidFullSize:Lerp(Vector3.new(0.5, liquidFullSize.Y, liquidFullSize.Z), progress)
