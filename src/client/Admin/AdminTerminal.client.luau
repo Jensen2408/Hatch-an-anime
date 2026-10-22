@@ -452,6 +452,22 @@ defineCommand({ "admin" }, "/admin <add|remove> <userId|@name>", "owner: share t
     end
     sendAction("SetAdmin", { userId = userId, on = (args[1] or ""):lower() ~= "remove" })
 end)
+defineCommand(
+    { "setfreecam", "freecam" },
+    "/setfreecam <add|remove> <userId|@name>",
+    "owner: give freecam only (Shift + P)",
+    function(args)
+        local userId = tonumber(args[2])
+        if not userId and args[2] then
+            local found = findPlayer(args[2])
+            userId = found and found.UserId
+        end
+        if not need(userId, "/setfreecam add <userId|@name>") then
+            return
+        end
+        sendAction("SetFreecam", { userId = userId, on = (args[1] or ""):lower() ~= "remove" })
+    end
+)
 defineCommand({ "clear", "cls" }, "/clear", "clear this window", function()
     for _, child in logFrame:GetChildren() do
         if child:IsA("TextLabel") then

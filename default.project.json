@@ -88,6 +88,9 @@
         "VIPChatTag": {
           "$path": "src/client/Admin/VIPChatTag.client.luau"
         },
+        "StaffFreecam": {
+          "$path": "src/client/Admin/StaffFreecam.client.luau"
+        },
         "StolenEggCarryPose": {
           "$path": "src/client/Egg/StolenEggCarryPose.client.luau"
         },

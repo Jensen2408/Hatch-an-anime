@@ -5,12 +5,17 @@ Who is authorized
   Owners  hard-coded UserIds in AdminRoles.Owners (168774222).
   Admins  hard-coded UserIds in AdminRoles.Admins (353101613, CO-OWNER) plus the ones added on the owner panel's Admins
           page (SetAdmin), persisted in DataStore "PanelAdmins_v1", key "list" = { [tostring(userId)] = name }.
+Freecam-only users
+  Added with the terminal's /setfreecam (SetFreecam, owner-only), persisted in the same DataStore, key "freecam" =
+  { [tostring(userId)] = name }. They get the Shift + P freecam and nothing else (no Role, no panel / terminal).
 How it is checked
   AdminRoles.Role(playerOrId) -> "Owner" | "Admin" | nil, from the tables above (pure lookup, never trusts the client).
   AdminRoles.Can(player, action) -> Owner always, Admin only when AdminActions[action] == true.
+  AdminRoles.CanFreecam(playerOrId) -> any staff Role, or a freecam-only user.
   Studio only: workspace attribute StudioTestRole = "Admin" makes an owner resolve as "Admin" (to test the admin view).
 Replicated output
-  Player attribute "PanelRole" (Role result) is set on join and after SetAdmin. Clients only use it to decide whether to
+  Player attribute "PanelRole" (Role result) is set on join and after SetAdmin; "FreecamAccess" (CanFreecam) on join
+  and after SetAdmin / SetFreecam (read by StaffFreecam). Clients only use it to decide whether to
   build the panel UI; every server entry point calls Role / Can again.
 Known issue (docs/PROJECT_AUDIT.md): the saved list is read once at server start, so a revoked admin keeps access on
 other running servers until they restart. SetAdmin only updates this server's copy.
@@ -49,6 +54,7 @@ AdminRoles.AdminActions = {
 
 -- ===== 2. Panel-added admins (DataStore, loaded once at require time; GetAsync yields) =====
 local savedAdmins = {} -- [userId]=name (from DataStore)
+local savedFreecam = {} -- [userId]=name (from DataStore key "freecam")
 local adminStore
 do
     local ok, dataStore = pcall(DataStoreService.GetDataStore, DataStoreService, "PanelAdmins_v1")
@@ -59,6 +65,14 @@ pcall(function()
     if type(data) == "table" then
         for userIdKey, adminName in pairs(data) do
             savedAdmins[tonumber(userIdKey)] = adminName
+        end
+    end
+end)
+pcall(function()
+    local data = adminStore and adminStore:GetAsync("freecam")
+    if type(data) == "table" then
+        for userIdKey, userName in pairs(data) do
+            savedFreecam[tonumber(userIdKey)] = userName
         end
     end
 end)
@@ -90,6 +104,10 @@ function AdminRoles.Can(player, action)
     local role = AdminRoles.Role(player)
     return role == "Owner" or (role == "Admin" and AdminRoles.AdminActions[action] == true)
 end
+function AdminRoles.CanFreecam(playerOrId)
+    local userId = typeof(playerOrId) == "Instance" and playerOrId.UserId or tonumber(playerOrId)
+    return AdminRoles.Role(userId) ~= nil or (userId ~= nil and savedFreecam[userId] ~= nil)
+end
 -- For the owner panel's Admins page. fixed = true means hard-coded here (cannot be removed from the panel).
 function AdminRoles.List()
     local list = {}
@@ -108,6 +126,7 @@ local function publishRole(userId)
     local player = Players:GetPlayerByUserId(userId)
     if player then
         player:SetAttribute("PanelRole", AdminRoles.Role(player))
+        player:SetAttribute("FreecamAccess", AdminRoles.CanFreecam(player))
     end
 end
 -- Owner-only (OwnerPanelServer checks the caller is Owner before calling). Updates this server immediately and
@@ -134,10 +153,29 @@ function AdminRoles.SetAdmin(userId, name, isAdmin)
     publishRole(userId)
     return persisted
 end
+-- Owner-only (SetFreecam is not in AdminActions). Same shape as SetAdmin: this server at once + the DataStore.
+function AdminRoles.SetFreecam(userId, name, allowed)
+    userId = tonumber(userId)
+    assert(userId and userId > 0 and userId % 1 == 0, "Enter a numeric User ID.")
+    savedFreecam[userId] = allowed and (name or tostring(userId)) or nil
+    local persisted = false
+    if adminStore then
+        persisted = pcall(function()
+            adminStore:UpdateAsync("freecam", function(old)
+                old = type(old) == "table" and old or {}
+                old[tostring(userId)] = allowed and (name or tostring(userId)) or nil
+                return old
+            end)
+        end)
+    end
+    publishRole(userId)
+    return persisted
+end
 
 -- ===== 4. Publish PanelRole for every player =====
 local function onPlayerAdded(player)
     player:SetAttribute("PanelRole", AdminRoles.Role(player))
+    player:SetAttribute("FreecamAccess", AdminRoles.CanFreecam(player))
 end
 Players.PlayerAdded:Connect(onPlayerAdded)
 for _, player in ipairs(Players:GetPlayers()) do

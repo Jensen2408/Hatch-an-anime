@@ -299,6 +299,22 @@ handlers.SetAdmin = function(_player, args)
         (args.on and "@" .. name .. " is now an admin" or "@" .. name .. " is no longer an admin")
             .. (persisted and "." or " (this server only; saving works in the published game).")
 end
+handlers.SetFreecam = function(_player, args)
+    local id = tonumber(args.userId)
+    assert(id, "Enter a numeric User ID.")
+    local who = Players:GetPlayerByUserId(id)
+    local name = who and who.Name
+    if not name then
+        local ok, fetchedName = pcall(Players.GetNameFromUserIdAsync, Players, id)
+        name = ok and fetchedName or tostring(id)
+    end
+    local persisted = AdminRoles.SetFreecam(id, name, args.on == true)
+    local note = AdminRoles.Role(id) and " (staff always have freecam)" or ""
+    return true,
+        (args.on and "@" .. name .. " can now use freecam (Shift + P)" or "@" .. name .. " can no longer use freecam")
+            .. note
+            .. (persisted and "." or " (this server only; saving works in the published game).")
+end
 handlers.JoinStaffServer = function(player, _args, _role)
     return StaffServerService.TeleportToStaffServer(player)
 end
