@@ -5,7 +5,7 @@ Top-right HUD + feedback window. Builds the "FeedbackUI" ScreenGui in PlayerGui:
 Remote: ReplicatedStorage.SendFeedback (RemoteFunction, server: FeedbackService)
   InvokeServer(kind, text) -> ok, message. The server re-validates, trims to 500 characters, filters the text and
   enforces the cooldown; the 500-character limit here is only for the player's benefit.
-Backpack counter = "characters in the Backpack (or held) / unlocked plot slots", from the CharacterInventory
+Backpack counter = "characters placed on the plot's stands / stands on the plot", from the CharacterInventory
   snapshot (InventoryRequest "Fetch" once, then every InventoryEvent "Snapshot" the server pushes on change).
 Sounds: UISound "Open" / "Close" (the dimmer is UISoundMuted so its click does not play the default sound).
 ]]
@@ -19,6 +19,7 @@ local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
 local INK = Color3.fromRGB(17, 23, 26)
 local STUDS = "rbxassetid://132561191216691"
+local SEND_TIMEOUT_SECONDS = 20 -- the SEND button gives up (and can be pressed again) if the server never answers
 
 -- ===== 2. UI primitives =====
 local function create(className, props, parent)
@@ -120,31 +121,42 @@ local function setZIndexDeep(root, zIndex)
 end
 
 -- ===== 3. Top-right HUD: Backpack counter + Feedback button =====
-local gui = create(
-    "ScreenGui",
-    { Name = "FeedbackUI", ResetOnSpawn = false, DisplayOrder = 55, ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets },
-    playerGui
-)
+local gui = create("ScreenGui", {
+    Name = "FeedbackUI",
+    ResetOnSpawn = false,
+    DisplayOrder = 55,
+    ScreenInsets = Enum.ScreenInsets.None, -- full screen first, so the phone check sees the real screen size
+    IgnoreGuiInset = true,
+}, playerGui)
 local TopRightHUD = game.ReplicatedStorage:WaitForChild("TopRightHUD")
 local TopRightConfig = require(TopRightHUD:WaitForChild("TopRightConfig"))
+local TimeConfig = require(game.ReplicatedStorage:WaitForChild("TimeHUD"):WaitForChild("TimeConfig"))
 local topRight = require(TopRightHUD:WaitForChild("TopRightComponent")).new(gui)
 local openButton = topRight.FeedbackButton
 -- the whole HUD is scaled as one piece and kept in the top-right corner. Anchored at its centre (like the cash
 -- panel) so the UIScale shrink can't shift the visible panel away from the corner.
+-- Desktop: the gui ignores the top-bar inset like GameHUD's NightBar, so the counter frame's top edge lines up
+-- with the night timer's (TimeConfig.TopMargin from the screen top; the backpack icon pokes out above it).
 local function layoutTopRight()
+    local compact = math.min(gui.AbsoluteSize.X, gui.AbsoluteSize.Y) < TopRightConfig.CompactBreakpoint
+    gui.ScreenInsets = compact and Enum.ScreenInsets.CoreUISafeInsets or Enum.ScreenInsets.None
     local view = gui.AbsoluteSize
     if view.X <= 0 or view.Y <= 0 then
         return
     end
-    local compact = math.min(view.X, view.Y) < TopRightConfig.CompactBreakpoint
     local scale = compact and TopRightConfig.Scale.Compact or TopRightConfig.Scale.Desktop
-    -- phones: same spots as the old button (top-right; portrait drops below the cash panel). Desktop: 12 / 16 px.
-    local right, top = 12, 16
-    if compact then
-        right, top = 10, view.X >= view.Y and 8 or 150
-    end
     local rootSize = topRight.Root.Size
     local width, height = rootSize.X.Offset * scale, rootSize.Y.Offset * scale
+    -- phones: same spots as the old button (top-right; portrait drops below the cash panel)
+    local right, top = 12, 0
+    if compact then
+        right, top = 10, view.X >= view.Y and 8 or 150
+    else
+        local iconOverhang = (TopRightConfig.Boxes.CounterBackground[2] - TopRightConfig.RefBounds[2])
+            * TopRightConfig.Unit
+            * scale
+        top = TimeConfig.TopMargin - iconOverhang
+    end
     topRight.Scale.Scale = scale
     topRight.Root.AnchorPoint = Vector2.new(0.5, 0.5)
     topRight.Root.Position = UDim2.new(1, -(right + width / 2), 0, top + height / 2)
@@ -152,18 +164,13 @@ end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutTopRight)
 layoutTopRight()
 
--- Backpack counter: characters in the Backpack (or held) / unlocked plot slots
+-- Backpack counter: characters placed on the plot's stands / all stands on the plot (locked ones included)
 local function applySnapshot(snapshot)
     if type(snapshot) ~= "table" then
         return
     end
-    local count = 0
-    for _, item in snapshot.items or {} do
-        if item.state == "Backpack" or item.state == "Held" then
-            count += 1
-        end
-    end
-    topRight:SetCapacity(count, snapshot.capacity and snapshot.capacity.unlocked or 0)
+    local capacity = snapshot.capacity or {}
+    topRight:SetCapacity(capacity.placed or 0, capacity.total or 0)
 end
 task.spawn(function()
     local inventoryFolder = game.ReplicatedStorage:WaitForChild("CharacterInventory")
@@ -361,10 +368,25 @@ sendButton.Activated:Connect(function()
     end
     isSending = true
     sendLabel.Text = "..."
-    -- ok = the invoke itself did not error; success / message come from FeedbackService
-    local ok, success, message = pcall(sendFeedbackRemote.InvokeServer, sendFeedbackRemote, selectedKind, textBox.Text)
+    statusLabel.Text = ""
+    -- ok = the invoke itself did not error; success / message come from FeedbackService.
+    -- The invoke runs in its own thread so a server that never answers can't lock the button forever.
+    local result
+    local kind, text = selectedKind, textBox.Text
+    task.spawn(function()
+        result = table.pack(pcall(sendFeedbackRemote.InvokeServer, sendFeedbackRemote, kind, text))
+    end)
+    local startedAt = os.clock()
+    while not result and os.clock() - startedAt < SEND_TIMEOUT_SECONDS do
+        task.wait(0.1)
+    end
     isSending = false
     sendLabel.Text = "SEND"
+    if not result then
+        statusLabel.Text = "Couldn't send. Try again later."
+        return
+    end
+    local ok, success, message = result[1], result[2], result[3]
     if ok and success then
         textBox.Text = ""
         statusLabel.Text = message

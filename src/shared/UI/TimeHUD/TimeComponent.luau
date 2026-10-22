@@ -161,6 +161,7 @@ function TimeComponent:_buildMode(modeName)
 
     local multiplierPanel = newFrame("MultiplierPanel", hud)
     place(multiplierPanel, boxes.MultiplierPanel, rootBox)
+    multiplierPanel.Visible = mode.ShowMultipliers ~= false
     newCard(
         "MultiplierBackground",
         mode.MultiplierCard,

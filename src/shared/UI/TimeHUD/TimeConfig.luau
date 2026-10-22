@@ -49,6 +49,8 @@ TimeConfig.Modes = {
     Night = {
         RefWidth = 2100,
         TitlePrefix = "NIGHT EVENT IN ",
+        -- this look is shown during the DAY (counting down to the night): the bonus panel is hidden until night
+        ShowMultipliers = false,
         MainCard = card("rbxassetid://128604161212459", 1024, 138), -- NIGHT-CARD-TOP
         MultiplierCard = card("rbxassetid://132747624547618", 1024, 133), -- NIGHT-CARD
         LeftIcon = "rbxassetid://112411971879268", -- NIGHT-ICON-LEFT (moon, star on its right)
