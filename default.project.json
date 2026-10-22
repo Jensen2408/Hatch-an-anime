@@ -3541,6 +3541,9 @@
       "UpgradePrices": {
         "$path": "src/shared/Config/UpgradePrices.luau"
       },
+      "EggCarryConfig": {
+        "$path": "src/shared/Config/EggCarryConfig.luau"
+      },
       "FirstHatchGuide": {
         "$path": "src/shared/UI/FirstHatchGuide.luau"
       },

@@ -11,6 +11,7 @@ Ends (server decides, checked every Heartbeat):
   "Secured"   root inside the player's own plot box (relative to TempleAnchor), after 0.5 s -> Tool re-enabled + equipped
   "Cancelled" character changed / died, Tool gone, plot lost, or a new Begin
   "Dropped"   via Service.Drop
+While carrying, Humanoid.WalkSpeed is scaled by EggCarryConfig.CarryWalkSpeedMultiplier and restored on every end.
 Replication: player attributes RiverEggCarryBase / RiverEggCarryId / RiverEggCarryType, and
 ReplicatedStorage.RiverEggCarryState (place-owned RemoteEvent, server -> client):
   FireClient(player, "Stolen", { basePosition, id, eggType, name, rarity, price })  on Begin
@@ -20,8 +21,9 @@ Note: TwoHandItemCarryService is required lazily (it requires this module back f
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local CarryConfig = require(ReplicatedStorage:WaitForChild("EggCarryConfig"))
 local Service = {}
-local activeCarries = {} -- [Player] = { tool, enabled, plot, char, started, id, visual? }
+local activeCarries = {} -- [Player] = { tool, enabled, plot, char, started, id, humanoid?, walkSpeed?, slowSpeed?, visual? }
 local carryStateEvent = ReplicatedStorage:WaitForChild("RiverEggCarryState")
 local function homePlot(player)
     for _, plot in workspace.Plots:GetChildren() do
@@ -39,6 +41,10 @@ local function finish(player, state)
     -- `visual` is never set in the current code (the carry visual is TwoHandItemCarryService's); kept for safety.
     if carry.visual then
         carry.visual:Destroy()
+    end
+    -- restore the carry slowdown, unless something else changed WalkSpeed in the meantime
+    if carry.humanoid and carry.humanoid.Parent and carry.humanoid.WalkSpeed == carry.slowSpeed then
+        carry.humanoid.WalkSpeed = carry.walkSpeed
     end
     if carry.tool and carry.tool.Parent then
         carry.tool.Enabled = carry.enabled
@@ -90,6 +96,10 @@ function Service.Begin(player, tool)
     end
     humanoid:EquipTool(tool)
     require(game.ServerScriptService.TwoHandItemCarryService).Attach(player, tool)
+    carry.humanoid = humanoid
+    carry.walkSpeed = humanoid.WalkSpeed
+    humanoid.WalkSpeed *= CarryConfig.CarryWalkSpeedMultiplier
+    carry.slowSpeed = humanoid.WalkSpeed -- read back: WalkSpeed is stored as a float32
     local basePosition = plot.PlotSpawn.Position
     player:SetAttribute("RiverEggCarryType", tool:GetAttribute("EggType") or tool.Name)
     player:SetAttribute("RiverEggCarryBase", basePosition)

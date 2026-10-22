@@ -9,8 +9,8 @@
 	Network authority: Tool.Activated is triggered by the client, but everything else is decided here: the
 	cooldown, the HIT_WINDOW, the overlap + cone hit test, knockback and egg drops. During a knockdown the server
 	takes network ownership of the target's root for RAGDOLL_TIME and then hands it back.
-	Egg drops: a victim carrying a river egg -> RiverEggCarryService.Drop(victim); otherwise a held egg Tool
-	(EggType without CharacterId) -> TwoHandItemCarryService.DropTool(victim, tool). Both are lazily required.
+	Egg drops: only a victim still carrying an egg home (RiverEggCarryId set) drops it, via
+	RiverEggCarryService.Drop(victim) (lazily required). A secured egg stays with its owner when they are hit.
 	Replicated attributes: Tool SwingTick / LastHitTime (server time), attacker Player BatEggKnocks (counter).
 ]]
 
@@ -152,19 +152,12 @@ local function tryHit(targetCharacter, attackerCharacter, attackerRoot)
 
     playHitFX(targetRoot.Position)
 
-    -- Bat hit makes a player carrying a river egg drop it; anyone can then pick it up and run it home.
+    -- Bat hit makes a player carrying an egg home drop it; anyone can then pick it up and run it home.
+    -- Once the egg is secured (carry finished) it belongs to the player and is never knocked out again.
     local victim = Players:GetPlayerFromCharacter(targetCharacter)
-    -- also knocks out an egg that's simply held in hand (not only one being carried home from the river)
-    local heldEgg = targetCharacter:FindFirstChildOfClass("Tool")
-    if heldEgg and not (heldEgg:GetAttribute("EggType") and not heldEgg:GetAttribute("CharacterId")) then
-        heldEgg = nil
-    end
-    if victim and (victim:GetAttribute("RiverEggCarryId") or heldEgg) then
+    if victim and victim:GetAttribute("RiverEggCarryId") then
         local ok, dropped = pcall(function()
-            if victim:GetAttribute("RiverEggCarryId") then
-                return require(game:GetService("ServerScriptService").RiverEggCarryService).Drop(victim)
-            end
-            return require(game:GetService("ServerScriptService").TwoHandItemCarryService).DropTool(victim, heldEgg)
+            return require(game:GetService("ServerScriptService").RiverEggCarryService).Drop(victim)
         end)
         if ok and dropped then
             local attacker = Players:GetPlayerFromCharacter(attackerCharacter)
