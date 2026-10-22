@@ -14,7 +14,7 @@ Remotes (contract documented in GameMenuServer.server.luau / GameAdapter.luau):
   ReplicatedStorage.GameMenu.Remotes.GetState  (RF)  fetchState(section) -> data | nil, message
   ReplicatedStorage.GameMenu.Remotes.Action    (RF)  runAction(name, args) -> ok   (toast shows the message)
   ReplicatedStorage.GameMenu.Remotes.Changed   (RE)  server says "your data changed" -> refresh()
-  ReplicatedStorage.ShopSystem.ShopRemote      (RF)  VipShop only: "State", "Buy", "BuyMoneyLevel", "ClaimDaily"
+  ReplicatedStorage.ShopSystem.ShopRemote      (RF)  VipShop only: "State", "Buy", "BuyMoneyLevel", "BuyHatchLevel", "ClaimDaily"
   ReplicatedStorage.GoHome                     (RE)  left menu HOME button: FireServer() (GameHUD shows the reply)
 Left menu SETTINGS fires PlayerGui.MusicSettingsUI.Toggle (Bindable, MusicSettings).
 Bindables created here (children of this ScreenGui, used by other LocalScripts):
@@ -2410,6 +2410,64 @@ RENDER.VipShop = function(panel)
         true,
         shopState.starter
     )
+
+    -- Hatch speed: permanent levels bought with CASH (ShopConfig.HatchLevels), charged by the server.
+    do
+        local hatchLevels = ShopConfig.HatchLevels or {}
+        local hatchLevel = shopState.hatchLevel or 0
+        local currentMult = hatchLevel > 0 and hatchLevels[hatchLevel].mult or 1
+        local nextLevel = hatchLevels[hatchLevel + 1]
+        local face = glowCard(addRow(130), BLUE, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0))
+        shopIcon(face, SHOP_ICONS.Hatch2x, UDim2.new(0, 64, 0.5, 0), UDim2.fromOffset(92, 92), nil, true)
+        shopLabel(
+            face,
+            "HATCH SPEED",
+            22,
+            SHOP_WHITE,
+            { Position = UDim2.fromOffset(124, 10), Size = UDim2.new(1, -300, 0, 26) }
+        )
+        shopLabel(
+            face,
+            nextLevel and (currentMult .. "×  →  " .. nextLevel.mult .. "×") or (currentMult .. "×  MAXED!"),
+            28,
+            rgb(170, 225, 255),
+            { Position = UDim2.fromOffset(124, 38), Size = UDim2.new(1, -300, 0, 34) }
+        )
+        shopLabel(
+            face,
+            "Permanent · paid with cash",
+            14,
+            rgb(220, 235, 255),
+            { Position = UDim2.fromOffset(124, 74), Size = UDim2.new(1, -300, 0, 18), NoStroke = true }
+        )
+        local pips = create("Frame", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(124, 98),
+            Size = UDim2.new(1, -300, 0, 16),
+            ZIndex = face.ZIndex + 2,
+        }, face)
+        create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4) }, pips)
+        for i = 1, #hatchLevels do
+            local pip = create("Frame", {
+                BackgroundColor3 = i <= hatchLevel and GOLD or rgb(25, 45, 75),
+                Size = UDim2.fromOffset(14, 14),
+                ZIndex = pips.ZIndex,
+            }, pips)
+            roundCorners(pip, 4)
+            create("UIStroke", { Color = SHOP_BLACK, Thickness = 1.5 }, pip)
+        end
+        buyButton(
+            face,
+            nextLevel and ("$" .. Config.Short(nextLevel.cash)) or "MAXED",
+            UDim2.fromOffset(160, 50),
+            UDim2.new(1, -14, 1, -14),
+            nextLevel and function()
+                shopAction("BuyHatchLevel")
+            end or nil,
+            { anchor = Vector2.new(1, 1), disabled = not nextLevel, textSize = 20 }
+        )
+        addFloatingSparkles(face, 3)
+    end
 
     -- ===== PASSES: VIP + money multiplier =====
     addHeading("PASSES", "PASSES")

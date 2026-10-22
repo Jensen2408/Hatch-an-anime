@@ -48,6 +48,22 @@ Config.MoneyLevels = {
     { mult = 1000, robux = 4500, productId = 3718005571 },
 }
 
+-- Hatch speed: bought with in-game CASH (coins), one level at a time. Permanent, saved with the shop data.
+-- `mult` is the hatch speed at that level (stacks with the 2× Hatch boost and the night bonus); `cash` is its price.
+Config.HatchLevels = {
+    { mult = 1.5, cash = 1e8 },
+    { mult = 2, cash = 1e11 },
+    { mult = 2.5, cash = 1e14 },
+    { mult = 3, cash = 1e17 },
+    { mult = 4, cash = 1e20 },
+    { mult = 5, cash = 1e23 },
+    { mult = 6, cash = 1e26 },
+    { mult = 7, cash = 1e29 },
+    { mult = 8, cash = 1e32 },
+    { mult = 9, cash = 1e35 },
+    { mult = 10, cash = 1e38 },
+}
+
 -- Daily rewards (7-day streak, resets if you miss a day)
 Config.Daily = {
     { kind = "cash", amount = 500 },

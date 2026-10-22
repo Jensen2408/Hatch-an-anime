@@ -1,10 +1,13 @@
 --[[ ServerScriptService.ShopService
 Shop + Daily Rewards (server-authoritative).
-  • Player attributes it maintains: CashMultiplier, HatchMultiplier, VIP, Money2xUntil, Hatch2xUntil, MoneyLevel
+  • Player attributes it maintains: CashMultiplier, HatchMultiplier, VIP, Money2xUntil, Hatch2xUntil, MoneyLevel,
+    HatchLevel (HatchMultiplier = ShopConfig.HatchLevels mult × 2 while Hatch2x is active)
     (BrainrotPlacement multiplies stand income by CashMultiplier; HatchGoo multiplies hatch speed by HatchMultiplier.)
-  • RemoteFunction ReplicatedStorage.ShopSystem.ShopRemote: "State" | "ClaimDaily" | "BuyMoneyLevel" | "Buy"(key)
+  • RemoteFunction ReplicatedStorage.ShopSystem.ShopRemote: "State" | "ClaimDaily" | "BuyMoneyLevel" | "BuyHatchLevel"
+    | "Buy"(key)
   • The game's only ProcessReceipt lives here.
-  • Saves (DataStore ShopData_v2; v1 = pre-launch, only money level + receipts carried over): money level, daily streak, boost end times. Fails safely in Studio.
+  • Saves (DataStore ShopData_v2; v1 = pre-launch, only money level + receipts carried over): money level, hatch level,
+    daily streak, boost end times. Fails safely in Studio.
 
 Network authority: the client only *asks*. Every remote call is validated here (loaded data, load failure lock,
 one call at a time per player via `busy`). Purchases are only *prompted* from the remote; rewards are granted
@@ -12,10 +15,11 @@ exclusively in ProcessReceipt (developer products) and PromptGamePassPurchaseFin
 (game passes). The client never sends amounts.
 
 Remote contract (ShopRemote:InvokeServer(action, key) -> ok: boolean, payloadOrMessage):
-  "State"          -> true, { daily = {day, ready, nextIn, streak}, moneyLevel, money2xUntil, hatch2xUntil,
-                              vip, starter, serverTime }
+  "State"          -> true, { daily = {day, ready, nextIn, streak}, moneyLevel, hatchLevel, money2xUntil,
+                              hatch2xUntil, vip, starter, serverTime }
   "ClaimDaily"     -> true, "Claimed day N!"  |  false, "Come back later"
   "BuyMoneyLevel"  -> true (product prompt shown) | false, "Maxed out!" / "Coming soon"
+  "BuyHatchLevel"  -> true, "Hatch speed Nx!" (cash charged here) | false, "Maxed out!" / "Not enough cash"
   "Buy", key       -> key from ShopConfig.GamePasses or ShopConfig.Products; true | false, message
   any failure      -> false, "Loading…" / "Shop couldn't load. Please rejoin." / "One moment…" / "Server error" / "Unknown"
 
@@ -45,7 +49,7 @@ do
     legacyShopStore = ok and dataStore or nil
 end -- launch reset: only paid things carry over
 
--- shopData[player] = { moneyLevel, streak, dailyAt, money2xUntil, hatch2xUntil, starterGranted, receipts,
+-- shopData[player] = { moneyLevel, hatchLevel, streak, dailyAt, money2xUntil, hatch2xUntil, starterGranted, receipts,
 --                      receiptOrder, __loadFailed (never saved) }
 -- busy[player] = true while a remote call runs; ownedPasses[player][passKey] = cached game-pass ownership
 local shopData, busy, ownedPasses = {}, {}, {}
@@ -107,8 +111,13 @@ local function refreshMultipliers(player)
         * ((playerData.money2xUntil or 0) > currentTime and 2 or 1)
         * (isVip and Config.VIPCashBonus or 1)
     player:SetAttribute("CashMultiplier", cash)
-    player:SetAttribute("HatchMultiplier", (playerData.hatch2xUntil or 0) > currentTime and 2 or 1)
+    local hatchLevelInfo = Config.HatchLevels[playerData.hatchLevel or 0]
+    player:SetAttribute(
+        "HatchMultiplier",
+        (hatchLevelInfo and hatchLevelInfo.mult or 1) * ((playerData.hatch2xUntil or 0) > currentTime and 2 or 1)
+    )
     player:SetAttribute("MoneyLevel", playerData.moneyLevel or 0)
+    player:SetAttribute("HatchLevel", playerData.hatchLevel or 0)
     player:SetAttribute("Money2xUntil", playerData.money2xUntil or 0)
     player:SetAttribute("Hatch2xUntil", playerData.hatch2xUntil or 0)
     player:SetAttribute("VIP", isVip)
@@ -223,6 +232,7 @@ shopRemote.OnServerInvoke = function(player, action, key)
                 {
                     daily = dailyState(player),
                     moneyLevel = playerData.moneyLevel or 0,
+                    hatchLevel = playerData.hatchLevel or 0,
                     money2xUntil = playerData.money2xUntil or 0,
                     hatch2xUntil = playerData.hatch2xUntil or 0,
                     vip = player:GetAttribute("VIP") == true,
@@ -242,6 +252,30 @@ shopRemote.OnServerInvoke = function(player, action, key)
             end
             MarketplaceService:PromptProductPurchase(player, nextLevel.productId)
             return true
+        elseif action == "BuyHatchLevel" then
+            local playerData = shopData[player]
+            local level = (playerData.hatchLevel or 0) + 1
+            local nextLevel = Config.HatchLevels[level]
+            if not nextLevel then
+                return false, "Maxed out!"
+            end
+            if not player:GetAttribute("TutorialDataReady") then
+                return false, "Loading…"
+            end -- main save (cash) not restored yet
+            local cashStat = getCashStat(player)
+            if not cashStat or cashStat.Value < nextLevel.cash then
+                return false, "Not enough cash"
+            end
+            cashStat.Value -= nextLevel.cash
+            playerData.hatchLevel = level
+            refreshMultipliers(player)
+            savePlayer(player)
+            -- the cash was taken from the main save; write it now so the level and the cash stay in step
+            local saveNow = game:GetService("ServerStorage"):FindFirstChild("PlayerDataSaveNow")
+            if saveNow then
+                pcall(saveNow.Invoke, saveNow, player)
+            end
+            return true, "Hatch speed " .. nextLevel.mult .. "×!"
         elseif action == "Buy" and type(key) == "string" then
             if Config.GamePasses[key] ~= nil then
                 local passId = Config.GamePasses[key]
