@@ -190,6 +190,9 @@ local function skinMenuDescendant(descendant)
 end
 -- Settings panel is the old cream style: light fills -> night purple, dark text -> white with outline
 local function skinLightDescendant(descendant)
+    if descendant:GetAttribute("NoSkin") or (descendant.Parent and descendant.Parent:GetAttribute("NoSkin")) then
+        return
+    end
     if
         descendant:IsA("GuiObject")
         and not descendant:IsA("ImageLabel")

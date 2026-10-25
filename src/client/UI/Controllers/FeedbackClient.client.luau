@@ -1,7 +1,8 @@
 --[[ StarterPlayerScripts.FeedbackClient (LocalScript)
 Feedback button (right side) + window. Builds the "FeedbackUI" ScreenGui in PlayerGui:
   FeedbackButton   opens the window (FigmaSkin hides its drawn children and lays Figma art over it)
-  dimmer (TextButton, full screen) > window: header, close X, BUG / IDEA / OTHER picker, text box, SEND, status line
+  dimmer (TextButton, full screen) > Window: Figma "05 Feedback" drawn by ReplicatedStorage.FeedbackMenu
+  (FeedbackComponent / FeedbackConfig): header + Close, BUG / IDEA / OTHER tabs, text box, counter, SEND, note
 Remote: ReplicatedStorage.SendFeedback (RemoteFunction, server: FeedbackService)
   InvokeServer(kind, text) -> ok, message. The server re-validates, trims to 500 characters, filters the text and
   enforces the cooldown; the 500-character limit here is only for the player's benefit.
@@ -11,8 +12,11 @@ Sounds: UISound "Open" / "Close" (the dimmer is UISoundMuted so its click does n
 -- ===== 1. Services, remotes, constants =====
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
-local UISound = require(game:GetService("ReplicatedStorage"):WaitForChild("UISound"))
-local sendFeedbackRemote = game.ReplicatedStorage:WaitForChild("SendFeedback")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UISound = require(ReplicatedStorage:WaitForChild("UISound"))
+local StudUI = require(ReplicatedStorage:WaitForChild("StudKit"):WaitForChild("StudUI"))
+local FeedbackComponent = require(ReplicatedStorage:WaitForChild("FeedbackMenu"):WaitForChild("FeedbackComponent"))
+local sendFeedbackRemote = ReplicatedStorage:WaitForChild("SendFeedback")
 local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
 local INK = Color3.fromRGB(17, 23, 26)
@@ -107,15 +111,6 @@ local function createButton3D(parent, labelText, color, size, position, anchorPo
     end)
     return button, label
 end
--- raise a button and everything drawn inside it to the same ZIndex
-local function setZIndexDeep(root, zIndex)
-    root.ZIndex = zIndex
-    for _, descendant in ipairs(root:GetDescendants()) do
-        if descendant:IsA("GuiObject") then
-            descendant.ZIndex = zIndex
-        end
-    end
-end
 
 -- ===== 3. Feedback button =====
 local gui = create(
@@ -153,7 +148,7 @@ local function layoutFeedbackButton()
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutFeedbackButton)
 layoutFeedbackButton()
--- ===== 4. Window =====
+-- ===== 4. Window (Figma "05 Feedback", drawn by ReplicatedStorage.FeedbackMenu.FeedbackComponent) =====
 local dimmer = create("TextButton", {
     Text = "",
     AutoButtonColor = false,
@@ -165,143 +160,51 @@ local dimmer = create("TextButton", {
 }, gui)
 dimmer:SetAttribute("UISoundMuted", true)
 local window = create("Frame", {
-    BackgroundColor3 = Color3.fromRGB(59, 88, 102),
+    Name = "Window",
+    BackgroundTransparency = 1,
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.fromOffset(460, 400),
     ZIndex = 6,
+    Active = true,
 }, dimmer)
-addCorner(window, 22)
-addInkStroke(window, 3.5)
-create("ImageLabel", {
-    BackgroundTransparency = 1,
-    Size = UDim2.fromScale(1, 1),
-    Image = STUDS,
-    ScaleType = Enum.ScaleType.Tile,
-    TileSize = UDim2.fromOffset(30, 30),
-    ImageTransparency = 0.35,
-    ZIndex = 6,
-}, window)
 local windowScale = create("UIScale", {}, window)
 local function refitWindow()
-    local viewport = gui.AbsoluteSize
-    windowScale.Scale = math.max(0.1, math.min((viewport.X - 24) / 460, (viewport.Y - 24) / 400, 1.1))
+    StudUI.fitPanel(window, gui.AbsoluteSize)
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(refitWindow)
 refitWindow()
-local header =
-    create("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(1, 0, 0, 62), ZIndex = 7 }, window)
-addCorner(header, 20)
-create(
-    "UIGradient",
-    { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(120, 135, 255), Color3.fromRGB(70, 80, 220)) },
-    header
-)
-create("ImageLabel", {
-    BackgroundTransparency = 1,
-    Size = UDim2.fromScale(1, 1),
-    Image = STUDS,
-    ScaleType = Enum.ScaleType.Tile,
-    TileSize = UDim2.fromOffset(26, 26),
-    ImageTransparency = 0.1,
-    ZIndex = 7,
-}, header)
-createLabel(header, "FEEDBACK", 30, { ZIndex = 8 })
-create("Frame", {
-    BackgroundColor3 = Color3.new(),
-    BorderSizePixel = 0,
-    Position = UDim2.new(0, 0, 0, 62),
-    Size = UDim2.new(1, 0, 0, 3),
-    ZIndex = 7,
-}, window)
-local closeButton =
-    createButton3D(window, "X", Color3.fromRGB(255, 40, 70), UDim2.fromOffset(40, 40), UDim2.new(1, -30, 0, 31))
-setZIndexDeep(closeButton, 9)
-createLabel(
-    window,
-    "Found a bug or have an idea? Tell the devs!",
-    17,
-    { Position = UDim2.fromOffset(16, 74), Size = UDim2.new(1, -32, 0, 24), ZIndex = 7 }
-)
--- ===== 5. Kind picker, text box, SEND =====
--- the selected kind's button gets a white outline, the others ink
-local selectedKind = "Bug"
-local kindButtons = {}
-for i, kindDef in ipairs({
-    { "Bug", "🐞 BUG", Color3.fromRGB(237, 66, 69) },
-    { "Idea", "💡 IDEA", Color3.fromRGB(87, 242, 135) },
-    { "Other", "💬 OTHER", Color3.fromRGB(255, 184, 40) },
-}) do
-    local button = createButton3D(
-        window,
-        kindDef[2],
-        kindDef[3],
-        UDim2.new(1 / 3, -14, 0, 42),
-        UDim2.new((i - 0.5) / 3, 0, 0, 128)
-    )
-    setZIndexDeep(button, 7)
-    kindButtons[kindDef[1]] = button
-    button.Activated:Connect(function()
-        selectedKind = kindDef[1]
-        for kindName, kindButton in pairs(kindButtons) do
-            kindButton:FindFirstChildOfClass("UIStroke").Color = kindName == selectedKind and Color3.new(1, 1, 1) or INK
-        end
-    end)
-end
-kindButtons.Bug:FindFirstChildOfClass("UIStroke").Color = Color3.new(1, 1, 1)
-local textBox = create("TextBox", {
-    BackgroundColor3 = Color3.fromRGB(26, 44, 52),
-    Text = "",
-    PlaceholderText = "Write here (max 500 letters)…",
-    PlaceholderColor3 = Color3.fromRGB(150, 170, 180),
-    TextColor3 = Color3.new(1, 1, 1),
-    FontFace = FONT,
-    TextSize = 18,
-    TextWrapped = true,
-    MultiLine = true,
-    ClearTextOnFocus = false,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    TextYAlignment = Enum.TextYAlignment.Top,
-    Position = UDim2.fromOffset(16, 160),
-    Size = UDim2.new(1, -32, 0, 150),
-    ZIndex = 7,
-}, window)
-addCorner(textBox, 12)
-addInkStroke(textBox, 2.5)
-create(
-    "UIPadding",
-    { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 8) },
-    textBox
-)
-textBox:GetPropertyChangedSignal("Text"):Connect(function()
-    if #textBox.Text > 500 then
-        textBox.Text = textBox.Text:sub(1, 500)
-    end
-end)
-local sendButton, sendLabel =
-    createButton3D(window, "SEND", Color3.fromRGB(92, 192, 70), UDim2.fromOffset(200, 52), UDim2.new(0.5, 0, 1, -40))
-setZIndexDeep(sendButton, 7)
-local statusLabel =
-    createLabel(window, "", 15, { Position = UDim2.new(0, 16, 1, -96), Size = UDim2.new(1, -32, 0, 20), ZIndex = 7 })
 
--- ===== 6. Open / close and sending =====
+-- ===== 5. Open / close and sending =====
+local feedbackView
 local function setWindowOpen(isOpen)
     if dimmer.Visible ~= isOpen then
         UISound.Play(isOpen and "Open" or "Close")
     end
     dimmer.Visible = isOpen
     if isOpen then
-        statusLabel.Text = ""
-        -- leftover: refitWindow overwrites this scale immediately, so the * 0.9 has no visible effect
-        windowScale.Scale = windowScale.Scale * 0.9
-        refitWindow()
+        feedbackView:Reset()
+        windowScale.Scale = 0.85
+        TweenService:Create(windowScale, TweenInfo.new(0.22, Enum.EasingStyle.Back), { Scale = 1 }):Play()
     end
 end
+feedbackView = FeedbackComponent.new(window, {
+    onClose = function()
+        setWindowOpen(false)
+    end,
+    -- ok = the invoke itself did not error; success / message come from FeedbackService
+    onSend = function(kind, message)
+        local ok, success, reply = pcall(sendFeedbackRemote.InvokeServer, sendFeedbackRemote, kind, message)
+        if ok and success then
+            task.delay(1.5, function()
+                setWindowOpen(false)
+            end)
+            return true, reply
+        end
+        return false, ok and tostring(reply) or "Couldn't send. Try again."
+    end,
+})
 openButton.Activated:Connect(function()
     setWindowOpen(true)
-end)
-closeButton.Activated:Connect(function()
-    setWindowOpen(false)
 end)
 local function __clickOnPanel(dimObj, input)
     -- true if the click landed on any visible part of a panel (anything in this ScreenGui that isn't the dim)
@@ -322,26 +225,4 @@ dimmer.Activated:Connect(function(input)
         return
     end
     setWindowOpen(false)
-end)
-window.Active = true
-local isSending = false
-sendButton.Activated:Connect(function()
-    if isSending then
-        return
-    end
-    isSending = true
-    sendLabel.Text = "..."
-    -- ok = the invoke itself did not error; success / message come from FeedbackService
-    local ok, success, message = pcall(sendFeedbackRemote.InvokeServer, sendFeedbackRemote, selectedKind, textBox.Text)
-    isSending = false
-    sendLabel.Text = "SEND"
-    if ok and success then
-        textBox.Text = ""
-        statusLabel.Text = message
-        task.delay(1.5, function()
-            setWindowOpen(false)
-        end)
-    else
-        statusLabel.Text = ok and tostring(message) or "Couldn't send. Try again."
-    end
 end)

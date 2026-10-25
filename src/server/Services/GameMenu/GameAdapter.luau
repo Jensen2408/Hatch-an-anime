@@ -91,6 +91,7 @@ function GameAdapter.GetPlot(player)
             power = item.power,
             income = item.income * snapshot.multiplier,
             state = ({ Placed = "placed", Held = "held", Backpack = "stored" })[item.state],
+            slot = item.slot, -- slot number while placed (Plot menu grid)
             acquired = item.acquired,
             image = entry.image,
         })

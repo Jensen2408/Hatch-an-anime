@@ -215,6 +215,30 @@
         },
         "LeftMenuComponent": {
           "$path": "src/client/UI/Screens/GameMenus/LeftMenuComponent.luau"
+        },
+        "IndexConfig": {
+          "$path": "src/client/UI/Screens/GameMenus/IndexConfig.luau"
+        },
+        "IndexComponent": {
+          "$path": "src/client/UI/Screens/GameMenus/IndexComponent.luau"
+        },
+        "QuestMenuConfig": {
+          "$path": "src/client/UI/Screens/GameMenus/QuestMenuConfig.luau"
+        },
+        "QuestMenuComponent": {
+          "$path": "src/client/UI/Screens/GameMenus/QuestMenuComponent.luau"
+        },
+        "ShopMenuConfig": {
+          "$path": "src/client/UI/Screens/GameMenus/ShopMenuConfig.luau"
+        },
+        "ShopMenuComponent": {
+          "$path": "src/client/UI/Screens/GameMenus/ShopMenuComponent.luau"
+        },
+        "PlotConfig": {
+          "$path": "src/client/UI/Screens/GameMenus/PlotConfig.luau"
+        },
+        "PlotComponent": {
+          "$path": "src/client/UI/Screens/GameMenus/PlotComponent.luau"
         }
       },
       "MoneyDisplay": {
@@ -3415,6 +3439,39 @@
         },
         "LeaderboardView": {
           "$path": "src/shared/UI/Leaderboard/LeaderboardView.luau"
+        }
+      },
+      "StudKit": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "StudTheme": {
+          "$path": "src/shared/UI/StudKit/StudTheme.luau"
+        },
+        "StudUI": {
+          "$path": "src/shared/UI/StudKit/StudUI.luau"
+        },
+        "StudToast": {
+          "$path": "src/shared/UI/StudKit/StudToast.luau"
+        }
+      },
+      "FeedbackMenu": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "FeedbackConfig": {
+          "$path": "src/shared/UI/FeedbackMenu/FeedbackConfig.luau"
+        },
+        "FeedbackComponent": {
+          "$path": "src/shared/UI/FeedbackMenu/FeedbackComponent.luau"
+        }
+      },
+      "SettingsMenu": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "SettingsConfig": {
+          "$path": "src/shared/UI/SettingsMenu/SettingsConfig.luau"
+        },
+        "SettingsComponent": {
+          "$path": "src/shared/UI/SettingsMenu/SettingsComponent.luau"
         }
       },
       "QuestsHUD": {

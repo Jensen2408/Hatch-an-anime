@@ -4,7 +4,8 @@ Strips UICorner, forces UIStroke black/mitred, removes thin white highlight line
 is left alone.
 
 Part 1 (menus): every descendant of the PlayerGui ScreenGuis named in TARGETS (now and when added later), except
-  anything inside GameMenus.Plot / Index / Quests / VipShop (those keep their rounded 3D look).
+  anything inside GameMenus.Plot / Index / Quests / VipShop (those keep their rounded 3D look) and anything
+  carrying the NoSkin attribute itself or on its parent (StudKit pieces, e.g. the Settings panel and toasts).
   A UICorner survives when its parent has the "KeepRound" attribute (set by GameHUD on the PLOT button) or is an
   ImageLabel / ImageButton with an image (corners act as clipping masks there).
 Part 2 (world): workspace BillboardGuis named "SlotUnlockLabel" (temple slot signs built by the server's
@@ -23,6 +24,10 @@ local KEEP_ROUND = { ImageLabel = true, ImageButton = true } -- corners on pictu
 local BLACK = Color3.new(0, 0, 0)
 
 local function sharpen(inst)
+    -- StudKit pieces (Figma UI kit) carry NoSkin on every GuiObject: leave them and their corners / strokes alone
+    if inst:GetAttribute("NoSkin") or (inst.Parent and inst.Parent:GetAttribute("NoSkin")) then
+        return
+    end
     -- the 4 menus (Plot / Index / Quests / Shop) use rounded 3D boxes: leave their corners, shine and highlights alone
     local gameMenus = inst:FindFirstAncestor("GameMenus")
     if gameMenus then
