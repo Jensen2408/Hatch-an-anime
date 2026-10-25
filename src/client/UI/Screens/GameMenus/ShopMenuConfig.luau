@@ -81,19 +81,35 @@ ShopMenuConfig.Featured = {
     },
 }
 
--- BOOSTS: two big boost cards + the starter pack row (same row as FEATURED)
+-- BOOSTS: two boost cards (icon left), the HATCH SPEED row (permanent levels bought with cash) and the
+-- starter pack row (same row as FEATURED)
 ShopMenuConfig.Boosts = {
-    Rects = { { 22, 180, 551, 400 }, { 585, 180, 551, 400 } },
+    Rects = { { 22, 180, 551, 270 }, { 585, 180, 551, 270 } },
     Radius = 12,
-    IconRect = { 205, 22, 140, 140 },
-    TitleRect = { 20, 172, 511, 44 },
-    TitleSize = 34,
-    TextRect = { 20, 218, 511, 30 },
+    IconRect = { 24, 30, 120, 120 },
+    TitleRect = { 162, 22, 369, 44 },
+    TitleSize = 36,
+    TextRect = { 162, 68, 369, 56 },
     TextSize = 22,
-    TimerBarRect = { 60, 262, 431, 20 },
-    TimerTextRect = { 20, 288, 511, 28 },
-    TimerTextSize = 20,
-    ButtonRect = { 120, 328, 311, 56 },
+    TimerBarRect = { 162, 132, 369, 18 },
+    TimerTextRect = { 162, 154, 369, 28 },
+    TimerTextSize = 22,
+    ButtonRect = { 162, 196, 311, 56 },
+    Hatch = {
+        Rect = { 22, 464, 1114, 116 },
+        Radius = 12,
+        IconRect = { 16, 13, 90, 90 },
+        Title = "HATCH SPEED",
+        TitleRect = { 122, 10, 420, 36 },
+        TitleSize = 30,
+        ValueRect = { 122, 46, 420, 40 },
+        ValueSize = 32,
+        NoteRect = { 122, 86, 420, 24 },
+        NoteSize = 20,
+        Note = "Permanent · paid with cash",
+        Pips = { X = 560, Y = 47, Size = 22, Gap = 5, Radius = 5 },
+        ButtonRect = { 896, 30, 200, 56 },
+    },
     StarterRect = { 22, 596, 1114, 102 },
     StarterButtonRect = { 912, 28, 180, 56 },
 }

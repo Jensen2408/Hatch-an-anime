@@ -1,11 +1,13 @@
 --[[ StarterPlayerScripts.FeedbackClient (LocalScript)
-Feedback button (right side) + window. Builds the "FeedbackUI" ScreenGui in PlayerGui:
-  FeedbackButton   opens the window (FigmaSkin hides its drawn children and lays Figma art over it)
+Top-right HUD + feedback window. Builds the "FeedbackUI" ScreenGui in PlayerGui:
+  TopRightHUD      ReplicatedStorage.TopRightHUD component: Backpack counter + FeedbackButton (opens the window)
   dimmer (TextButton, full screen) > Window: Figma "05 Feedback" drawn by ReplicatedStorage.FeedbackMenu
   (FeedbackComponent / FeedbackConfig): header + Close, BUG / IDEA / OTHER tabs, text box, counter, SEND, note
 Remote: ReplicatedStorage.SendFeedback (RemoteFunction, server: FeedbackService)
   InvokeServer(kind, text) -> ok, message. The server re-validates, trims to 500 characters, filters the text and
   enforces the cooldown; the 500-character limit here is only for the player's benefit.
+Backpack counter = "characters placed on the plot's stands / stands on the plot", from the CharacterInventory
+  snapshot (InventoryRequest "Fetch" once, then every InventoryEvent "Snapshot" the server pushes on change).
 Sounds: UISound "Open" / "Close" (the dimmer is UISoundMuted so its click does not play the default sound).
 ]]
 
@@ -18,9 +20,7 @@ local StudUI = require(ReplicatedStorage:WaitForChild("StudKit"):WaitForChild("S
 local FeedbackComponent = require(ReplicatedStorage:WaitForChild("FeedbackMenu"):WaitForChild("FeedbackComponent"))
 local sendFeedbackRemote = ReplicatedStorage:WaitForChild("SendFeedback")
 local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local INK = Color3.fromRGB(17, 23, 26)
-local STUDS = "rbxassetid://132561191216691"
+local SEND_TIMEOUT_SECONDS = 20 -- the SEND button gives up (and can be pressed again) if the server never answers
 
 -- ===== 2. UI primitives =====
 local function create(className, props, parent)
@@ -31,123 +31,77 @@ local function create(className, props, parent)
     instance.Parent = parent
     return instance
 end
-local function addCorner(target, radius)
-    create("UICorner", { CornerRadius = UDim.new(0, radius) }, target)
-end
-local function addInkStroke(target, thickness)
-    create(
-        "UIStroke",
-        { Color = INK, Thickness = thickness or 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-        target
-    )
-end
-local function createLabel(parent, text, size, props)
-    local label = create("TextLabel", {
-        BackgroundTransparency = 1,
-        Text = text,
-        FontFace = FONT,
-        TextSize = size,
-        TextColor3 = Color3.new(1, 1, 1),
-        TextWrapped = true,
-        Size = UDim2.fromScale(1, 1),
-    }, parent)
-    create("UIStroke", { Color = INK, Thickness = size >= 20 and 2.5 or 1.6 }, label)
-    if props then
-        for key, value in pairs(props) do
-            label[key] = value
-        end
-    end
-    return label
-end
-local function createButton3D(parent, labelText, color, size, position, anchorPoint)
-    local button = create("TextButton", {
-        Text = "",
-        AutoButtonColor = false,
-        BackgroundColor3 = color,
-        Size = size,
-        Position = position,
-        AnchorPoint = anchorPoint or Vector2.new(0.5, 0.5),
-    }, parent)
-    addCorner(button, 10)
-    addInkStroke(button, 3)
-    local studs = create("ImageLabel", {
-        BackgroundTransparency = 1,
-        Size = UDim2.fromScale(1, 1),
-        Image = STUDS,
-        ScaleType = Enum.ScaleType.Tile,
-        TileSize = UDim2.fromOffset(22, 22),
-    }, button)
-    addCorner(studs, 10)
-    local bevel = create("Frame", {
-        BackgroundColor3 = Color3.new(),
-        BackgroundTransparency = 0.5,
-        BorderSizePixel = 0,
-        AnchorPoint = Vector2.new(0, 1),
-        Position = UDim2.fromScale(0, 1),
-        Size = UDim2.new(1, 0, 0, 6),
-    }, button)
-    addCorner(bevel, 10)
-    local gloss = create("Frame", {
-        BackgroundColor3 = Color3.new(1, 1, 1),
-        BackgroundTransparency = 0.7,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0, 8, 0, 4),
-        Size = UDim2.new(1, -16, 0, 4),
-    }, button)
-    addCorner(gloss, 99)
-    local label = createLabel(button, labelText, 18, { Size = UDim2.new(1, -8, 1, -6) })
-    local hoverScale = create("UIScale", {}, button)
-    button.MouseEnter:Connect(function()
-        TweenService:Create(hoverScale, TweenInfo.new(0.08), { Scale = 1.06 }):Play()
-    end)
-    button.MouseLeave:Connect(function()
-        TweenService:Create(hoverScale, TweenInfo.new(0.08), { Scale = 1 }):Play()
-    end)
-    button.MouseButton1Down:Connect(function()
-        TweenService:Create(hoverScale, TweenInfo.new(0.05), { Scale = 0.94 }):Play()
-    end)
-    button.MouseButton1Up:Connect(function()
-        TweenService:Create(hoverScale, TweenInfo.new(0.1), { Scale = 1 }):Play()
-    end)
-    return button, label
-end
 
--- ===== 3. Feedback button =====
-local gui = create(
-    "ScreenGui",
-    { Name = "FeedbackUI", ResetOnSpawn = false, DisplayOrder = 55, ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets },
-    playerGui
-)
-local openButton, openLabel = createButton3D(
-    gui,
-    "💬 FEEDBACK",
-    Color3.fromRGB(88, 101, 242),
-    UDim2.fromOffset(150, 46),
-    UDim2.new(1, -12, 0.5, 90),
-    Vector2.new(1, 0.5)
-)
-openButton.Name = "FeedbackButton"
-local function layoutFeedbackButton()
+-- ===== 3. Top-right HUD: Backpack counter + Feedback button =====
+local gui = create("ScreenGui", {
+    Name = "FeedbackUI",
+    ResetOnSpawn = false,
+    DisplayOrder = 55,
+    ScreenInsets = Enum.ScreenInsets.None, -- full screen first, so the phone check sees the real screen size
+    IgnoreGuiInset = true,
+}, playerGui)
+local TopRightHUD = game.ReplicatedStorage:WaitForChild("TopRightHUD")
+local TopRightConfig = require(TopRightHUD:WaitForChild("TopRightConfig"))
+local TimeConfig = require(game.ReplicatedStorage:WaitForChild("TimeHUD"):WaitForChild("TimeConfig"))
+local topRight = require(TopRightHUD:WaitForChild("TopRightComponent")).new(gui)
+local openButton = topRight.FeedbackButton
+-- the whole HUD is scaled as one piece and kept in the top-right corner. Anchored at its centre (like the cash
+-- panel) so the UIScale shrink can't shift the visible panel away from the corner.
+-- Desktop: the gui ignores the top-bar inset like GameHUD's NightBar, so the counter frame's top edge lines up
+-- with the night timer's (TimeConfig.TopMargin from the screen top; the backpack icon pokes out above it).
+local function layoutTopRight()
+    local compact = math.min(gui.AbsoluteSize.X, gui.AbsoluteSize.Y) < TopRightConfig.CompactBreakpoint
+    gui.ScreenInsets = compact and Enum.ScreenInsets.CoreUISafeInsets or Enum.ScreenInsets.None
     local view = gui.AbsoluteSize
     if view.X <= 0 or view.Y <= 0 then
         return
     end
-    local compact = math.min(view.X, view.Y) < 600
+    local scale = compact and TopRightConfig.Scale.Compact or TopRightConfig.Scale.Desktop
+    local rootSize = topRight.Root.Size
+    local width, height = rootSize.X.Offset * scale, rootSize.Y.Offset * scale
+    -- phones: same spots as the old button (top-right; portrait drops below the cash panel)
+    local right, top = 12, 0
     if compact then
-        -- Keep the lower-right touch-control area free in either orientation.
-        openButton.AnchorPoint = Vector2.new(1, 0)
-        openButton.Size = UDim2.fromOffset(100, 40)
-        openButton.Position = UDim2.new(1, -10, 0, view.X >= view.Y and 8 or 150)
-        openLabel.TextSize = 14
+        right, top = 10, view.X >= view.Y and 8 or 150
     else
-        openButton.AnchorPoint = Vector2.new(1, 0)
-        openButton.Size = UDim2.fromOffset(168, 53)
-        openButton.Position = UDim2.new(1, -12, 0, 16)
-        openLabel.TextSize = 18
+        local iconOverhang = (TopRightConfig.Boxes.CounterBackground[2] - TopRightConfig.RefBounds[2])
+            * TopRightConfig.Unit
+            * scale
+        top = TimeConfig.TopMargin - iconOverhang
     end
+    topRight.Scale.Scale = scale
+    topRight.Root.AnchorPoint = Vector2.new(0.5, 0.5)
+    topRight.Root.Position = UDim2.new(1, -(right + width / 2), 0, top + height / 2)
 end
-gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutFeedbackButton)
-layoutFeedbackButton()
+gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutTopRight)
+layoutTopRight()
+
+-- Backpack counter: characters placed on the plot's stands / all stands on the plot (locked ones included)
+local function applySnapshot(snapshot)
+    if type(snapshot) ~= "table" then
+        return
+    end
+    local capacity = snapshot.capacity or {}
+    topRight:SetCapacity(capacity.placed or 0, capacity.total or 0)
+end
+task.spawn(function()
+    local inventoryFolder = game.ReplicatedStorage:WaitForChild("CharacterInventory")
+    inventoryFolder:WaitForChild("InventoryEvent").OnClientEvent:Connect(function(kind, payload)
+        if kind == "Snapshot" then
+            applySnapshot(payload)
+        end
+    end)
+    -- the first snapshot; the server rate-limits requests ("Busy"), so retry a few times
+    local inventoryRequest = inventoryFolder:WaitForChild("InventoryRequest")
+    for attempt = 1, 5 do
+        local ok, response = pcall(inventoryRequest.InvokeServer, inventoryRequest, "Fetch")
+        if ok and type(response) == "table" and response.ok then
+            applySnapshot(response.snapshot)
+            return
+        end
+        task.wait(attempt)
+    end
+end)
 -- ===== 4. Window (Figma "05 Feedback", drawn by ReplicatedStorage.FeedbackMenu.FeedbackComponent) =====
 local dimmer = create("TextButton", {
     Text = "",
@@ -191,9 +145,21 @@ feedbackView = FeedbackComponent.new(window, {
     onClose = function()
         setWindowOpen(false)
     end,
-    -- ok = the invoke itself did not error; success / message come from FeedbackService
+    -- ok = the invoke itself did not error; success / message come from FeedbackService.
+    -- The invoke runs in its own thread so a server that never answers can't lock SEND forever.
     onSend = function(kind, message)
-        local ok, success, reply = pcall(sendFeedbackRemote.InvokeServer, sendFeedbackRemote, kind, message)
+        local result
+        task.spawn(function()
+            result = table.pack(pcall(sendFeedbackRemote.InvokeServer, sendFeedbackRemote, kind, message))
+        end)
+        local startedAt = os.clock()
+        while not result and os.clock() - startedAt < SEND_TIMEOUT_SECONDS do
+            task.wait(0.1)
+        end
+        if not result then
+            return false, "Couldn't send. Try again later."
+        end
+        local ok, success, reply = result[1], result[2], result[3]
         if ok and success then
             task.delay(1.5, function()
                 setWindowOpen(false)

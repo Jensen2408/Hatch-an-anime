@@ -10,7 +10,7 @@ Table of contents (section banners below are "-- ===== N. ... =====")
   2. Menu panel skin (dark rows -> night purple; light settings panel -> night purple)
   3. HUD pieces (art buttons) + the per-ScreenGui hook
   4. Backpack art (the left menu is GameMenus.LeftMenuComponent, the cash panel MoneyDisplay.CashComponent)
-  5. Imported Figma art: FEEDBACK button
+  5. (retired) FEEDBACK button art - now ReplicatedStorage.TopRightHUD, built by FeedbackClient
   6. FIGMA HUD LAYOUT: Backpack next to the hotbar (phones: row under the left menu), quest tracker
      (ReplicatedStorage.QuestsHUD component, fed here from GameMenu GetState "quests")
   7. Smoothness pass (hover / press tweens on the Backpack row)
@@ -20,7 +20,6 @@ Instance-name contracts (looked up by name; renaming them in the owning script b
   GameHUD (GameHUD)          EggBag, RightButtons > BagButton (re-parented into GameMenus.SmallButtons; its
                              non-"BACKPACK" TextLabel is renamed "Badge"), Hotbar
   MusicSettingsUI            Panel (light skin)
-  FeedbackUI (FeedbackClient) FeedbackButton
   Skipped by name: CleanBase, Accent, RarityBar frames; anything under SideButtons or named / inside "Close".
 Attributes: "FS" = already skinned (written + read here), "NoSkin" = opt-out on an instance or its parent,
   "Smooth" = hover tweens already attached.
@@ -357,39 +356,7 @@ local function setFigmaArt(button, art, keepNames)
     applyFigmaArt(button, art, keepNames)
 end
 
--- ===== 5. Imported figma art: FEEDBACK button (live text stays on top) =====
-local IMPORTED_ART = {
-    feedback = "rbxassetid://71511803471484",
-}
-task.spawn(function()
-    local feedbackGui = playerGui:WaitForChild("FeedbackUI")
-    local feedbackButton = feedbackGui:WaitForChild("FeedbackButton", 30)
-    if not feedbackButton then
-        return
-    end
-    for _, child in feedbackButton:GetChildren() do
-        if child:IsA("GuiObject") then
-            child.Visible = false
-        end
-    end
-    feedbackButton.BackgroundTransparency = 1
-    for _, child in feedbackButton:GetDescendants() do
-        if child:IsA("UIStroke") then
-            child.Enabled = false
-        end
-    end
-    local _face = feedbackButton:IsA("GuiButton") and feedbackButton
-        or feedbackButton:FindFirstChildWhichIsA("GuiButton", true)
-    local artImage = Instance.new("ImageLabel")
-    artImage.Name = "FigmaArt"
-    artImage.BackgroundTransparency = 1
-    artImage.Image = IMPORTED_ART.feedback
-    artImage.Size = UDim2.fromScale(1, 1)
-    artImage.ScaleType = Enum.ScaleType.Fit
-    artImage.ZIndex = feedbackButton.ZIndex + 5
-    artImage.Active = false
-    artImage.Parent = feedbackButton
-end)
+-- ===== 5. (retired) FEEDBACK button art: the top-right HUD is ReplicatedStorage.TopRightHUD (FeedbackClient) =====
 -- ===== 6. FIGMA HUD LAYOUT =====
 -- money bottom-left (MoneyLogic), time HUD top-centre (GameHUD), left menu (MenuLogic), Backpack left of the hotbar
 -- (phones: under the left menu), quest tracker on the right

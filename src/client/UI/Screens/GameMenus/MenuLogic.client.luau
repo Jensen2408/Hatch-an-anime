@@ -18,7 +18,7 @@ Remotes (contract documented in GameMenuServer.server.luau / GameAdapter.luau):
   ReplicatedStorage.GameMenu.Remotes.GetState  (RF)  fetchState(section) -> data | nil, message
   ReplicatedStorage.GameMenu.Remotes.Action    (RF)  runAction(name, args) -> ok   (toast shows the message)
   ReplicatedStorage.GameMenu.Remotes.Changed   (RE)  server says "your data changed" -> refresh()
-  ReplicatedStorage.ShopSystem.ShopRemote      (RF)  VipShop only: "State", "Buy", "BuyMoneyLevel", "ClaimDaily"
+  ReplicatedStorage.ShopSystem.ShopRemote      (RF)  VipShop only: "State", "Buy", "BuyMoneyLevel", "BuyHatchLevel", "ClaimDaily"
   ReplicatedStorage.GoHome                     (RE)  left menu HOME button: FireServer() (GameHUD shows the reply)
 Left menu SETTINGS fires PlayerGui.MusicSettingsUI.Toggle (Bindable, MusicSettings).
 Bindables created here (children of this ScreenGui, used by other LocalScripts):
@@ -989,6 +989,12 @@ RENDER.VipShop = function(panel)
     local currentMult = moneyLevel > 0 and moneyLevels[moneyLevel].mult or 1
     local nextLevel = moneyLevels[moneyLevel + 1]
 
+    -- hatch speed: permanent levels bought with CASH (ShopConfig.HatchLevels), charged by the server
+    local hatchLevels = ShopConfig.HatchLevels or {}
+    local hatchLevel = shopState.hatchLevel or 0
+    local currentHatchMult = hatchLevel > 0 and hatchLevels[hatchLevel].mult or 1
+    local nextHatchLevel = hatchLevels[hatchLevel + 1]
+
     -- cash packs: bonus = how much more cash per Robux than the small pack
     local function robuxPriceOf(productKey)
         return tonumber(livePrice(ShopConfig.Products[productKey], false, ShopConfig.Prices[productKey]))
@@ -1089,6 +1095,17 @@ RENDER.VipShop = function(panel)
             maxed = nextLevel == nil,
             onBuy = function()
                 shopAction("BuyMoneyLevel")
+            end,
+        },
+        hatch = {
+            value = nextHatchLevel and (currentHatchMult .. "× → " .. nextHatchLevel.mult .. "×")
+                or (currentHatchMult .. "× MAXED"),
+            level = hatchLevel,
+            maxLevel = #hatchLevels,
+            price = nextHatchLevel and ("$" .. Config.Short(nextHatchLevel.cash)) or "MAXED",
+            maxed = nextHatchLevel == nil,
+            onBuy = function()
+                shopAction("BuyHatchLevel")
             end,
         },
         cash = cash,

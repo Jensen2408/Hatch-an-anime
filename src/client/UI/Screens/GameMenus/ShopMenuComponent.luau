@@ -19,6 +19,7 @@
 --   boosts = { { title, shortText, text, icon, price, activeEnds? (os.clock), duration, onBuy } x2 },
 --   starter = { title, text, price, owned, onBuy },
 --   money = { value, level, maxLevel, price, maxed, onBuy },
+--   hatch = { value, level, maxLevel, price, maxed, onBuy },   -- HATCH SPEED (cash levels), BOOSTS tab
 --   cash = { { amount, text, badge?, badgeColor?, price, onBuy } x3 },
 --   daily = { days = { { label, icon, value, valueColor, state = "claimed" | "today" | "locked", last } },
 --             ready, claimText, nextEnds (os.clock), onClaim },
@@ -241,24 +242,45 @@ function ShopMenuComponent:_boostsPage()
         local card =
             self:_card("Boost" .. i, style.Rects[i], i == 1 and Colors.Green or Colors.Gold, style.Radius, Colors.Ink)
         icon(card, "Icon", boost.icon, style.IconRect)
-        label(card, "Title", boost.title, style.TitleRect, style.TitleSize, Colors.White, centered({ display = true }))
-        label(card, "Text", boost.text, style.TextRect, style.TextSize, Colors.White, centered({ stroke = 1.5 }))
+        label(card, "Title", boost.title, style.TitleRect, style.TitleSize, Colors.White, { display = true })
+        label(card, "Text", boost.text, style.TextRect, style.TextSize, Colors.White, {
+            stroke = 1.5,
+            wrap = true,
+            alignY = Enum.TextYAlignment.Top,
+        })
         local _, setBar = StudUI.progress(card, "Timer", style.TimerBarRect, 0, Colors.Green)
-        local timerText = label(
-            card,
-            "TimerText",
-            "",
-            style.TimerTextRect,
-            style.TimerTextSize,
-            Colors.White,
-            centered({
-                stroke = 1.5,
-            })
-        )
+        local timerText =
+            label(card, "TimerText", "", style.TimerTextRect, style.TimerTextSize, Colors.White, { stroke = 1.5 })
         self:_boostText(timerText, boost, "Not active", setBar)
         StudUI.button(card, "Buy", style.ButtonRect, Colors.Green, boost.price, { onActivate = boost.onBuy })
     end
+    self:_hatchSpeed()
     self:_starter(style.StarterRect, style.StarterButtonRect)
+end
+
+-- HATCH SPEED row: current -> next multiplier, one pip per level, cash price
+function ShopMenuComponent:_hatchSpeed()
+    local style, hatch = Config.Boosts.Hatch, self.model.hatch
+    local card = self:_card("HatchSpeed", style.Rect, Colors.Blue, style.Radius, Colors.Ink)
+    icon(card, "Icon", self.model.icons.hatch2x, style.IconRect)
+    label(card, "Title", style.Title, style.TitleRect, style.TitleSize, Colors.White, { display = true })
+    label(card, "Value", hatch.value, style.ValueRect, style.ValueSize, Colors.White, { display = true })
+    label(card, "Note", style.Note, style.NoteRect, style.NoteSize, Colors.White, { stroke = 1.5 })
+    local pips = style.Pips
+    for i = 1, hatch.maxLevel do
+        StudUI.plate(
+            card,
+            "Pip" .. i,
+            { pips.X + (i - 1) * (pips.Size + pips.Gap), pips.Y, pips.Size, pips.Size },
+            i <= hatch.level and Colors.Gold or Colors.Ink,
+            pips.Radius,
+            Colors.Ink
+        )
+    end
+    StudUI.button(card, "Buy", style.ButtonRect, Colors.Green, hatch.price, {
+        enabled = not hatch.maxed,
+        onActivate = hatch.onBuy,
+    })
 end
 
 -- ===== PASSES =====

@@ -88,6 +88,9 @@
         "VIPChatTag": {
           "$path": "src/client/Admin/VIPChatTag.client.luau"
         },
+        "StaffFreecam": {
+          "$path": "src/client/Admin/StaffFreecam.client.luau"
+        },
         "StolenEggCarryPose": {
           "$path": "src/client/Egg/StolenEggCarryPose.client.luau"
         },
@@ -3494,6 +3497,16 @@
           "$path": "src/shared/UI/TimeHUD/TimeComponent.luau"
         }
       },
+      "TopRightHUD": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "TopRightConfig": {
+          "$path": "src/shared/UI/TopRightHUD/TopRightConfig.luau"
+        },
+        "TopRightComponent": {
+          "$path": "src/shared/UI/TopRightHUD/TopRightComponent.luau"
+        }
+      },
       "CharacterInventory": {
         "$className": "Folder",
         "$ignoreUnknownInstances": true,
@@ -3587,6 +3600,9 @@
       },
       "UpgradePrices": {
         "$path": "src/shared/Config/UpgradePrices.luau"
+      },
+      "EggCarryConfig": {
+        "$path": "src/shared/Config/EggCarryConfig.luau"
       },
       "FirstHatchGuide": {
         "$path": "src/shared/UI/FirstHatchGuide.luau"

@@ -13,7 +13,7 @@ Returns whether night is active.
 ]]
 local CYCLE_SECONDS = 300 -- a night starts every 5 minutes
 local NIGHT_SECONDS = 20 -- and lasts 20 s
-local NIGHT_BONUS = { Cash = 3, HatchSpeed = 2, RiverLuck = 3 } -- multipliers while night is active
+local NIGHT_BONUS = { Cash = 3, HatchSpeed = 5, RiverLuck = 3 } -- multipliers while night is active
 
 local Service = {}
 
