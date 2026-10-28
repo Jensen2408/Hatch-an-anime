@@ -78,7 +78,10 @@ local function formatShortCash(value)
             local text = scaled < 10 and string.format("%.2f", scaled)
                 or scaled < 100 and string.format("%.1f", scaled)
                 or tostring(math.floor(scaled + 0.5))
-            text = text:gsub("%.?0+$", "")
+            -- trim decimals only ("5.50" -> "5.5"); whole numbers keep their zeros ("540" stays "540")
+            if text:find("%.") then
+                text = text:gsub("0+$", ""):gsub("%.$", "")
+            end
             return "$" .. text .. unit[2]
         end
     end
