@@ -2129,6 +2129,12 @@ do
             goHomeRemote:FireServer()
         end
     end)
+    -- hidden while carrying a river egg home (RiverEggCarryService sets RiverEggCarryId for the whole carry)
+    local function refreshHomeVisible()
+        leftMenu.Buttons.Home.Visible = player:GetAttribute("RiverEggCarryId") == nil
+    end
+    player:GetAttributeChangedSignal("RiverEggCarryId"):Connect(refreshHomeVisible)
+    refreshHomeVisible()
 end
 
 -- ===== 11. Warm the shared Robux price cache (_G.__shopPrices) without blocking start-up =====

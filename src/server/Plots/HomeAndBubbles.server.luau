@@ -15,7 +15,7 @@ local goHomeRemote = ReplicatedStorage:FindFirstChild("GoHome") or Instance.new(
 goHomeRemote.Name = "GoHome"
 goHomeRemote.Parent = ReplicatedStorage
 -- Known issue (docs/PROJECT_AUDIT.md, not fixed): COOLDOWN = 0 disables the cooldown, and only
--- CarryingStolenEggId blocks the teleport (a carried river egg / ragdoll does not).
+-- CarryingStolenEggId / RiverEggCarryId block the teleport (a ragdoll does not).
 local COOLDOWN = 0
 local lastTeleport = {}
 -- The plot this player owns, or nil.
@@ -33,6 +33,10 @@ goHomeRemote.OnServerEvent:Connect(function(player)
     end
     if player:GetAttribute("CarryingStolenEggId") then
         goHomeRemote:FireClient(player, "Can't go home while carrying a stolen egg!")
+        return
+    end
+    if player:GetAttribute("RiverEggCarryId") then
+        goHomeRemote:FireClient(player, "Carry the egg home on foot!")
         return
     end
     local character = player.Character
