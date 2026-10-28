@@ -9,7 +9,7 @@ Collecting (both paths call the same collectEgg):
   - ReplicatedStorage.CollectRiverEgg:FireServer(eggModel)  (place-owned RemoteEvent, client -> server)
 Network authority: the client only names the egg model. The server looks it up in its own collectByEgg table,
 recomputes the egg position from the shared Epoch (must be in the "travel" phase), checks distance <= 17 studs,
-alive humanoid, Backpack, then charges the server-side catalog price (RiverEggPayment) before granting the Tool.
+alive humanoid, Backpack, no egg still being carried home (RiverCarry.IsCarrying), then charges the server-side catalog price (RiverEggPayment) before granting the Tool.
 Feedback on a failed charge: ReplicatedStorage.RiverEggPurchaseFeedback:FireClient(player, reason, priceText),
 throttled to 1 per second per player. After the grant RiverEggCarryService.Begin starts the "carry it home" phase.
 Testing / owner hooks (workspace attributes): ForceRiverMutation, PendingMutationDrop (one-shot), NightRiverLuckMultiplier.
@@ -22,6 +22,13 @@ local Payment = require(script.Parent.RiverEggPayment)
 local RiverCarry = require(script.Parent.RiverEggCarryService)
 local purchaseFeedbackEvent = game.ReplicatedStorage.RiverEggPurchaseFeedback
 local lastFeedbackAt = setmetatable({}, { __mode = "k" }) -- [Player] = os.clock() of the last feedback message
+local function sendPurchaseFeedback(player, reason, priceText)
+    local now = os.clock()
+    if now - (lastFeedbackAt[player] or -math.huge) > 1 then
+        lastFeedbackAt[player] = now
+        purchaseFeedbackEvent:FireClient(player, reason, priceText)
+    end
+end
 local conveyor = workspace:WaitForChild("PirateEggConveyor")
 local templates = {}
 for _, template in ipairs(game.ServerStorage:WaitForChild("AuxEggTemplates"):GetChildren()) do
@@ -142,6 +149,11 @@ local function spawnEgg(forcedTemplate, mutation)
         if not humanoid or humanoid.Health <= 0 or not entry then
             return
         end
+        -- one stolen egg at a time: the previous one must be secured at home first
+        if RiverCarry.IsCarrying(player) then
+            sendPurchaseFeedback(player, "Secure your egg first", Catalog.FormatPrice(entry.Price))
+            return
+        end
         -- Build the owned Tool first (no yields), destroy it again if the charge fails.
         local tool = Instance.new("Tool")
         tool.Name = (mutation and mutation .. " " or "") .. template.Name .. " Egg"
@@ -186,11 +198,7 @@ local function spawnEgg(forcedTemplate, mutation)
         local paid, reason = Payment.TryCharge(player, entry.Price)
         if not paid then
             tool:Destroy()
-            local now = os.clock()
-            if now - (lastFeedbackAt[player] or -math.huge) > 1 then
-                lastFeedbackAt[player] = now
-                purchaseFeedbackEvent:FireClient(player, reason, Catalog.FormatPrice(entry.Price))
-            end
+            sendPurchaseFeedback(player, reason, Catalog.FormatPrice(entry.Price))
             return
         end
         collected = true

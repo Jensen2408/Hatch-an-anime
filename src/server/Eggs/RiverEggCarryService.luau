@@ -6,6 +6,8 @@ disabled (Enabled = false, attribute ReturningToBase = true) and held with the t
 Public API
   Service.Begin(player, tool) -> boolean    start a carry (cancels any previous one)
   Service.Drop(player)        -> boolean    end the carry as "Dropped" and drop the Tool on the ground
+  Service.IsCarrying(player)  -> boolean    true while an egg is still on its way home (one carry at a time:
+                                            the river and dropped-egg pickups refuse a new egg until it is secured)
 
 Ends (server decides, checked every Heartbeat):
   "Secured"   root inside the player's own plot box (relative to TempleAnchor), after 0.5 s -> Tool re-enabled + equipped
@@ -145,6 +147,9 @@ Players.PlayerRemoving:Connect(function(player)
     end
     activeCarries[player] = nil
 end)
+function Service.IsCarrying(player)
+    return activeCarries[player] ~= nil
+end
 function Service.Drop(player)
     local carry = activeCarries[player]
     if not carry then

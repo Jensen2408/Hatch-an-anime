@@ -565,10 +565,15 @@ function Service.DropTool(player, tool)
         then
             return
         end
+        local isEgg = tool:GetAttribute("EggType") and not tool:GetAttribute("CharacterId")
+        -- one stolen egg at a time: an egg still on its way home must be secured before grabbing another
+        if isEgg and require(game.ServerScriptService.RiverEggCarryService).IsCarrying(picker) then
+            return
+        end
         tool.Parent = backpack
         finish()
         -- eggs go into the "carry it home" phase again; characters are just equipped
-        if tool:GetAttribute("EggType") and not tool:GetAttribute("CharacterId") then
+        if isEgg then
             local ok = pcall(require(game.ServerScriptService.RiverEggCarryService).Begin, picker, tool)
             if not ok then
                 pickerHumanoid:EquipTool(tool)
