@@ -230,13 +230,9 @@ function OwnerGameActions.Run(owner, action, payload)
             )
             local chamber = plot.Chambers:FindFirstChild("Chamber" .. chamberIndex)
             assert(chamber, "That incubator has not been built.")
-            assert((chamber:GetAttribute("UpgradeLevel") or 1) < 3, "Incubator is already level 3.")
-            assert(
-                not plot:GetAttribute("ChamberBuilding")
-                    and not chamber:GetAttribute("UnderConstruction")
-                    and (chamber:GetAttribute("Status") or "Ready") == "Ready",
-                "Incubator is busy; wait until the egg is collected."
-            )
+            -- upgrades every incubator one level (PlotChambers); busy incubators are fine
+            assert((plot:GetAttribute("IncubatorLevel") or 1) < 3, "Incubators are already level 3.")
+            assert(not plot:GetAttribute("ChamberBuilding"), "An incubator is still being built.")
             chamber.RequestIncubatorUpgrade:Fire(targetPlayer, owner)
         end
     end

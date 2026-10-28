@@ -1,14 +1,19 @@
 --[[ ServerScriptService.PlotChambers  (Script, server)
 Manages the incubator chambers (plot.Chambers.Chamber1..3) next to each temple.
-  * plot.RequestChamberUpgrade (BindableEvent, created here) -> add the next chamber (max 3).
-  * ChamberN.RequestIncubatorUpgrade (BindableEvent, created here) -> upgrade that chamber (max level 3).
+  * plot.RequestChamberUpgrade (BindableEvent, created here) -> add the next chamber (max 3), built at the
+    plot's current incubator level.
+  * ChamberN.RequestIncubatorUpgrade (BindableEvent, created here) -> upgrade ALL chambers one level (max 3).
   Both are fired as (player, adminActor) by the game menu / owner tools; a non-nil adminActor skips the charge.
+Upgrading never waits for a chamber to be empty: UpgradeLevel (and with it the hatch speed, see
+EggHatchTiming.LevelSpeed) rises at once on every chamber. The model swap is animated right away for empty
+chambers and deferred for busy ones until their Status returns to "Ready" (ModelLevel = level of the model
+that is actually standing there).
 Prices come from ReplicatedStorage.UpgradePrices (AddIncubator / IncubatorLevel); construction is animated by
 ConstructionService under the key "<plot>:Chamber<index>".
 Ownership change (OwnerUserId) wipes the chambers and restores them from the owner's SavedChambers attribute
 (a string of levels, e.g. "1,3,2", written by PlayerDataService).
-Plot attributes written: ChamberCount, ChamberBuilding. Chamber attributes: ChamberIndex, UpgradeLevel,
-OwnerUserId, UnderConstruction (Status is read: only "Ready" chambers can upgrade).
+Plot attributes written: ChamberCount, ChamberBuilding, IncubatorLevel (lowest chamber level).
+Chamber attributes: ChamberIndex, UpgradeLevel, ModelLevel, OwnerUserId, UnderConstruction.
 ]]
 
 local Players = game:GetService("Players")
@@ -26,7 +31,7 @@ local function setup(plot)
     local chambers = plot:FindFirstChild("Chambers") or Instance.new("Folder")
     chambers.Name = "Chambers"
     chambers.Parent = plot
-    local busy = false -- one add/upgrade at a time per plot
+    local building = 0 -- running chamber constructions on this plot (they run in parallel, one per chamber)
     local generation = 0 -- bumped on every ownership change; stale constructions check it and bail out
     -- Owner check; non-admins must also have a root part near the temple. (_target is unused.)
     local function isAuthorizedOwner(player, _target, adminActor)
@@ -40,10 +45,20 @@ local function setup(plot)
             and root
             and (root.Position - plot.TempleAnchor.Position).Magnitude <= UPGRADE_MAX_DISTANCE -- anywhere on own plot
     end
+    -- Lowest UpgradeLevel over the chambers (1 when there are none).
+    local function plotLevel()
+        local lowest
+        for _, chamber in chambers:GetChildren() do
+            local level = chamber:GetAttribute("UpgradeLevel") or 1
+            lowest = math.min(lowest or level, level)
+        end
+        return lowest or 1
+    end
     local function refresh()
         local count = #chambers:GetChildren()
         plot:SetAttribute("ChamberCount", count)
-        plot:SetAttribute("ChamberBuilding", busy)
+        plot:SetAttribute("ChamberBuilding", building > 0)
+        plot:SetAttribute("IncubatorLevel", plotLevel())
     end
     -- Chambers line up along the plot side, 17 studs apart, facing the temple path.
     local function chamberCFrame(index)
@@ -51,10 +66,14 @@ local function setup(plot)
             * CFrame.new(-44, 0.25, 15 - (index - 1) * 17)
             * CFrame.Angles(0, -math.pi / 2, 0)
     end
-    local upgradeChamber -- forward-declared: wireUpgradeRequest needs it before it is defined
-    local function wireUpgradeRequest(model, index)
+    local upgradeAll, syncModel -- forward-declared: wireChamber needs them before they are defined
+    local function wireChamber(model)
         model.RequestIncubatorUpgrade.Event:Connect(function(player, adminActor)
-            upgradeChamber(player, index, adminActor)
+            upgradeAll(player, adminActor)
+        end)
+        -- a busy chamber upgraded earlier swaps its model once it is empty again
+        model:GetAttributeChangedSignal("Status"):Connect(function()
+            syncModel(model)
         end)
     end
     -- Unparented chamber model for the given level, with its RequestIncubatorUpgrade event (not wired yet).
@@ -63,6 +82,7 @@ local function setup(plot)
         model.Name = "Chamber" .. index
         model:SetAttribute("ChamberIndex", index)
         model:SetAttribute("UpgradeLevel", level)
+        model:SetAttribute("ModelLevel", level)
         model:SetAttribute("OwnerUserId", plot:GetAttribute("OwnerUserId"))
         model:SetAttribute("ClientEffectsReady", nil)
         model:PivotTo(chamberCFrame(index))
@@ -74,7 +94,7 @@ local function setup(plot)
     -- Instant (non-animated) placement, replacing any existing chamber with the same index.
     local function placeChamber(index, level, prepare)
         local model = makeChamber(index, level)
-        wireUpgradeRequest(model, index)
+        wireChamber(model)
         if prepare then
             prepare(model)
         end
@@ -86,9 +106,9 @@ local function setup(plot)
         refresh()
         return model
     end
-    -- Animated build/upgrade (runs in its own thread). Always clears `busy` at the end unless the plot changed
-    -- owner meanwhile (then the new ownership pass already reset everything). On failure it falls back to an
-    -- instant placement.
+    -- Animated build/upgrade (runs in its own thread). Always releases its `building` count at the end unless
+    -- the plot changed owner meanwhile (then the new ownership pass already reset everything). On failure it
+    -- falls back to an instant placement.
     local function constructChamber(player, index, level, oldChamber)
         local expectedOwner = plot:GetAttribute("OwnerUserId")
         local myGeneration = generation
@@ -98,7 +118,7 @@ local function setup(plot)
                 and plot:GetAttribute("OwnerUserId") == expectedOwner
                 and expectedOwner ~= 0
         end
-        busy = true
+        building += 1
         refresh()
         if oldChamber then
             oldChamber:SetAttribute("UnderConstruction", true)
@@ -130,7 +150,7 @@ local function setup(plot)
                 end
                 error(model)
             end
-            wireUpgradeRequest(model, index)
+            wireChamber(model)
             model:SetAttribute("UnderConstruction", true)
             refresh()
             while Construction.IsBusy(constructionKey) and stillValid() do
@@ -143,7 +163,7 @@ local function setup(plot)
         if not ok and stillValid() then
             warn("Incubator construction recovered: " .. tostring(err))
             local current = chambers:FindFirstChild("Chamber" .. index)
-            if not current or current:GetAttribute("UpgradeLevel") ~= level then
+            if not current or current:GetAttribute("ModelLevel") ~= level then
                 placeChamber(index, level)
             end
         end
@@ -151,23 +171,35 @@ local function setup(plot)
         if current then
             current:SetAttribute("UnderConstruction", nil)
         end
-        busy = false
+        building -= 1
         refresh()
     end
-    upgradeChamber = function(player, index, adminActor)
-        if busy then
-            return
-        end
-        local oldChamber = chambers:FindFirstChild("Chamber" .. index)
-        if not oldChamber then
-            return
-        end
-        local level = oldChamber:GetAttribute("UpgradeLevel") or 1
+    -- Starts the model swap of an empty chamber whose model is behind its UpgradeLevel.
+    syncModel = function(chamber)
+        local level = chamber:GetAttribute("UpgradeLevel") or 1
         if
-            level >= MAX_CHAMBER_LEVEL
-            or oldChamber:GetAttribute("UnderConstruction")
-            or (oldChamber:GetAttribute("Status") or "Ready") ~= "Ready"
+            chamber.Parent ~= chambers
+            or (chamber:GetAttribute("ModelLevel") or level) >= level
+            or chamber:GetAttribute("UnderConstruction")
+            or (chamber:GetAttribute("Status") or "Ready") ~= "Ready"
         then
+            return
+        end
+        local index = chamber:GetAttribute("ChamberIndex")
+        if not index then
+            return
+        end
+        -- lock synchronously: no egg can be inserted between this check and the swap
+        chamber:SetAttribute("UnderConstruction", true)
+        local owner = Players:GetPlayerByUserId(plot:GetAttribute("OwnerUserId") or 0)
+        task.spawn(constructChamber, owner, index, level, chamber)
+    end
+    upgradeAll = function(player, adminActor)
+        if building > 0 or #chambers:GetChildren() == 0 then
+            return
+        end
+        local target = plotLevel() + 1
+        if target > MAX_CHAMBER_LEVEL then
             return
         end
         if not isAuthorizedOwner(player, plot.TempleAnchor, adminActor) then
@@ -177,20 +209,25 @@ local function setup(plot)
             not adminActor
             and not require(game.ReplicatedStorage.UpgradePrices).Charge(
                 player,
-                require(game.ReplicatedStorage.UpgradePrices).IncubatorLevel[level + 1]
+                require(game.ReplicatedStorage.UpgradePrices).IncubatorLevel[target]
             )
         then
             return
         end
-        -- Lock synchronously before dispatch: repeated clicks cannot queue upgrades.
-        busy = true
+        -- the level (and the hatch speed) applies to every chamber at once, busy ones included
+        for _, chamber in chambers:GetChildren() do
+            if (chamber:GetAttribute("UpgradeLevel") or 1) < target then
+                chamber:SetAttribute("UpgradeLevel", target)
+            end
+        end
         refresh()
-        oldChamber:SetAttribute("UnderConstruction", true)
-        task.spawn(constructChamber, player, index, level + 1, oldChamber)
+        for _, chamber in chambers:GetChildren() do
+            syncModel(chamber)
+        end
     end
     local function addChamber(player, adminActor)
         if
-            busy
+            building > 0
             or #chambers:GetChildren() >= MAX_CHAMBERS
             or not isAuthorizedOwner(player, templeAnchor, adminActor)
         then
@@ -206,14 +243,12 @@ local function setup(plot)
         then
             return
         end
-        busy = true
-        refresh()
-        task.spawn(constructChamber, player, index, 1, nil)
+        task.spawn(constructChamber, player, index, plotLevel(), nil)
     end
     -- Owner joined/left: cancel running builds and rebuild the chambers from the new owner's save.
     local function onOwnershipChanged()
         generation += 1
-        busy = false
+        building = 0
         for i = 1, MAX_CHAMBERS do
             Construction.Cancel(plot.Name .. ":Chamber" .. i)
         end

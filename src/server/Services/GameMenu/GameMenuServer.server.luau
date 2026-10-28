@@ -15,7 +15,7 @@ Remote contract:
     otherwise / errors -> { error = message }
   Action:InvokeServer(actionName, args) -> ok, message   (one at a time, >= 0.2 s apart per player)
     actionName in ACTIONS: EquipBest, UnequipAll, PlaceSelected{uids}, StoreSelected{uids}, Claim{id}, ClaimAll,
-    UpgradeTemple, UpgradeIncubator{index}, AddIncubator, UnlockSlot, Buy{id}
+    UpgradeTemple, UpgradeIncubator (all incubators), AddIncubator, UnlockSlot, Buy{id}
   Changed:FireClient(player)   "your menu data changed, re-fetch"; fired after successful actions,
                                quest changes and GameAdapter events.
 Robux items from the Shop are only prompted here; see the note at the bottom about ProcessReceipt.
@@ -244,7 +244,7 @@ ACTIONS.UpgradeTemple = function(player)
     end
     return false, "Go to your plot to upgrade"
 end
-ACTIONS.UpgradeIncubator = function(player, args)
+ACTIONS.UpgradeIncubator = function(player, _args)
     local plot
     for _, candidate in workspace.Plots:GetChildren() do
         if candidate:GetAttribute("OwnerUserId") == player.UserId then
@@ -254,17 +254,17 @@ ACTIONS.UpgradeIncubator = function(player, args)
     if not plot then
         return false, "You don't have a plot yet"
     end
-    local chamberIndex = tonumber(args.index)
-    local chamber = chamberIndex and plot.Chambers:FindFirstChild("Chamber" .. math.floor(chamberIndex))
+    -- one upgrade raises every incubator (busy ones too); args.index is ignored
+    local chamber = plot.Chambers:FindFirstChild("Chamber1")
     if not chamber then
         return false, "No incubator there"
     end
-    local level = chamber:GetAttribute("UpgradeLevel") or 1
+    local level = plot:GetAttribute("IncubatorLevel") or 1
     if level >= 3 then
-        return false, "Incubator is max level"
+        return false, "Incubators are max level"
     end
-    if (chamber:GetAttribute("Status") or "Ready") ~= "Ready" then
-        return false, "Wait until the incubator is empty"
+    if plot:GetAttribute("ChamberBuilding") then
+        return false, "Wait for the incubator build to finish"
     end
     do
         local UpgradePrices = require(game.ReplicatedStorage.UpgradePrices)
@@ -278,10 +278,8 @@ ACTIONS.UpgradeIncubator = function(player, args)
     end
     requestEvent:Fire(player) -- PlotChambers checks ownership + distance
     task.wait(0.4)
-    -- the upgraded chamber replaces the old instance, so a different instance also means "started"
-    local currentChamber = plot.Chambers:FindFirstChild(chamber.Name)
-    if (currentChamber and currentChamber:GetAttribute("UnderConstruction")) or currentChamber ~= chamber then
-        return true, "Upgrading incubator " .. chamberIndex .. "!"
+    if (plot:GetAttribute("IncubatorLevel") or 1) > level then
+        return true, "All incubators upgraded to level " .. (level + 1) .. "!"
     end
     return false, "Go to your plot to upgrade"
 end

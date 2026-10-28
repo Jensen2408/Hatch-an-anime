@@ -29,6 +29,11 @@ Timing.Base = {
 function Timing.Seconds(id, _stats)
     return Timing.Base[id] or 120
 end
+-- Incubator upgrade level -> hatch speed multiplier (stacks with the night / player multipliers).
+Timing.LevelSpeeds = { 1, 1.5, 2 }
+function Timing.LevelSpeed(level)
+    return Timing.LevelSpeeds[tonumber(level) or 1] or 1
+end
 -- 3725 -> "1:02:05", 125 -> "02:05". Rounds up so the countdown never shows 00:00 early.
 function Timing.Format(seconds)
     seconds = math.max(0, math.ceil(seconds))

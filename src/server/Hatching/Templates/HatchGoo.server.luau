@@ -342,6 +342,7 @@ local function runCycle(player, resumeTool, resumeLeft)
             local now = workspace:GetServerTimeNow()
             local speed = (workspace:GetAttribute("NightHatchSpeedMultiplier") or 1)
                 * (player and player:GetAttribute("HatchMultiplier") or 1)
+                * EggHatchTiming.LevelSpeed(chamber:GetAttribute("UpgradeLevel"))
             workLeft = math.max(0, workLeft - (now - previousTime) * speed)
             previousTime = now
             -- The countdown shows unboosted seconds, so a boost makes it tick faster instead of

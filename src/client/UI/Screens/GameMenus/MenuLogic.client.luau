@@ -1788,17 +1788,30 @@ RENDER.Plot = function(panel)
         end
     end
 
-    -- right column: temple, incubator speed (lowest-level incubator), add incubator
+    -- right column: temple, incubator speed (one level for every incubator), add incubator
     local incubatorCount = chambers and #chambers:GetChildren() or 0
     local function chamberLevel(i)
         local chamber = chambers and chambers:FindFirstChild("Chamber" .. i)
         return chamber and (chamber:GetAttribute("UpgradeLevel") or 1)
     end
-    local speedIndex, speedLevel
+    -- PlotChambers upgrades all incubators together from the lowest level (busy ones included)
+    local EggHatchTiming = require(ReplicatedStorage:WaitForChild("EggHatchTiming"))
+    local speedLevel
     for i = 1, 3 do
         local chamberLv = chamberLevel(i)
-        if chamberLv and chamberLv < 3 and (not speedLevel or chamberLv < speedLevel) then
-            speedIndex, speedLevel = i, chamberLv
+        if chamberLv then
+            speedLevel = math.min(speedLevel or chamberLv, chamberLv)
+        end
+    end
+    local speedMaxed = not speedLevel or speedLevel >= 3
+    local function speedText(chamberLv)
+        return string.format("%g×", EggHatchTiming.LevelSpeed(chamberLv))
+    end
+    local function upgradeIncubators()
+        if speedMaxed then
+            showToast("Already maxed")
+        else
+            runAction("UpgradeIncubator")
         end
     end
     local templeMaxed = level >= 3
@@ -1824,18 +1837,17 @@ RENDER.Plot = function(panel)
         {
             name = "IncubatorSpeed",
             title = "INCUBATOR SPEED",
-            subtitle = speedIndex
-                    and ("Incubator " .. speedIndex .. " · Lv. " .. speedLevel .. " → " .. (speedLevel + 1))
-                or "Max level",
-            price = speedIndex and money(UpgradePrices.IncubatorLevel[speedLevel + 1]) or "MAX",
-            enabled = speedIndex ~= nil,
-            onActivate = function()
-                if speedIndex then
-                    runAction("UpgradeIncubator", { index = speedIndex })
-                else
-                    showToast("Already maxed")
-                end
-            end,
+            subtitle = not speedLevel and "Build an incubator first"
+                or speedMaxed and ("Max level · " .. speedText(3) .. " speed")
+                or string.format(
+                    "All · Lv. %d → %d · %s speed",
+                    speedLevel,
+                    speedLevel + 1,
+                    speedText(speedLevel + 1)
+                ),
+            price = speedMaxed and "MAX" or money(UpgradePrices.IncubatorLevel[speedLevel + 1]),
+            enabled = not speedMaxed,
+            onActivate = upgradeIncubators,
         },
         {
             name = "IncubatorUpgrades", -- FirstHatchTutorial step 12
@@ -1861,18 +1873,12 @@ RENDER.Plot = function(panel)
         if chamberLv then
             incubators[i] = {
                 title = "INCUBATOR " .. i,
-                subtitle = chamberLv >= 3 and "Max level · fastest hatching"
-                    or ("Lv. " .. chamberLv .. " → " .. (chamberLv + 1) .. " · hatch eggs faster"),
+                subtitle = chamberLv >= 3 and ("Max level · " .. speedText(3) .. " speed")
+                    or ("Lv. " .. chamberLv .. " · " .. speedText(chamberLv) .. " speed · upgrades all incubators"),
                 progress = chamberLv / 3,
-                price = chamberLv >= 3 and "MAX" or money(UpgradePrices.IncubatorLevel[chamberLv + 1]),
-                enabled = chamberLv < 3,
-                onActivate = function()
-                    if chamberLv < 3 then
-                        runAction("UpgradeIncubator", { index = i })
-                    else
-                        showToast("Already maxed")
-                    end
-                end,
+                price = speedMaxed and "MAX" or money(UpgradePrices.IncubatorLevel[speedLevel + 1]),
+                enabled = not speedMaxed,
+                onActivate = upgradeIncubators,
             }
         else
             local isNext = i == incubatorCount + 1
