@@ -9,7 +9,7 @@ Table of contents (section banners below are "-- ===== N. ... =====")
   1. Services, modules, palette, UI primitives (create / addCorner / addStroke / tween / formatMoney)
   2. Tool preview (catalog portrait, mutation aura, 3D viewport) and tool description
   3. Hotbar: tray, tool order, egg stacking, renderBar, number keys 1-9
-  4. Drag items onto the hotbar (and tap-to-hold)
+  4. Drag items between the hotbar and the Inventory (and tap-to-hold)
   5. Legacy sell bag ("EggBag"), Backpack button, quotes and selling. The bag panel itself is retired
      (setBagOpen forwards to the Inventory panel), but it is still built and its helpers are shared.
   6. Inventory panel (tabs, rarity/mutation filters, search, SELL mode; Backpack button or the ` key)
@@ -570,6 +570,9 @@ local function stackKey(tool)
         .. "|"
         .. tostring(tool:GetAttribute("UnknownEgg") or "")
 end
+-- stacks dragged off the hotbar into the Inventory: [stackKey] = true (this session only). They stay in the
+-- Inventory and come back to the bar when dragged onto it.
+local benched = {}
 local function buildGroups()
     local groups, byKey = {}, {}
     for _, tool in allTools() do
@@ -596,9 +599,38 @@ local function buildGroups()
     end
     return groups
 end
+-- The bat (punch) always sits in hotbar slot 1: it can't be dragged, benched or pushed out of that slot.
+-- It has no Inventory category, so leaving the bar would hide it completely.
+local PINNED_TOOL_NAME = "WoodenBat"
+local function isPinned(tool)
+    return tool ~= nil and tool.Name == PINNED_TOOL_NAME and getCategory(tool) == nil
+end
+-- buildGroups() without the benched stacks, the pinned bat first: what the hotbar shows (first
+-- visibleSlotCount() of them)
+local function hotbarGroups()
+    local groups = {}
+    for _, group in buildGroups() do
+        if isPinned(group.tools[1]) then
+            table.insert(groups, 1, group)
+        elseif not benched[stackKey(group.tools[1])] then
+            table.insert(groups, group)
+        end
+    end
+    return groups
+end
 local function groupHas(group, tool)
     return table.find(group.tools, tool) ~= nil
 end
+-- Hotbar slot number holding this tool's stack, or nil when it is only in the Inventory.
+local function barSlotOf(tool)
+    for i in slots do
+        local group = barGroups[i]
+        if group and groupHas(group, tool) then
+            return i
+        end
+    end
+end
+local startDrag -- section 4; hotbar slots are draggable too
 local MUTATION_COLORS = {
     Silver = Color3.fromRGB(200, 210, 225),
     Gold = Color3.fromRGB(255, 196, 60),
@@ -736,8 +768,23 @@ local function buildSlot(slotIndex, group, signatures)
             end)
         end
     end
-    button.Activated:Connect(function()
-        toggleEquip(group.tools[1])
+    -- mouse / touch: tap equips, drag moves the stack (onto another slot or into the Inventory)
+    button.InputBegan:Connect(function(input)
+        if
+            input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch
+        then
+            startDrag(tool, input, function()
+                toggleEquip(group.tools[1])
+            end)
+        end
+    end)
+    -- gamepad / keyboard selection still equips through Activated
+    button.Activated:Connect(function(inputObject)
+        local inputType = inputObject and inputObject.UserInputType
+        if inputType ~= Enum.UserInputType.MouseButton1 and inputType ~= Enum.UserInputType.Touch then
+            toggleEquip(group.tools[1])
+        end
     end)
     button.MouseEnter:Connect(function()
         tween(button, 0.08, { BackgroundTransparency = 0.1 })
@@ -760,7 +807,7 @@ local function renderBar()
         table.clear(slots)
         return
     end
-    local groups = buildGroups()
+    local groups = hotbarGroups()
     local slotCount = math.min(#groups, visibleSlotCount())
     -- reuse the slots when nothing changed except which one is held
     local signatures = {}
@@ -805,16 +852,19 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
     local slotIndex = input.KeyCode.Value - Enum.KeyCode.One.Value + 1
     if slotIndex >= 1 and slotIndex <= MAX_SLOTS then
-        local group = buildGroups()[slotIndex]
+        local group = slotIndex <= visibleSlotCount() and hotbarGroups()[slotIndex]
         if group then
             toggleEquip(group.tools[1])
         end
     end
 end)
 
--- ===== 4. Drag items onto the hotbar =====
--- Backpack cards (and hotbar slots) can be dragged onto a hotbar slot: the item takes that slot (others shift).
+-- ===== 4. Drag items between the hotbar and the Inventory =====
+-- Inventory cells and hotbar slots can be dragged onto a hotbar slot: the item takes that slot (others shift).
+-- Dropped on the free space next to the hotbar it is added at the end; a hotbar slot dropped on the open
+-- Inventory panel leaves the bar (benched) but stays in the Inventory. Slot 1 is locked to the bat (isPinned).
 -- A tap without dragging equips the item, so an egg can go straight into an incubator.
+local inventoryPanel = {} -- the Inventory panel above the hotbar (built further down); the Backpack button opens it
 local function slotIndexAt(position)
     -- input positions and AbsolutePosition share the same space (below the top-bar inset); a little slack makes drops easy
     for i, holder in slots do
@@ -829,30 +879,98 @@ local function slotIndexAt(position)
         end
     end
 end
-local function placeInSlot(tool, slotIndex)
-    allTools()
-    local currentIndex = table.find(toolOrder, tool)
-    if currentIndex then
-        table.remove(toolOrder, currentIndex)
+-- Free space for one more slot: the strip along the bottom edge (where the hotbar sits), outside the Inventory.
+local function isHotbarAppendZone(position)
+    if #slots >= visibleSlotCount() then
+        return false
     end
-    -- slots are stacks now: put the item just before the first item of the stack in slot i
-    local stackHead = barGroups[slotIndex] and barGroups[slotIndex].tools[1]
-    local insertAt = stackHead and table.find(toolOrder, stackHead) or (#toolOrder + 1)
-    table.insert(toolOrder, math.clamp(insertAt, 1, #toolOrder + 1), tool)
+    local guiBottom = gui.AbsolutePosition.Y + gui.AbsoluteSize.Y
+    return position.Y >= guiBottom - (SLOT_SIZE + 40) * hotbarScale.Scale
+end
+local function isOverInventory(position)
+    local frame = inventoryPanel.frame
+    if not (frame and frame.Visible) then
+        return false
+    end
+    local absPosition, absSize = frame.AbsolutePosition, frame.AbsoluteSize
+    return position.X >= absPosition.X
+        and position.X <= absPosition.X + absSize.X
+        and position.Y >= absPosition.Y
+        and position.Y <= absPosition.Y + absSize.Y
+end
+local function refreshInventoryPanel()
+    if inventoryPanel.frame and inventoryPanel.frame.Visible and inventoryPanel.render then
+        inventoryPanel.render()
+    end
+end
+-- Takes the tool's stack off the hotbar; it stays in the Inventory (unequipped if it was held).
+local function benchTool(tool)
+    benched[stackKey(tool)] = true
+    local equippedTool = getEquippedTool()
+    if equippedTool and stackKey(equippedTool) == stackKey(tool) then
+        local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid:UnequipTools()
+        end
+    end
+    renderBar()
+    refreshInventoryPanel()
+end
+-- Moves the tool's whole stack to hotbar slot `slotIndex` (the others shift) and un-benches it. Slot 1 stays
+-- with the pinned bat, so a drop there lands in slot 2.
+local function placeInSlot(tool, slotIndex)
+    if isPinned(tool) then
+        renderBar()
+        return
+    end
+    benched[stackKey(tool)] = nil
+    local groups = hotbarGroups()
+    if groups[1] and isPinned(groups[1].tools[1]) then
+        slotIndex = math.max(slotIndex, 2)
+    end
+    local moving
+    for i, group in groups do
+        if groupHas(group, tool) then
+            moving = table.remove(groups, i)
+            break
+        end
+    end
+    if moving then
+        table.insert(groups, math.clamp(slotIndex, 1, #groups + 1), moving)
+        -- rewrite toolOrder in the new stack order; benched tools keep their order after them
+        local newOrder = {}
+        for _, group in groups do
+            for _, groupTool in group.tools do
+                table.insert(newOrder, groupTool)
+            end
+        end
+        for _, orderedTool in toolOrder do
+            if not table.find(newOrder, orderedTool) then
+                table.insert(newOrder, orderedTool)
+            end
+        end
+        table.clear(toolOrder)
+        table.move(newOrder, 1, #newOrder, 1, toolOrder)
+    end
     for _, slot in slots do
         slot:SetAttribute("ToolRef", "")
+        slot:SetAttribute("Sig", "")
     end -- force a rebuild
     renderBar()
+    refreshInventoryPanel()
 end
 local activeDrag = nil
--- Only one drag at a time (activeDrag). The ghost appears after 8 px of movement; releasing over a slot calls
--- placeInSlot, releasing without having moved calls onTap.
-local function startDrag(tool, input, onTap)
+-- Only one drag at a time (activeDrag). The ghost appears after 8 px of movement; releasing over a slot (or the
+-- free space next to the bar) calls placeInSlot, releasing a hotbar item over the open Inventory benches it,
+-- releasing without having moved calls onTap. The pinned bat never gets a ghost: a tap equips it, a drag does
+-- nothing.
+startDrag = function(tool, input, onTap)
     if activeDrag then
         return
     end
     local startPos = Vector2.new(input.Position.X, input.Position.Y)
     local ghost, moved
+    local draggable = not isPinned(tool)
     activeDrag = { tool = tool }
     local function toGuiOffset(screenPosition)
         return UDim2.fromOffset(screenPosition.X - gui.AbsolutePosition.X, screenPosition.Y - gui.AbsolutePosition.Y)
@@ -869,6 +987,8 @@ local function startDrag(tool, input, onTap)
         activeDrag.last = position
         if not moved and (position - startPos).Magnitude > 8 then
             moved = true
+        end
+        if moved and draggable and not ghost then
             ghost = create("Frame", {
                 Name = "DragGhost",
                 AnchorPoint = Vector2.new(0.5, 0.5),
@@ -886,6 +1006,9 @@ local function startDrag(tool, input, onTap)
         if ghost then
             ghost.Position = toGuiOffset(position)
             local hoverSlot = slotIndexAt(position)
+            if hoverSlot == 1 and barGroups[1] and isPinned(barGroups[1].tools[1]) then
+                hoverSlot = 2 -- the bat keeps slot 1; the drop lands in slot 2
+            end
             for slotIndex, holder in slots do
                 local button = holder:FindFirstChild("Button")
                 if button then
@@ -907,14 +1030,25 @@ local function startDrag(tool, input, onTap)
         activeDrag = nil
         if ghost then
             ghost:Destroy()
-            local hoverSlot = slotIndexAt(lastPosition or Vector2.new(endInput.Position.X, endInput.Position.Y))
+            local dropPosition = lastPosition or Vector2.new(endInput.Position.X, endInput.Position.Y)
+            local hoverSlot = slotIndexAt(dropPosition)
             if hoverSlot and tool.Parent then
                 placeInSlot(tool, hoverSlot)
+                UISound.Play("Open")
+            elseif tool.Parent and isOverInventory(dropPosition) then
+                if barSlotOf(tool) then
+                    benchTool(tool)
+                    UISound.Play("Close")
+                else
+                    renderBar()
+                end
+            elseif tool.Parent and not barSlotOf(tool) and isHotbarAppendZone(dropPosition) then
+                placeInSlot(tool, #slots + 1)
                 UISound.Play("Open")
             else
                 renderBar()
             end
-        elseif onTap then
+        elseif onTap and not moved then
             onTap()
         end
     end)
@@ -1284,7 +1418,6 @@ local function showPopup(text, color)
 end
 local renderBag
 local setBagOpen -- defined below; cards use it to close the bag after a tap-to-hold
-local inventoryPanel = {} -- the Inventory panel above the hotbar (built further down); the Backpack button opens it
 local function sellCharacters(action, payload)
     local ok, response = pcall(inventoryRequest.InvokeServer, inventoryRequest, action, payload)
     if not ok or type(response) ~= "table" then
@@ -1352,8 +1485,7 @@ local function buildBagCard(index, tool, name, rarity, quoteValue, canSell, isCh
         startDrag(tool, input, function()
             local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
             if humanoid and tool.Parent then
-                local toolIndex = table.find(allTools(), tool)
-                if not toolIndex or toolIndex > visibleSlotCount() then
+                if not barSlotOf(tool) then
                     placeInSlot(tool, 1)
                 end
                 humanoid:EquipTool(tool)
@@ -1913,6 +2045,23 @@ do
             cellStroke.Color = GOLD
             cellStroke.Thickness = 4
         end
+        -- hotbar slot number (top-left), like the number on the hotbar itself
+        local barSlot = barSlotOf(tool)
+        if barSlot then
+            local slotBadge = create("TextLabel", {
+                Name = "HotbarSlot",
+                Position = UDim2.fromOffset(3, 2),
+                Size = UDim2.fromOffset(18, 18),
+                BackgroundColor3 = GOLD,
+                Text = tostring(barSlot),
+                FontFace = FONT,
+                TextSize = 13,
+                TextColor3 = INK,
+                ZIndex = 26,
+            }, cell)
+            create("UICorner", { CornerRadius = UDim.new(0, 4) }, slotBadge)
+            addStroke(slotBadge, 1.5, BLACK)
+        end
         if sellMode then
             local quoteValue = getSellQuote(tool)
             local priceLabel = create("TextLabel", {
@@ -1955,8 +2104,7 @@ do
                 if not tool.Parent then
                     return
                 end
-                local toolIndex = table.find(allTools(), tool)
-                if not toolIndex or toolIndex > visibleSlotCount() then
+                if not barSlotOf(tool) then
                     placeInSlot(tool, 1)
                 end
                 toggleEquip(tool)
@@ -2091,6 +2239,7 @@ do
     end
     inventoryPanel.setOpen = setInventoryOpen
     inventoryPanel.render = render
+    inventoryPanel.frame = inventoryFrame -- drop target for hotbar slots (section 4)
     closeButton.Activated:Connect(function()
         setInventoryOpen(false)
     end)
