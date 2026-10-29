@@ -242,6 +242,15 @@
         },
         "PlotComponent": {
           "$path": "src/client/UI/Screens/GameMenus/PlotComponent.luau"
+        },
+        "PlotAtlas": {
+          "$path": "src/client/UI/Screens/GameMenus/PlotAtlas.luau"
+        },
+        "IndexAtlas": {
+          "$path": "src/client/UI/Screens/GameMenus/IndexAtlas.luau"
+        },
+        "ShopAtlas": {
+          "$path": "src/client/UI/Screens/GameMenus/ShopAtlas.luau"
         }
       },
       "MoneyDisplay": {

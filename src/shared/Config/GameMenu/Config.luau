@@ -80,6 +80,18 @@ Config.Quests = {
     },
 }
 
+-- Index collection: the catalogue's first Size characters (Limited ones excluded). Each chest pays once per
+-- player when that many of them are discovered (GameMenu action ClaimCollection{at}; claimed = "reward:index<at>"
+-- in the player's saved discoveries).
+Config.IndexCollection = {
+    Size = 15,
+    Rewards = {
+        { at = 5, reward = { cash = 25000 } },
+        { at = 10, reward = { cash = 250000 } },
+        { at = 15, reward = { cash = 2500000 } },
+    },
+}
+
 -- Shop. kind = "cash" (server checks + spends cash) or "robux" (developer product / gamepass).
 -- Leave productId / gamePassId nil to show "Coming soon" with purchasing disabled.
 -- endsAt = os.time() value; a countdown only shows when this is set.

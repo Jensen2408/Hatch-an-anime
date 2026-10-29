@@ -10,12 +10,13 @@ actual ownership + distance checks and charge the cost.
 
 Remote contract:
   GetState:InvokeServer(section) -> table      (rate-limited to one read per 5 ms per player)
-    "index"  -> { catalog, discovered, owned }   "plot" -> GameAdapter.GetPlot result
+    "index"  -> { catalog, discovered, owned, mutations = { { tier, odds, multiplier } } }
+    "plot"   -> GameAdapter.GetPlot result
     "quests" -> QuestService.Snapshot             "shop" -> { items, tabs, serverTime }
     otherwise / errors -> { error = message }
   Action:InvokeServer(actionName, args) -> ok, message   (one at a time, >= 0.2 s apart per player)
     actionName in ACTIONS: EquipBest, UnequipAll, PlaceSelected{uids}, StoreSelected{uids}, Claim{id}, ClaimAll,
-    UpgradeTemple, UpgradeIncubator (all incubators), AddIncubator, UnlockSlot, Buy{id}
+    UpgradeTemple, UpgradeIncubator (all incubators), AddIncubator, UnlockSlot, Buy{id}, ClaimCollection{at}
   Changed:FireClient(player)   "your menu data changed, re-fetch"; fired after successful actions,
                                quest changes and GameAdapter events.
 Robux items from the Shop are only prompted here; see the note at the bottom about ProcessReceipt.
@@ -85,7 +86,17 @@ GetState.OnServerInvoke = function(player, section)
         for eggKey, count in HOOKS.GetOwnedEggs(player) do
             owned[eggKey] = count
         end
-        return { catalog = catalog, discovered = discovered, owned = owned }
+        -- mutation tiers for the Index MUTATIONS page (odds are server-only data)
+        local Mutations = require(game:GetService("ServerScriptService"):WaitForChild("Mutations"))
+        local Economy = require(ReplicatedStorage:WaitForChild("CharacterEconomy"))
+        local mutations = {}
+        for _, tier in Mutations.Order do
+            table.insert(
+                mutations,
+                { tier = tier, odds = Mutations.Odds[tier], multiplier = Economy.MutationMult[tier] }
+            )
+        end
+        return { catalog = catalog, discovered = discovered, owned = owned, mutations = mutations }
     elseif section == "plot" then
         local plot, err = plotOrErr(player)
         if not plot then
@@ -203,6 +214,9 @@ ACTIONS.ClaimAll = function(player)
         end
     end
     return claimedCount > 0, claimedCount > 0 and ("Claimed %d rewards"):format(claimedCount) or "Nothing to claim"
+end
+ACTIONS.ClaimCollection = function(player, args)
+    return HOOKS.ClaimCollection(player, tonumber(args.at))
 end
 -- The upgrade actions below fire the plot's request BindableEvent, wait 0.4 s and then report whether the
 -- upgrade visibly started. CanAfford here is only a pre-check for a nicer message; the plot scripts charge.

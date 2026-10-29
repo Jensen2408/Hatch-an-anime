@@ -1,181 +1,200 @@
 -- GameMenus.ShopMenuConfig  (ModuleScript, client)
--- Every number for the Shop menu (ShopMenuComponent). The FEATURED page is the Figma frame "01 Shop"
--- (Hatch an Anime • Screens & Components), measured from the Panel's top-left corner, in Figma pixels, on
--- the StudTheme canvas (1160x730). The other tabs have no frame of their own: they reuse the same cards,
--- buttons and badges on the same grid (22 px margin, 1114x518 content area below the tabs). DAILY uses
--- the day cards of the Figma frame "07 Daily".
---
--- Where "01 Shop" overlaps, pieces are sized to their slot: the green buttons (200 px faces inside 486 /
--- 370 / 240 / 180 px instances) fill their instance width, the boost-card buttons sit 8 px above the card
--- edge instead of touching it, and the Badge / live timer are drawn over the art's own (static) tag and timer.
+-- Every number for the Shop menu (ShopMenuComponent). The art comes from the "Halloween Shop" mockup
+-- (assets/ui/shop_art/shop_reference.png; the LIMITED egg painted out with one GPT Image edit, then cut by
+-- build_shop_atlas.py): a background (panel, header, tab row), the FEATURED page with its changing texts painted
+-- out, and an atlas of pieces (ShopAtlas, generated) the other tabs are built from. Layout is in mockup pixels
+-- (the canvas is 1092 x 679); ShopMenuComponent shrinks the canvas to the panel with one UIScale.
 local ShopMenuConfig = {}
 
-ShopMenuConfig.Titles = { Default = "SHOP", Halloween = "HALLOWEEN SHOP" } -- Header/orange
+ShopMenuConfig.Background = "rbxassetid://128787042530520" -- shop_background.png (1024 x 637, the canvas at 0.938)
+ShopMenuConfig.Featured = "rbxassetid://91365008569326" -- shop_featured.png (the FEATURED page, full size)
+ShopMenuConfig.Pieces = "rbxassetid://100625909530365" -- shop_pieces.png (full size)
 
--- Figma icon artwork (Icon/Shop crown, Icon/coin, Icon/Index egg book) and the limited-deal art, kept at
--- assets/ui/shop/*.png. TODO: upload them and put the ids here; until then (nil) the shop uses the matching
--- ShopSystem.ShopConfig.Icons and shows the spinning egg model instead of the art.
-ShopMenuConfig.Assets = {
-    LimitedArt = nil, -- assets/ui/shop/limited_unknown_egg.png (400x225)
-    Crown = nil, -- assets/ui/shop/icon_crown.png
-    Coin = nil, -- assets/ui/shop/icon_coin.png
-    Hatch = nil, -- assets/ui/shop/icon_hatch.png
-}
+ShopMenuConfig.Font = Font.new("rbxasset://fonts/families/FredokaOne.json")
+ShopMenuConfig.Stroke = Color3.fromRGB(14, 8, 28)
+ShopMenuConfig.White = Color3.fromRGB(255, 255, 255)
+ShopMenuConfig.Muted = Color3.fromRGB(205, 205, 228)
+ShopMenuConfig.Gold = Color3.fromRGB(255, 214, 48)
+ShopMenuConfig.Green = Color3.fromRGB(96, 236, 96)
 
+ShopMenuConfig.Close = { 968, 36, 78, 76 } -- the X in the header (the panel's own Close button is laid over it)
+
+-- Rect = { x, y, w, h }, mockup pixels. Text sizes: FredokaOne caps are 0.607 x TextSize.
 ShopMenuConfig.Tabs = {
     Keys = { "FEATURED", "BOOSTS", "PASSES", "CASH", "DAILY" },
-    Y = 104,
-    Height = 58,
-    X = 22,
-    Width = 214,
-    Gap = 11,
-    Alert = { Size = 26, Inset = 8 }, -- red "!" on DAILY while a reward is ready
+    Slice = 12,
+    LabelColor = Color3.fromRGB(255, 255, 255),
+    FEATURED = {
+        Rect = { 42, 125, 208, 57 },
+        Icon = { "TabIconFeatured", 63, 130 },
+        Label = { "TabLabelFeatured", 107, 138 },
+    },
+    BOOSTS = {
+        Rect = { 257, 125, 187, 57 },
+        Icon = { "TabIconBoosts", 283, 130 },
+        Label = { "TabLabelBoosts", 335, 138 },
+    },
+    PASSES = {
+        Rect = { 450, 125, 193, 57 },
+        Icon = { "TabIconPasses", 468, 136 },
+        Label = { "TabLabelPasses", 528, 138 },
+    },
+    CASH = { Rect = { 647, 125, 198, 57 }, Icon = { "TabIconCash", 675, 131 }, Label = { "TabLabelCash", 743, 138 } },
+    DAILY = { Rect = { 852, 125, 198, 57 }, Icon = { "TabIconDaily", 885, 128 }, Label = { "TabLabelDaily", 948, 138 } },
+    Alert = { Size = 26, Inset = 8, Color = Color3.fromRGB(232, 40, 52) }, -- red "!" on DAILY while a reward is ready
 }
 
--- Rect = { x, y, w, h } in canvas pixels (inner rects are relative to their card)
-ShopMenuConfig.Featured = {
-    Limited = {
-        Rect = { 22, 180, 530, 518 },
-        Radius = 12,
-        ArtRect = { 12, 12, 506, 290 },
-        BadgeRect = { 22, 24, 132, 32 },
-        BadgeText = "LIMITED",
-        TimerRect = { 334, 12, 184, 42 }, -- covers the art's own (static) timer pill
-        TimerRadius = 8,
-        TimerSize = 24,
-        TitleRect = { 22, 308, 486, 58 },
-        TitleSize = 40,
-        TextRect = { 22, 368, 486, 34 },
-        TextSize = 24,
-        ButtonRect = { 22, 442, 486, 56 },
-    },
-    Vip = {
-        Rect = { 568, 180, 568, 190 },
-        Radius = 12,
-        IconRect = { 24, 29, 110, 110 },
-        TitleRect = { 162, 17, 370, 64 },
-        TitleSize = 54,
-        TextRect = { 162, 79, 370, 30 },
-        TextSize = 24,
-        ButtonRect = { 162, 123, 370, 56 },
-    },
-    -- 2× MONEY / 2× HATCH (276x194 cards)
-    Boost = {
-        Rects = { { 568, 386, 276, 194 }, { 860, 386, 276, 194 } },
-        Radius = 10,
-        IconRect = { 14, 22, 68, 68 },
-        TitleRect = { 94, 22, 168, 35 },
-        TitleSize = 25,
-        TextRect = { 16, 94, 244, 30 },
-        TextSize = 22,
-        ButtonRect = { 18, 130, 240, 56 },
+-- FEATURED: the page image + the texts the game writes over it, and the buttons' hit-boxes
+ShopMenuConfig.Page = {
+    Timer = { Rect = { 404, 211, 138, 27 }, Size = 28 },
+    Egg = { 160, 200, 275, 280 }, -- the spinning egg model, standing on the pedestal
+    Title = { Rect = { 60, 460, 475, 60 }, Size = 66 },
+    Subtitle = { Rect = { 112, 520, 370, 32 }, Size = 28, Pill = { 104, 517, 386, 38 } },
+    Buy = { Text = { 140, 562, 312, 52 }, Size = 54, Hit = { 128, 555, 336, 66 } },
+    Vip = { Text = { 812, 300, 198, 42 }, Size = 42, Hit = { 802, 296, 218, 50 } },
+    Boosts = {
+        {
+            Text = { 689, 428, 108, 20 },
+            TextSize = 21,
+            Price = { 706, 479, 88, 33 },
+            PriceSize = 33,
+            Hit = { 698, 474, 104, 44 },
+        },
+        {
+            Text = { 924, 428, 112, 20 },
+            TextSize = 21,
+            Price = { 937, 479, 97, 33 },
+            PriceSize = 33,
+            Hit = { 928, 474, 110, 44 },
+        },
     },
     Starter = {
-        Rect = { 568, 596, 568, 102 },
-        Radius = 10,
-        TitleRect = { 22, 15, 310, 36 },
-        TitleSize = 30,
-        TextRect = { 22, 54, 310, 28 },
-        TextSize = 20,
-        ButtonRect = { 366, 28, 180, 56 },
+        Text = { 680, 591, 194, 26 },
+        TextSize = 26,
+        Price = { 914, 581, 120, 36 },
+        PriceSize = 37,
+        Hit = { 905, 576, 138, 46 },
     },
 }
 
--- BOOSTS: two boost cards (icon left), the HATCH SPEED row (permanent levels bought with cash) and the
--- starter pack row (same row as FEATURED)
+-- BOOSTS / PASSES / CASH / DAILY: one page image each (GPT Image art from a text-free layout sketch, cleaned by
+-- build_shop_pages.py) drawn over the canvas below the tabs; the game writes the texts and level pips on top.
+-- Every rect below is measured on those images, canvas pixels.
+ShopMenuConfig.PageArt = {
+    Rect = { 0, 183, 1092, 496 },
+    BOOSTS = "rbxassetid://100869596723968", -- shop_page_boosts.png
+    PASSES = "rbxassetid://95136168233113", -- shop_page_passes.png
+    CASH = "rbxassetid://102671882825263", -- shop_page_cash.png
+    DAILY = "rbxassetid://132103677796220", -- shop_page_daily.png
+}
+ShopMenuConfig.PillSlice = 8 -- the subtitle pill on FEATURED
+ShopMenuConfig.DisabledShade = 0.45
+ShopMenuConfig.PipTrack = { Color = Color3.fromRGB(20, 12, 38), Empty = Color3.fromRGB(64, 50, 104), Padding = 5 } -- a dark veil over a button that can't be pressed (transparency)
+
 ShopMenuConfig.Boosts = {
-    Rects = { { 22, 180, 551, 270 }, { 585, 180, 551, 270 } },
-    Radius = 12,
-    IconRect = { 24, 30, 120, 120 },
-    TitleRect = { 162, 22, 369, 44 },
-    TitleSize = 36,
-    TextRect = { 162, 68, 369, 56 },
-    TextSize = 22,
-    TimerBarRect = { 162, 132, 369, 18 },
-    TimerTextRect = { 162, 154, 369, 28 },
-    TimerTextSize = 22,
-    ButtonRect = { 162, 196, 311, 56 },
-    Hatch = {
-        Rect = { 22, 464, 1114, 116 },
-        Radius = 12,
-        IconRect = { 16, 13, 90, 90 },
-        Title = "HATCH SPEED",
-        TitleRect = { 122, 10, 420, 36 },
-        TitleSize = 30,
-        ValueRect = { 122, 46, 420, 40 },
-        ValueSize = 32,
-        NoteRect = { 122, 86, 420, 24 },
-        NoteSize = 20,
-        Note = "Permanent · paid with cash",
-        Pips = { X = 560, Y = 47, Size = 22, Gap = 5, Radius = 5 },
-        ButtonRect = { 896, 30, 200, 56 },
+    Cards = {
+        {
+            Title = { 285, 205, 245, 46 },
+            Text = { 285, 252, 245, 48 },
+            Timer = { 285, 305, 245, 28 },
+            Button = { 287, 365, 230, 41 },
+        },
+        {
+            Title = { 760, 205, 270, 46 },
+            Text = { 760, 252, 270, 48 },
+            Timer = { 760, 305, 270, 28 },
+            Button = { 768, 365, 258, 41 },
+        },
     },
-    StarterRect = { 22, 596, 1114, 102 },
-    StarterButtonRect = { 912, 28, 180, 56 },
-}
-
--- PASSES: VIP + money multiplier
-ShopMenuConfig.Passes = {
-    Rects = { { 22, 180, 551, 518 }, { 585, 180, 551, 518 } },
-    Radius = 12,
-    IconRect = { 195, 24, 160, 160 },
-    TitleRect = { 20, 196, 511, 64 },
-    TitleSize = 54,
-    TextRect = { 40, 266, 471, 76 },
+    TitleSize = 50,
     TextSize = 24,
-    -- money multiplier card
-    MultTitleRect = { 20, 196, 511, 44 },
-    MultTitleSize = 34,
-    ValueRect = { 20, 244, 511, 56 },
-    ValueSize = 46,
-    Pips = { Y = 316, Size = 32, Gap = 8, Radius = 6 },
-    LevelRect = { 20, 360, 511, 30 },
-    LevelSize = 22,
-    ButtonRect = { 120, 438, 311, 56 },
+    TimerSize = 26,
+    ButtonSize = 34,
+    Hatch = {
+        Title = { 130, 452, 380, 36 },
+        TitleSize = 40,
+        Value = { 130, 488, 380, 30 },
+        ValueSize = 28,
+        Pips = { X = 528, Y = 474, Size = 22, Gap = 4 },
+        Button = { 837, 461, 192, 43 },
+    },
+    Starter = {
+        Title = { 140, 552, 545, 40 },
+        TitleSize = 44,
+        Text = { 140, 592, 545, 28 },
+        TextSize = 26,
+        Button = { 837, 563, 192, 44 },
+    },
 }
 
--- CASH: three packs
+ShopMenuConfig.Passes = {
+    Vip = {
+        Title = { 60, 408, 467, 72 },
+        TitleSize = 96,
+        Text = { 70, 480, 447, 54 },
+        TextSize = 26,
+        Button = { 114, 538, 360, 51 },
+    },
+    Money = {
+        Title = { 575, 202, 450, 42 },
+        TitleSize = 46,
+        Value = { 575, 400, 450, 38 },
+        ValueSize = 40,
+        Pips = { CentreX = 799, Y = 448, Size = 34, Gap = 9 },
+        Level = { 575, 492, 450, 30 },
+        LevelSize = 26,
+        Button = { 614, 538, 362, 52 },
+    },
+    ButtonSize = 40,
+}
+
 ShopMenuConfig.Cash = {
-    Y = 180,
-    Height = 518,
-    X = 22,
-    Width = 363,
-    Gap = 12,
-    Colors = { "Blue", "Gold", "Blue" },
-    Radius = 12,
-    BadgeRect = { 18, 18, 190, 34 },
-    IconSizes = { 120, 150, 180 }, -- bigger coin for bigger packs, centered in IconArea
-    IconArea = { 20, 60, 323, 200 },
-    AmountRect = { 20, 276, 323, 64 },
-    AmountSize = 50,
-    TextRect = { 20, 344, 323, 30 },
-    TextSize = 22,
-    ButtonRect = { 20, 438, 323, 56 },
+    Cards = {
+        { Badge = nil, Amount = { 60, 428, 290, 60 }, Text = { 60, 490, 290, 28 }, Button = { 85, 566, 242, 38 } },
+        {
+            Badge = { 395, 200, 115, 35 },
+            Amount = { 395, 428, 300, 60 },
+            Text = { 395, 490, 300, 28 },
+            Button = { 437, 566, 218, 38 },
+        },
+        {
+            Badge = { 742, 200, 115, 35 },
+            Amount = { 742, 428, 290, 60 },
+            Text = { 742, 490, 290, 28 },
+            Button = { 763, 566, 244, 38 },
+        },
+    },
+    BadgeSize = 20,
+    AmountSize = 70,
+    TextSize = 26,
+    ButtonSize = 36,
 }
 
--- DAILY: Figma "07 Daily" day cards at the frame's exact size and x positions (258x202, 278 px apart from
--- x 30) with the frame's card insides. Vertically the rows sit 12 px apart and the intro / footer move up so
--- the page fits under the shop tabs (the frame's footer button, y 670..726, also stuck out of the panel).
 ShopMenuConfig.Daily = {
-    IntroRect = { 30, 170, 1100, 36 },
+    Intro = { 60, 188, 970, 34 },
     IntroSize = 30,
-    Intro = "Come back each day for a new reward!",
-    Columns = 4,
-    X = 30,
-    Y = 214,
-    CardSize = Vector2.new(258, 202),
-    Gap = Vector2.new(20, 12),
-    Radius = 10,
-    DayRect = { 10, 10, 238, 30 },
-    DaySize = 26,
-    IconRect = { 88, 50, 78, 78 },
-    ValueRect = { 10, 143, 238, 36 },
-    ValueSize = 28,
-    MarkRect = { 210, 8, 40, 32 },
-    MarkSize = 26,
-    NextRect = { 30, 654, 700, 35 },
-    NextSize = 26,
-    ButtonRect = { 810, 644, 310, 56 },
+    IntroText = "Come back each day for a new reward!",
+    Cards = { -- the seven day cards on the page image
+        { 62, 225, 228, 148 },
+        { 305, 225, 235, 148 },
+        { 555, 225, 232, 148 },
+        { 803, 225, 232, 148 },
+        { 62, 391, 228, 150 },
+        { 305, 391, 235, 150 },
+        { 555, 391, 232, 150 },
+    },
+    Day = { 12, 8, 150, 30 }, -- inside a card
+    DaySize = 28,
+    ValueBottom = 36, -- the value line, from the card's bottom
+    ValueSize = 26,
+    Mark = { 40, 6, 34, 34 }, -- x from the card's right edge
+    MarkSize = 32,
+    TodayStroke = { Color = Color3.fromRGB(255, 226, 80), Thickness = 4 },
+    ClaimedShade = 0.55,
+    Next = { 60, 602, 700, 40 },
+    NextSize = 32,
+    Button = { 797, 604, 246, 38 },
+    ButtonSize = 32,
 }
 
 return ShopMenuConfig

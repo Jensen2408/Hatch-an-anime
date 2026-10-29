@@ -4,11 +4,12 @@ All four panels are drawn by their Component modules on the Figma canvas (Replic
 which scales itself to the panel; RENDER fns only build the view models.
 
 Panels (ImageLabel children of this ScreenGui, opened by the left menu (LeftMenuComponent / LeftMenuConfig):
-  Index    RENDER.Index    Figma "02 Index" (IndexComponent / IndexConfig): season tabs, search, rarity
-                           filters, scrolling card grid, detail card
+  Index    RENDER.Index    "Character Index" mockup art (IndexComponent / IndexConfig / IndexAtlas): season
+                           tabs, search, rarity filters, card grid, detail card, collection chests, and the
+                           Characters / Eggs / Mutations pages
   Quests   RENDER.Quests   Figma "04 Quests" (QuestMenuComponent / QuestMenuConfig): Daily / Weekly /
                            Milestone quest rows with Claim, CLAIM ALL
-  VipShop  RENDER.VipShop  Robux shop (Figma "01 Shop", drawn by ShopMenuComponent / ShopMenuConfig): tabs
+  VipShop  RENDER.VipShop  Robux shop ("Halloween Shop" mockup art, ShopMenuComponent / ShopMenuConfig): tabs
                            FEATURED / BOOSTS / PASSES / CASH / DAILY
   Plot     RENDER.Plot     "My Plot" (Figma "03 Plot", drawn by PlotComponent / PlotConfig): stat tiles,
                            scrolling slot grid or incubator rows, upgrade rows, slots footer
@@ -64,11 +65,9 @@ local StudTheme = require(StudKit:WaitForChild("StudTheme"))
 local StudUI = require(StudKit:WaitForChild("StudUI"))
 local StudToast = require(StudKit:WaitForChild("StudToast"))
 local PlotComponent = require(gui:WaitForChild("PlotComponent"))
-local IndexConfig = require(gui:WaitForChild("IndexConfig"))
 local IndexComponent = require(gui:WaitForChild("IndexComponent"))
 local QuestMenuConfig = require(gui:WaitForChild("QuestMenuConfig"))
 local QuestMenuComponent = require(gui:WaitForChild("QuestMenuComponent"))
-local ShopMenuConfig = require(gui:WaitForChild("ShopMenuConfig"))
 local ShopMenuComponent = require(gui:WaitForChild("ShopMenuComponent"))
 local leftMenu = require(gui:WaitForChild("LeftMenuComponent")).new(gui)
 sideButtons.Visible = false
@@ -131,11 +130,14 @@ local function layoutMenus()
         fitPanelToScreen(name, screenSize)
     end
 end
--- Every menu is drawn on the Figma canvas (StudUI), so the panels take its aspect ratio
+-- Every menu is drawn on the Figma canvas (StudUI), so the panels take its aspect ratio; Plot, Index and the
+-- shop use their mockup art's
 for _, name in { "Plot", "Index", "Quests", "VipShop" } do
     local panel = gui:FindFirstChild(name)
     if panel then
-        panel.UIAspectRatioConstraint.AspectRatio = StudTheme.CanvasSize.X / StudTheme.CanvasSize.Y
+        local art = ({ Plot = PlotComponent, Index = IndexComponent, VipShop = ShopMenuComponent })[name]
+        panel.UIAspectRatioConstraint.AspectRatio = art and art.AspectRatio
+            or StudTheme.CanvasSize.X / StudTheme.CanvasSize.Y
     end
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutMenus)
@@ -586,10 +588,12 @@ local GAME_ICONS = {
 }
 
 -- ===== 6. Index panel =====
--- IndexComponent draws Figma "02 Index"; RENDER.Index only builds its view model.
--- View state survives refreshes: season tab, rarity filter, search text, selected character, grid scroll.
+-- IndexComponent draws the Character Index mockup art; RENDER.Index only builds its view model.
+-- View state survives refreshes: page, season tab, rarity filter, search text, selection, grid scroll.
+local indexPage = "Characters" -- "Characters" | "Eggs" | "Mutations"
 local indexSeason = workspace:GetAttribute("HalloweenMode") and "Halloween" or "Original"
-local indexFilter, indexSelectedId, indexSearch, indexScrollY = "All", nil, "", 0
+local indexFilter, indexSearch, indexScrollY = "All", "", 0
+local indexSelected = {} -- [page] = selected card id
 local indexView -- IndexComponent of the last render
 RENDER.Index = function(panel)
     local data, errorMessage = fetchState("index")
@@ -603,105 +607,168 @@ RENDER.Index = function(panel)
         text(box(layer, 0.5, 0.5, 0.6, 0.08), errorMessage)
         return
     end
-    StudUI.useShell(panel)
-    local isHalloween = indexSeason == "Halloween"
-    local isEventLive = workspace:GetAttribute("HalloweenMode") == true
-    -- the collection is the catalog's first 15 characters (both seasons show the same set)
+    local discovered = data.discovered
+    local collection = Config.IndexCollection
+    local function rerender()
+        RENDER.Index(panel)
+    end
+
+    -- the collection: the catalogue's first characters (Limited ones excluded), the same set on both seasons
     local characters = {}
-    for i, character in data.catalog.characters do
-        if i <= 15 then
+    for _, character in data.catalog.characters do
+        if character.rarity ~= "Limited" and #characters < collection.Size then
             table.insert(characters, character)
         end
     end
-    local discoveredCount = 0
+    local charactersFound = 0
     for _, character in characters do
-        if data.discovered[character.id] == true then
-            discoveredCount += 1
-            indexSelectedId = indexSelectedId or character.id
+        if discovered[character.id] then
+            charactersFound += 1
         end
     end
-    local function selectSeason(season)
-        return function()
-            indexSeason = season
-            RENDER.Index(panel)
+
+    -- cards of the current page (discovered first selection stays per page)
+    local cards, selected, found, total = {}, nil, 0, 0
+    local function addCard(card, detail)
+        if card.discovered then
+            found += 1
+            indexSelected[indexPage] = indexSelected[indexPage] or card.id
+        end
+        total += 1
+        if indexPage == "Mutations" or indexFilter == "All" or card.rarity == indexFilter then
+            table.insert(cards, card)
+        end
+        if card.id == indexSelected[indexPage] and card.discovered then
+            selected = detail
         end
     end
-    local filters = {}
-    for _, rarity in { "All", "Common", "Uncommon", "Rare", "Epic", "Legendary" } do
-        table.insert(filters, { key = rarity, label = string.upper(rarity), selected = indexFilter == rarity })
-    end
-    local cards, selected = {}, nil
-    for _, character in characters do
-        local isDiscovered = data.discovered[character.id] == true
-        local rarityColor = RARITY_COLORS[character.rarity] or GREY
-        if indexFilter == "All" or character.rarity == indexFilter then
-            table.insert(cards, {
+    if indexPage == "Characters" then
+        for _, character in characters do
+            local eggId = string.match(character.id, "^char:(.+)$")
+            addCard({
                 id = character.id,
                 name = character.name,
                 rarity = character.rarity,
-                rarityColor = rarityColor,
                 image = character.image,
-                discovered = isDiscovered,
-                selected = character.id == indexSelectedId,
-            })
-        end
-        if character.id == indexSelectedId and isDiscovered then
-            local ownedCount = data.owned and data.owned[character.id] or 0
-            selected = {
+                discovered = discovered[character.id] == true,
+            }, {
                 name = character.name,
                 rarity = character.rarity,
-                rarityColor = rarityColor,
                 image = character.image,
-                status = "DISCOVERED · OWNED " .. ownedCount,
-                statusColor = StudTheme.Colors.Green,
-                obtain = character.obtain,
-            }
+                egg = eggId and ("MenuEgg_" .. eggId),
+                obtain = eggId and ("Hatch a " .. eggId .. " Egg") or character.obtain,
+            })
+        end
+    elseif indexPage == "Eggs" then
+        for _, egg in data.catalog.eggs do
+            local isDiscovered = discovered[egg.id] == true
+            local owned = data.owned and data.owned[egg.id] or 0
+            addCard({
+                id = egg.id,
+                name = egg.name,
+                rarity = egg.rarity,
+                egg = egg.model,
+                discovered = isDiscovered,
+            }, {
+                name = egg.name,
+                rarity = egg.rarity,
+                egg = egg.model,
+                obtain = owned > 0 and ("Collect from the river · own " .. owned) or "Collect from the river",
+            })
+        end
+    else
+        for _, mutation in data.mutations or {} do
+            local multiplier = string.format("x%g", mutation.multiplier or 1)
+            addCard({
+                id = "mutation:" .. mutation.tier,
+                name = mutation.tier,
+                mutation = mutation.tier,
+                badge = "1 in " .. Config.Short(mutation.odds or 0),
+                subtitle = multiplier .. " INCOME",
+                discovered = true,
+            }, {
+                name = mutation.tier .. " Mutation",
+                mutation = mutation.tier,
+                badge = "1 in " .. Config.Short(mutation.odds or 0),
+                status = multiplier .. " INCOME",
+                obtain = "Any hatch: 1 in " .. Config.Short(mutation.odds or 0) .. " (luck helps)",
+            })
         end
     end
-    local endsAt = workspace:GetAttribute("HalloweenEndsAt")
-    indexView = IndexComponent.new(panel, layer, {
-        title = isHalloween and IndexConfig.Titles.Halloween or IndexConfig.Titles.Default,
-        seasons = {
-            { key = "Original", label = "ORIGINAL", selected = not isHalloween, onActivate = selectSeason("Original") },
-            {
-                key = "Halloween",
-                label = "HALLOWEEN",
-                selected = isHalloween,
-                live = isEventLive,
-                onActivate = selectSeason("Halloween"),
-            },
-            {
-                key = "Winter",
-                label = "WINTER 🔒",
-                selected = false,
-                onActivate = function()
-                    showToast("Winter collection is coming soon!")
-                end,
-            },
-        },
-        collectionText = (isHalloween and "HALLOWEEN COLLECTION" or "COLLECTION")
+
+    local collectionText, progress
+    if indexPage == "Characters" then
+        collectionText = (indexSeason == "Halloween" and "HALLOWEEN COLLECTION" or "COLLECTION")
             .. " · "
-            .. discoveredCount
+            .. charactersFound
             .. " / "
-            .. #characters,
-        progress = discoveredCount / math.max(#characters, 1),
-        timerEndsAt = isHalloween and typeof(endsAt) == "number" and endsAt or nil,
+            .. #characters
+        progress = charactersFound / math.max(#characters, 1)
+    elseif indexPage == "Eggs" then
+        collectionText = "EGG COLLECTION · " .. found .. " / " .. total
+        progress = found / math.max(total, 1)
+    else
+        collectionText = "MUTATIONS · " .. total .. " TIERS"
+        progress = 1
+    end
+
+    -- collection chests: ready once enough characters are discovered, claimed once per player
+    local rewards = {}
+    for _, tier in collection.Rewards do
+        local claimed = discovered["reward:index" .. tier.at] == true
+        table.insert(rewards, {
+            at = tier.at,
+            state = claimed and "claimed" or (charactersFound >= tier.at and "ready" or "locked"),
+            onActivate = function()
+                runAction("ClaimCollection", { at = tier.at })
+            end,
+        })
+    end
+
+    local filters = {}
+    for _, rarity in { "All", "Common", "Uncommon", "Rare", "Epic", "Legendary" } do
+        table.insert(filters, { key = rarity, selected = indexFilter == rarity })
+    end
+    indexView = IndexComponent.new(panel, layer, {
+        page = indexPage,
+        onPage = function(page)
+            if page ~= indexPage then
+                indexPage, indexFilter, indexScrollY = page, "All", 0
+                rerender()
+            end
+        end,
+        season = indexSeason,
+        onSeason = function(season)
+            indexSeason = season
+            rerender()
+        end,
+        onWinter = function()
+            showToast("Winter collection is coming soon!")
+        end,
+        collectionText = collectionText,
+        progress = progress,
         filters = filters,
         onFilter = function(rarity)
             indexFilter = rarity
             indexScrollY = 0
-            RENDER.Index(panel)
+            rerender()
         end,
         search = indexSearch,
         onSearch = function(searchText)
             indexSearch = searchText
         end,
-        characters = cards,
+        cards = (function()
+            for _, card in cards do
+                card.selected = card.id == indexSelected[indexPage]
+            end
+            return cards
+        end)(),
         onSelect = function(id)
-            indexSelectedId = id
-            RENDER.Index(panel)
+            indexSelected[indexPage] = id
+            rerender()
         end,
         selected = selected,
+        rewards = rewards,
         scrollY = indexScrollY,
         onScroll = function(y)
             indexScrollY = y
@@ -824,7 +891,7 @@ RENDER.Quests = function(panel)
 end
 
 -- ===== 8. VipShop panel =====
--- ShopMenuComponent draws Figma "01 Shop"; RENDER.VipShop only builds its view model.
+-- ShopMenuComponent draws the "Halloween Shop" mockup art; RENDER.VipShop only builds its view model.
 -- Data comes from ShopSystem.ShopRemote ("State"), not from the GameMenu remotes.
 local shopTab = "FEATURED" -- ShopMenuConfig.Tabs.Keys; the left menu's Daily button opens "DAILY"
 local shopView -- ShopMenuComponent of the last render
@@ -919,17 +986,9 @@ RENDER.VipShop = function(panel)
         text(box(layer, 0.5, 0.5, 0.6, 0.08), shopRemote and tostring(shopState) or "Shop is loading…")
         return
     end
-    StudUI.useShell(panel)
     local ShopConfig = require(shopSystem.ShopConfig)
     local Colors = StudTheme.Colors
-    local Icons, Art = ShopConfig.Icons or {}, ShopMenuConfig.Assets
-    local icons = {
-        crown = Art.Crown or Icons.Crown,
-        coin = Art.Coin or Icons.Coins,
-        money2x = Art.Coin or Icons.Money2x,
-        hatch2x = Art.Hatch or Icons.Hatch2x,
-        mystery = Art.Crown or Icons.Chalice or Icons.Chest,
-    }
+    local coinImage = (ShopConfig.Icons or {}).Coins -- the purchase burst's coins
     -- server times (os.time) -> os.clock deadlines for the live countdowns
     local clockOffset = os.clock() - shopState.serverTime
     local function priceText(key, isGamePass)
@@ -948,7 +1007,7 @@ RENDER.VipShop = function(panel)
             UISound.Play(
                 (action and (string.find(action, "Buy") or string.find(action, "Purchase"))) and "Purchase" or "Claim"
             )
-            pcall(playBuyBurst, panel, icons.coin)
+            pcall(playBuyBurst, panel, coinImage)
         end
         RENDER.VipShop(panel)
     end
@@ -957,12 +1016,11 @@ RENDER.VipShop = function(panel)
             shopAction("Buy", key)
         end
     end
-    local function boost(title, shortText, textLine, key, iconImage, activeUntil)
+    local function boost(title, shortText, textLine, key, activeUntil)
         return {
             title = title,
             shortText = shortText,
             text = textLine,
-            icon = iconImage,
             price = priceText(key),
             activeEnds = (activeUntil or 0) > shopState.serverTime and activeUntil + clockOffset or nil,
             duration = (ShopConfig.BoostMinutes or 30) * 60,
@@ -976,7 +1034,6 @@ RENDER.VipShop = function(panel)
         and {
             name = limitedDeal.name,
             text = limitedDeal.text,
-            art = Art.LimitedArt,
             eggModel = shopModels and shopModels:FindFirstChild(limitedDeal.key),
             endsAt = limitedDeal.endsAt + clockOffset,
             price = priceText(limitedDeal.key),
@@ -1022,10 +1079,10 @@ RENDER.VipShop = function(panel)
     for i, reward in ShopConfig.Daily do
         days[i] = {
             label = "DAY " .. i,
-            icon = reward.kind == "cash" and icons.coin
-                or reward.kind == "mystery" and icons.mystery
-                or reward.boost == "Hatch2x" and icons.hatch2x
-                or icons.money2x,
+            kind = reward.kind == "cash" and "cash"
+                or reward.kind == "mystery" and "mystery"
+                or reward.boost == "Hatch2x" and "hatch"
+                or "money",
             value = reward.label or ("$" .. Config.Short(reward.amount)),
             valueColor = reward.kind == "cash" and Colors.Gold or Colors.White,
             state = (i == daily.day and daily.ready) and "today"
@@ -1037,14 +1094,11 @@ RENDER.VipShop = function(panel)
 
     local minutes = ShopConfig.BoostMinutes or 30
     shopView = ShopMenuComponent.new(panel, layer, {
-        title = workspace:GetAttribute("HalloweenMode") and ShopMenuConfig.Titles.Halloween
-            or ShopMenuConfig.Titles.Default,
         tab = shopTab,
         onTab = function(tab)
             shopTab = tab
             RENDER.VipShop(panel)
         end,
-        icons = icons,
         limited = limited,
         vip = {
             text = "+ Exclusive Perks",
@@ -1054,20 +1108,12 @@ RENDER.VipShop = function(panel)
             onBuy = buy("VIP"),
         },
         boosts = {
-            boost(
-                "2× MONEY",
-                "Earn 2× money",
-                minutes .. " min of double cash",
-                "Money2x",
-                icons.money2x,
-                shopState.money2xUntil
-            ),
+            boost("2× MONEY", "Earn 2x Money", minutes .. " min of double cash", "Money2x", shopState.money2xUntil),
             boost(
                 "2× HATCH",
-                "Hatch 2× faster",
+                "Hatch 2x Faster",
                 "Eggs hatch twice as fast for " .. minutes .. " min",
                 "Hatch2x",
-                icons.hatch2x,
                 shopState.hatch2xUntil
             ),
         },
@@ -1708,7 +1754,7 @@ local function _legacyUpgrades(layer, data)
     end
 end
 
--- Current Plot layout: PlotComponent draws Figma "03 Plot"; RENDER.Plot only builds its view model.
+-- Current Plot layout: PlotComponent draws the "My Plot" mockup art; RENDER.Plot only builds its view model.
 local plotTab = "slots" -- "slots" | "upgrades"
 local plotScrollY = { slots = 0, upgrades = 0 } -- kept across refreshes
 local plotView -- PlotComponent of the last render
@@ -1726,7 +1772,6 @@ RENDER.Plot = function(panel)
         text(box(layer, 0.5, 0.5, 0.6, 0.08), errorMessage)
         return
     end
-    StudUI.useShell(panel)
     local UpgradePrices = require(ReplicatedStorage.UpgradePrices)
     local function money(value)
         return "$" .. Config.Short(value)
@@ -1774,6 +1819,10 @@ RENDER.Plot = function(panel)
                 image = item.image,
                 name = item.name,
                 income = money(item.income or 0) .. "/s",
+                -- REMOVE: back to the inventory (GameMenu action StoreSelected)
+                onRemove = item.uid and function()
+                    runAction("StoreSelected", { uids = { item.uid } })
+                end,
             }
         elseif isUnlocked then
             slots[i] = { number = i, state = "empty" }
@@ -1824,6 +1873,7 @@ RENDER.Plot = function(panel)
                 or "Unlock every slot first",
             price = templeMaxed and "MAX" or money(UpgradePrices.Temple[level + 1]),
             enabled = not templeMaxed and data.canUpgrade == true,
+            buttonText = templeMaxed and "MAX" or "Unlock every slot first",
             onActivate = function()
                 if templeMaxed then
                     showToast("Already maxed")
@@ -1847,6 +1897,7 @@ RENDER.Plot = function(panel)
                 ),
             price = speedMaxed and "MAX" or money(UpgradePrices.IncubatorLevel[speedLevel + 1]),
             enabled = not speedMaxed,
+            buttonText = speedLevel and "MAX" or "Build an incubator first",
             onActivate = upgradeIncubators,
         },
         {
@@ -1856,6 +1907,7 @@ RENDER.Plot = function(panel)
                 or (incubatorCount .. " → " .. (incubatorCount + 1) .. " · hatch more at once"),
             price = incubatorCount >= 3 and "MAX" or money(UpgradePrices.AddIncubator[incubatorCount + 1]),
             enabled = incubatorCount < 3,
+            buttonText = "MAX",
             onActivate = function()
                 if incubatorCount < 3 then
                     runAction("AddIncubator")
@@ -1888,6 +1940,7 @@ RENDER.Plot = function(panel)
                 progress = 0,
                 price = isNext and money(UpgradePrices.AddIncubator[i]) or "LOCKED",
                 enabled = isNext,
+                buttonText = "Build incubator " .. (i - 1) .. " first",
                 onActivate = function()
                     if isNext then
                         runAction("AddIncubator")
@@ -1899,49 +1952,35 @@ RENDER.Plot = function(panel)
         end
     end
 
-    -- footer milestone: next slot, then the temple upgrade, then done
-    local milestone
+    -- milestone: 5 dots for the slots unlocked so far (1 of 12 lights the first); pressing it buys the next
+    -- slot, then the temple upgrade
+    local slotsProgress = unlockedCount / math.max(slotCap, 1)
+    local milestone = { dots = math.clamp(math.ceil(slotsProgress * 5), 0, 5) }
     if nextSlot then
-        local price = slotAt(nextSlot):GetAttribute("UnlockPrice")
-        milestone = {
-            text = "UNLOCK SLOT " .. nextSlot .. (price and (" · " .. money(price)) or ""),
-            enabled = true,
-            onActivate = unlockNextSlot,
-        }
+        milestone.onActivate = unlockNextSlot
     elseif data.canUpgrade and not templeMaxed then
-        milestone = {
-            text = "UPGRADE TEMPLE · " .. money(UpgradePrices.Temple[level + 1]),
-            enabled = true,
-            onActivate = function()
-                runAction("UpgradeTemple")
-            end,
-        }
-    else
-        milestone = { text = "ALL SLOTS UNLOCKED", enabled = false }
+        milestone.onActivate = function()
+            runAction("UpgradeTemple")
+        end
     end
 
     plotView = PlotComponent.new(panel, layer, {
         tab = plotTab,
         scrollY = plotScrollY[plotTab],
         stats = {
-            { "TOTAL INCOME", money(income) .. " / sec" },
+            { "TOTAL INCOME", money(income) .. "/s" },
             { "TEMPLE LEVEL", tostring(level) },
             { "INCUBATORS", incubatorCount .. " / 3" },
         },
         slots = slots,
         slotsText = unlockedCount .. " / " .. slotCap .. " slots unlocked",
-        slotsProgress = unlockedCount / math.max(slotCap, 1),
+        slotsProgress = slotsProgress,
         upgrades = upgrades,
         incubators = incubators,
         milestone = milestone,
         onTab = function(tab)
             plotTab = tab
             refresh()
-        end,
-        -- EQUIP BEST: the server (GameMenu action EquipBest -> InventoryService PlaceBest) places the
-        -- highest-income characters on the unlocked slots and replies with the toast message.
-        onEquipBest = function()
-            runAction("EquipBest")
         end,
         onScroll = function(y)
             plotScrollY[plotTab] = y

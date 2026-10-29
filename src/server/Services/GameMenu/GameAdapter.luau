@@ -9,7 +9,8 @@ Public API (all take the Player first unless noted):
   GetCatalog() -> { eggs = {...}, characters = {...} }      static catalog for the menu
   GetPlot(player) -> { availableSlots, canUpgrade, plotOwned, level, unlocked, items }
   GetOwnedEggs(player) -> { ["egg:<id>"] = count }
-  GetDiscovered / ExportDiscovered / ImportDiscovered        "char:<id>" / "egg:<id>" / "hatch:<id>" keys
+  GetDiscovered / ExportDiscovered / ImportDiscovered        "char:<id>" / "egg:<id>" / "hatch:<id>" / "reward:index<n>" keys
+  ClaimCollection(player, at) -> ok, message   Index collection chest (Config.IndexCollection), once per player
   PlaceCharacters / StoreCharacters(player, uids) -> count? , message   (max 60 uids, 0.27 s between requests)
   EquipBest(player) -> ok, message
   GetCash(player) -> number;  SpendCash(player, price) -> true | nil, message;  GrantReward(player, {cash}) -> true | nil, message
@@ -156,6 +157,45 @@ function GameAdapter.GetDiscovered(player)
         end
     end
     return table.clone(discoveries[player])
+end
+
+-- Index collection chest `at` (GameMenu Config.IndexCollection): pays once when `at` of the collection's characters
+-- are discovered. The claim is stored as discovery key "reward:index<at>", so it is saved with the discoveries.
+function GameAdapter.ClaimCollection(player, at)
+    local collection = require(ReplicatedStorage.GameMenu.Config).IndexCollection
+    local tier
+    for _, candidate in collection.Rewards do
+        if candidate.at == at then
+            tier = candidate
+        end
+    end
+    if not tier then
+        return false, "Unknown reward."
+    end
+    local discovered = GameAdapter.GetDiscovered(player)
+    local key = "reward:index" .. tier.at
+    if discovered[key] then
+        return false, "Already claimed"
+    end
+    local found, counted = 0, 0
+    for _, entry in CharacterCatalog.Order do
+        if entry.Rarity ~= "Limited" and counted < collection.Size then
+            counted += 1
+            if discovered["char:" .. entry.Id] then
+                found += 1
+            end
+        end
+    end
+    if found < tier.at then
+        return false, ("Discover %d characters first"):format(tier.at)
+    end
+    markDiscovered(player, key) -- first, so a second click can't pay twice
+    local granted, message = GameAdapter.GrantReward(player, tier.reward)
+    if not granted then
+        discoveries[player][key] = nil
+        return false, message
+    end
+    return true, "Collection reward claimed!"
 end
 
 -- Validates the whole uid list first, then runs InventoryService.MenuRequest per uid.
