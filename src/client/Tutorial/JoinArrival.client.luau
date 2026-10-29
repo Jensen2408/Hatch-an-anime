@@ -43,6 +43,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local arrivalFolder = ReplicatedStorage:WaitForChild("JoinArrival")
 local Config = require(arrivalFolder:WaitForChild("Config"))
+local MenuArt = require(ReplicatedStorage:WaitForChild("MenuArt"):WaitForChild("MenuArt"))
 local UP = Vector3.yAxis
 
 local function clamp01(alpha)
@@ -62,9 +63,6 @@ local function flatDirection(vector)
 end
 
 -- ===== 2. UI: cover + skip button =====
-local _WOOD = Color3.fromRGB(74, 44, 30)
-local _CREAM_TOP = Color3.fromRGB(255, 248, 232)
-local _CREAM_BOTTOM = Color3.fromRGB(243, 215, 166)
 local SKY_COLOR = Color3.fromRGB(214, 236, 255)
 
 local arrivalGui = Instance.new("ScreenGui")
@@ -83,74 +81,21 @@ coverFrame.BackgroundColor3 = SKY_COLOR
 coverFrame.BackgroundTransparency = 1
 coverFrame.Parent = arrivalGui
 
--- raised square-stud button: dark base underneath, cream face on top, square studs on the surface
+-- the blue menu-art button (ReplicatedStorage.MenuArt piece ButtonBlue); the face dips on press
 local skipButton = Instance.new("TextButton")
 skipButton.Name = "Skip"
 skipButton.AnchorPoint = Vector2.new(1, 1)
 skipButton.Position = UDim2.new(1, -24, 1, -24)
-skipButton.Size = UDim2.fromOffset(150, 60)
-skipButton.BackgroundColor3 = Color3.new(0, 0, 0)
+skipButton.Size = UDim2.fromOffset(170, 62)
+skipButton.BackgroundTransparency = 1
 skipButton.BorderSizePixel = 0
-do
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 12)
-    corner.Parent = skipButton
-end
 skipButton.Text = ""
 skipButton.AutoButtonColor = false
 skipButton.Parent = arrivalGui
 local skipScale = Instance.new("UIScale")
 skipScale.Parent = skipButton
-local skipFace = Instance.new("Frame")
-skipFace.Name = "Face"
-skipFace.Size = UDim2.new(1, 0, 1, -5)
-skipFace.BackgroundColor3 = Color3.new(1, 1, 1)
-skipFace.BorderSizePixel = 0
-skipFace.Parent = skipButton
-skipFace.BackgroundColor3 = Color3.new(1, 1, 1)
-do
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 12)
-    corner.Parent = skipFace
-    local gradient = Instance.new("UIGradient")
-    gradient.Rotation = 90
-    gradient.Color = ColorSequence.new(Color3.fromRGB(90, 170, 255), Color3.fromRGB(20, 70, 200))
-    gradient.Parent = skipFace
-end
-local faceStroke = Instance.new("UIStroke")
-faceStroke.Thickness = 3
-faceStroke.Color = Color3.new(1, 1, 1)
-faceStroke.LineJoinMode = Enum.LineJoinMode.Round
-faceStroke.Parent = skipFace
-local skipStrip = Instance.new("Frame")
-skipStrip.Size = UDim2.new(1, 0, 0, 5)
-skipStrip.BackgroundColor3 = Color3.fromRGB(255, 150, 30)
-skipStrip.BorderSizePixel = 0
-skipStrip.Visible = false
-skipStrip.Parent = skipFace
-local studTex = Instance.new("ImageLabel")
-studTex.Name = "StudTex"
-studTex.BackgroundTransparency = 1
-studTex.Size = UDim2.fromScale(1, 1)
-studTex.Image = "rbxassetid://132561191216691"
-studTex.ImageTransparency = 0.45
-studTex.ScaleType = Enum.ScaleType.Tile
-studTex.TileSize = UDim2.fromOffset(18, 18)
-studTex.Parent = skipFace
-local skipLabel = Instance.new("TextLabel")
-skipLabel.BackgroundTransparency = 1
-skipLabel.Size = UDim2.fromScale(1, 1)
-skipLabel.Font = Enum.Font.FredokaOne
-skipLabel.Text = "SKIP ▶▶"
-skipLabel.TextSize = 26
-skipLabel.TextColor3 = Color3.new(1, 1, 1)
-skipLabel.Parent = skipFace
-do
-    local labelStroke = Instance.new("UIStroke")
-    labelStroke.Color = Color3.new(0, 0, 0)
-    labelStroke.Thickness = 2.5
-    labelStroke.Parent = skipLabel
-end
+local skipFace = MenuArt.piece(skipButton, "Face", "ButtonBlue", { 0, 0, 170, 62 }, 1, 14)
+MenuArt.label(skipFace, "Label", "SKIP ▶▶", { 10, 4, 150, 50 }, 30, nil, 2, { alignX = Enum.TextXAlignment.Center })
 local function rescale()
     local screenSize = arrivalGui.AbsoluteSize
     skipScale.Scale = math.clamp(math.min(screenSize.X, screenSize.Y) / 720, screenSize.Y < 500 and 0.6 or 0.8, 1.15) -- smaller skip button on phones
@@ -503,43 +448,15 @@ local function showWelcomeCard(travelTime)
     card.Name = "WelcomeCard"
     card.AnchorPoint = Vector2.new(0.5, 1)
     card.Position = UDim2.new(0.5, 0, 1, -70)
-    card.Size = UDim2.fromOffset(0, 104)
+    card.Size = UDim2.fromOffset(0, 116)
     card.AutomaticSize = Enum.AutomaticSize.X
-    card.BackgroundColor3 = Color3.new(1, 1, 1)
+    card.BackgroundTransparency = 1
     card.BorderSizePixel = 0
     card.ZIndex = 50
-    do
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 14)
-        corner.Parent = card
-        local gradient = Instance.new("UIGradient")
-        gradient.Rotation = 90
-        gradient.Color = ColorSequence.new(Color3.fromRGB(255, 92, 168), Color3.fromRGB(150, 10, 84))
-        gradient.Parent = card
-        local cardStroke = Instance.new("UIStroke")
-        cardStroke.Color = Color3.new(1, 1, 1)
-        cardStroke.Thickness = 4
-        cardStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        cardStroke.Parent = card
-        local studTexture = Instance.new("ImageLabel")
-        studTexture.Name = "Studs"
-        studTexture.BackgroundTransparency = 1
-        studTexture.Size = UDim2.fromScale(1, 1)
-        studTexture.Image = "rbxassetid://132561191216691"
-        studTexture.ImageTransparency = 0.4
-        studTexture.ScaleType = Enum.ScaleType.Tile
-        studTexture.TileSize = UDim2.fromOffset(18, 18)
-        studTexture.ZIndex = 50
-        studTexture.Parent = card
-        local studCorner = Instance.new("UICorner")
-        studCorner.CornerRadius = UDim.new(0, 14)
-        studCorner.Parent = studTexture
-    end
-    local padding = Instance.new("UIPadding")
-    padding.PaddingLeft = UDim.new(0, 20)
-    padding.PaddingRight = UDim.new(0, 20)
-    padding.Parent = card
-    -- content row (the stud texture must not be part of the list layout, or it pushes the avatar and name off the card)
+    -- the pink menu-art card (MenuArt piece CardPink), 9-sliced to the width of the name
+    local cardArt = MenuArt.piece(card, "Art", "CardPink", { 0, 0, 240, 116 }, 50, 30)
+    cardArt.Size = UDim2.fromScale(1, 1)
+    -- content row (the art is scale-sized, so only this row sets the card's width)
     local contentRow = Instance.new("Frame")
     contentRow.Name = "Content"
     contentRow.BackgroundTransparency = 1
@@ -547,40 +464,39 @@ local function showWelcomeCard(travelTime)
     contentRow.Size = UDim2.fromScale(0, 1)
     contentRow.ZIndex = 52
     contentRow.Parent = card
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, 18)
+    padding.PaddingRight = UDim.new(0, 30)
+    padding.PaddingBottom = UDim.new(0, 6) -- the art's bottom lip
+    padding.Parent = contentRow
     local rowLayout = Instance.new("UIListLayout")
     rowLayout.FillDirection = Enum.FillDirection.Horizontal
     rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
     rowLayout.Padding = UDim.new(0, 16)
     rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
     rowLayout.Parent = contentRow
+    -- avatar head shot inside the menu-art icon tile
+    local avatarTile = MenuArt.piece(contentRow, "AvatarTile", "IconTile", { 0, 0, 90, 88 }, 52)
+    avatarTile.LayoutOrder = 1
     local avatar = Instance.new("ImageLabel")
     avatar.Name = "Avatar"
-    avatar.Size = UDim2.fromOffset(80, 80)
-    avatar.BackgroundColor3 = Color3.fromRGB(59, 120, 255)
-    avatar.ZIndex = 52
-    avatar.LayoutOrder = 1
-    avatar.Parent = contentRow
-    do
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 12)
-        corner.Parent = avatar
-        local avatarStroke = Instance.new("UIStroke")
-        avatarStroke.Color = Color3.new(1, 1, 1)
-        avatarStroke.Thickness = 3
-        avatarStroke.Parent = avatar
-        task.spawn(function()
-            local thumbnailOk, thumbnailUrl = pcall(function()
-                return Players:GetUserThumbnailAsync(
-                    player.UserId,
-                    Enum.ThumbnailType.HeadShot,
-                    Enum.ThumbnailSize.Size150x150
-                )
-            end)
-            if thumbnailOk then
-                avatar.Image = thumbnailUrl
-            end
+    avatar.BackgroundTransparency = 1
+    avatar.Position = UDim2.fromOffset(9, 8)
+    avatar.Size = UDim2.fromOffset(72, 72)
+    avatar.ZIndex = 53
+    avatar.Parent = avatarTile
+    task.spawn(function()
+        local thumbnailOk, thumbnailUrl = pcall(function()
+            return Players:GetUserThumbnailAsync(
+                player.UserId,
+                Enum.ThumbnailType.HeadShot,
+                Enum.ThumbnailSize.Size150x150
+            )
         end)
-    end
+        if thumbnailOk then
+            avatar.Image = thumbnailUrl
+        end
+    end)
     local textColumn = Instance.new("Frame")
     textColumn.BackgroundTransparency = 1
     textColumn.Size = UDim2.fromOffset(0, 80)
@@ -604,7 +520,7 @@ local function showWelcomeCard(travelTime)
     greetingLabel.Text = "WELCOME BACK,"
     do
         local greetingStroke = Instance.new("UIStroke")
-        greetingStroke.Color = Color3.fromRGB(13, 10, 20)
+        greetingStroke.Color = MenuArt.Stroke
         greetingStroke.Thickness = 2
         greetingStroke.Parent = greetingLabel
     end
@@ -620,7 +536,7 @@ local function showWelcomeCard(travelTime)
     nameLabel.ZIndex = 52
     nameLabel.Text = string.upper(player.DisplayName) .. "!"
     local nameStroke = Instance.new("UIStroke")
-    nameStroke.Color = Color3.fromRGB(13, 10, 20)
+    nameStroke.Color = MenuArt.Stroke
     nameStroke.Thickness = 4
     nameStroke.Parent = nameLabel
     nameLabel.Parent = textColumn

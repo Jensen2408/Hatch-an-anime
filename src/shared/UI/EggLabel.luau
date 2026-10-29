@@ -271,66 +271,14 @@ local function build(self)
         GroupTransparency = 1,
     }, gui)
     self.fit = make("UIScale", { Name = "Fit", Scale = 0.82 }, root)
-    -- Velm plate behind the text (Figma "World Nameplates v2" river egg tag)
+    -- the tag behind the text: the MenuArt egg tag piece for this rarity (GPT Image art, assets/ui/menus3),
+    -- stretched to the three text rows (its pointer stays at the bottom centre)
     do
-        -- [rarity] = { gradient top, gradient bottom }
-        local plateColorsByRarity = {
-            Common = { rgb(150, 156, 172), rgb(64, 70, 86) },
-            Uncommon = { rgb(67, 220, 78), rgb(11, 122, 27) },
-            Rare = { rgb(59, 120, 255), rgb(11, 42, 156) },
-            Epic = { rgb(168, 102, 255), rgb(74, 21, 166) },
-            Legendary = { rgb(255, 214, 72), rgb(214, 132, 0) },
-            Mythic = { rgb(255, 74, 74), rgb(150, 0, 20) },
-        }
-        local plateColors = plateColorsByRarity[self.rarity] or plateColorsByRarity.Common
-        local plateShadow = make("Frame", {
-            Name = "PlateShadow",
-            AnchorPoint = Vector2.new(0.5, 0),
-            Position = UDim2.new(0.5, 0, 0, 2),
-            Size = UDim2.new(1, -8, 0, 84),
-            BackgroundColor3 = Color3.new(0, 0, 0),
-            BorderSizePixel = 0,
-            ZIndex = 0,
-        }, root)
-        corner(12, plateShadow)
-        local plate = make("Frame", {
-            Name = "Plate",
-            AnchorPoint = Vector2.new(0.5, 0),
-            Position = UDim2.new(0.5, 0, 0, -4),
-            Size = UDim2.new(1, -8, 0, 84),
-            BackgroundColor3 = Color3.new(1, 1, 1),
-            BorderSizePixel = 0,
-            ZIndex = 1,
-            ClipsDescendants = true,
-        }, root)
-        corner(12, plate)
-        make("UIGradient", { Rotation = 90, Color = ColorSequence.new(plateColors[1], plateColors[2]) }, plate)
-        make("ImageLabel", {
-            Name = "Studs",
-            BackgroundTransparency = 1,
-            Size = UDim2.fromScale(1, 1),
-            Image = "rbxassetid://132561191216691",
-            ScaleType = Enum.ScaleType.Tile,
-            TileSize = UDim2.fromOffset(18, 18),
-            ImageTransparency = 0.45,
-            ZIndex = 1,
-        }, plate)
-        make(
-            "UIStroke",
-            { Color = Color3.new(1, 1, 1), Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-            plate
-        )
-        -- Rotated square under the plate forming the speech-bubble pointer.
-        local _pointer = make("Frame", {
-            Name = "Pointer",
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(0.5, 0, 0, 82),
-            Size = UDim2.fromOffset(14, 14),
-            Rotation = 45,
-            BackgroundColor3 = Color3.new(1, 1, 1),
-            BorderSizePixel = 0,
-            ZIndex = 0,
-        }, root)
+        local MenuArt = require(ReplicatedStorage:WaitForChild("MenuArt"):WaitForChild("MenuArt"))
+        local tagName = "Tag" .. self.rarity
+        local ok = pcall(MenuArt.size, tagName)
+        local tag = MenuArt.piece(root, "Plate", ok and tagName or "TagCommon", { 4, -4, guiWidth - 8, 92 }, 1, 14)
+        tag.ResampleMode = Enum.ResamplerMode.Default
     end
 
     -- One text row: a holder Frame at offsetY (height px) containing a scaled "Fill" TextLabel.
@@ -372,8 +320,9 @@ local function build(self)
         local rarityColor = Config.Rarities[self.rarity] or Config.Rarities.Common
         local rarityStroke = rarityLabel:FindFirstChildOfClass("UIStroke")
         if rarityStroke then
-            rarityStroke.Color = rarityColor
-            rarityStroke.Thickness = 2.6
+            -- dark outline: readable on every tag colour (the glow copy below keeps the rarity colour)
+            rarityStroke.Color = Config.Outline
+            rarityStroke.Thickness = 2.2
         end
         -- Blurred-looking copy behind the text (thick, translucent stroke) that pulses forever.
         local glow = rarityLabel:Clone()

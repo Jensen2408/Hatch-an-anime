@@ -62,7 +62,6 @@ local closingPanel -- panel playing its close tween
 local LeftMenuConfig = require(gui:WaitForChild("LeftMenuConfig"))
 local StudKit = ReplicatedStorage:WaitForChild("StudKit")
 local StudTheme = require(StudKit:WaitForChild("StudTheme"))
-local StudUI = require(StudKit:WaitForChild("StudUI"))
 local StudToast = require(StudKit:WaitForChild("StudToast"))
 local PlotComponent = require(gui:WaitForChild("PlotComponent"))
 local IndexComponent = require(gui:WaitForChild("IndexComponent"))
@@ -811,7 +810,6 @@ RENDER.Quests = function(panel)
         text(box(layer, 0.5, 0.5, 0.6, 0.08), errorMessage)
         return
     end
-    StudUI.useShell(panel)
     local tabs, claimableCount = {}, 0
     for _, period in QuestMenuConfig.Tabs.Keys do
         local readyCount = 0

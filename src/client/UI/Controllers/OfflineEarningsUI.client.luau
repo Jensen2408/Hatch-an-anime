@@ -1,4 +1,5 @@
--- OfflineEarningsUI (LocalScript): "while you were away" window from Figma "Offline Earnings v3".
+-- OfflineEarningsUI (LocalScript): "while you were away" window, drawn from the MenuArt art (assets/ui/menus3:
+-- GPT Image window art in the Halloween Shop style) with the amount, coins and button texts on top.
 -- Reads player attributes set by PlayerDataService: OfflineEarnings (cash put on the stands), OfflineSeconds.
 -- 2× button buys ShopConfig.Products.Offline2x (hidden while that id is 0); ShopService pays the same amount again.
 -- Remote: ShopRemote:InvokeServer("Buy", "Offline2x") only opens the Robux prompt; the payout happens in ShopService's
@@ -11,10 +12,10 @@ local player = Players.LocalPlayer
 local UISound = require(ReplicatedStorage:WaitForChild("UISound"))
 local ShopConfig = require(ReplicatedStorage:WaitForChild("ShopSystem"):WaitForChild("ShopConfig"))
 local shopRemote = ReplicatedStorage.ShopSystem:WaitForChild("ShopRemote")
+local MenuArt = require(ReplicatedStorage:WaitForChild("MenuArt"):WaitForChild("MenuArt"))
 
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
 local BLACK, WHITE = Color3.new(0, 0, 0), Color3.new(1, 1, 1)
-local STUDS_IMAGE = "rbxassetid://132561191216691"
 local GLOW_IMAGE = "rbxthumb://type=Asset&id=85372533044428&w=420&h=420"
 local SPARK_IMAGE = "rbxthumb://type=Asset&id=87376394612367&w=420&h=420"
 local COINS_IMAGE = ShopConfig.Icons and ShopConfig.Icons.Coins or ""
@@ -31,17 +32,6 @@ local function create(class, props, parent)
 end
 local function addCorner(target, radius)
     create("UICorner", { CornerRadius = UDim.new(0, radius or 12) }, target)
-end
-local function addStuds(target, transparency)
-    return create("ImageLabel", {
-        BackgroundTransparency = 1,
-        Size = UDim2.fromScale(1, 1),
-        Image = STUDS_IMAGE,
-        ScaleType = Enum.ScaleType.Tile,
-        TileSize = UDim2.fromOffset(24, 24),
-        ImageTransparency = transparency or 0.55,
-        ZIndex = target.ZIndex,
-    }, target)
 end
 local function makeLabel(parent, text, size, color, props)
     local label = create("TextLabel", {
@@ -138,106 +128,58 @@ local function showWindow()
     screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
         fitScale.Scale = rescale()
     end)
+    -- the window art (ReplicatedStorage.MenuArt, assets/ui/menus3): header with the title and X, the away pill,
+    -- the golden glow; buttons and badge are pieces. Every rect below is in pixels of the 560 x 540 window.
     create("ImageLabel", {
         BackgroundTransparency = 1,
         Image = GLOW_IMAGE,
         ImageColor3 = rgb(255, 200, 40),
-        ImageTransparency = 0.5,
+        ImageTransparency = 0.6,
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5),
         Size = UDim2.new(1, 160, 1, 160),
         ZIndex = 2,
     }, holder)
-    create("Frame", {
-        BackgroundColor3 = BLACK,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 10),
-        Size = UDim2.fromScale(1, 1),
-        ZIndex = 3,
-    }, holder).Name =
-        "Shadow"
-    addCorner(holder:FindFirstChild("Shadow"), 18)
-    local window = create(
-        "Frame",
-        { BackgroundColor3 = WHITE, Size = UDim2.fromScale(1, 1), ZIndex = 4, ClipsDescendants = true },
-        holder
-    )
-    addCorner(window, 18)
-    create("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(47, 35, 87), rgb(20, 13, 43)) }, window)
-    addStuds(window, 0.7)
-    create("UIStroke", { Color = WHITE, Thickness = 5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, window)
-    -- header
-    local header = create(
-        "Frame",
-        { BackgroundColor3 = WHITE, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 78), ZIndex = 5 },
-        window
-    )
-    create("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(255, 214, 72), rgb(230, 140, 0)) }, header)
-    addStuds(header, 0.45)
-    create("Frame", {
-        BackgroundColor3 = BLACK,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0, 0, 1, 0),
-        Size = UDim2.new(1, 0, 0, 5),
-        ZIndex = 6,
-    }, header)
-    makeLabel(header, "OFFLINE EARNINGS", 38, WHITE, { Size = UDim2.fromScale(1, 1), ZIndex = 7 })
-    -- away pill
+    local window = create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 4 }, holder)
+    MenuArt.background(window, "Offline", nil, 4)
+    -- away pill (drawn): clock + "You were away for ..." centred in it
     local pill = create("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 98),
-        Size = UDim2.fromOffset(0, 36),
-        AutomaticSize = Enum.AutomaticSize.X,
-        BackgroundColor3 = rgb(20, 14, 40),
+        Position = UDim2.fromOffset(173, 84),
+        Size = UDim2.fromOffset(213, 41),
+        BackgroundTransparency = 1,
         ZIndex = 6,
     }, window)
-    addCorner(pill, 18)
-    create("UIStroke", { Color = WHITE, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, pill)
-    create("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16) }, pill)
+    create("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Center,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, 7),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }, pill)
     create("ImageLabel", {
         BackgroundTransparency = 1,
         Image = "rbxassetid://112731802177209",
         ScaleType = Enum.ScaleType.Fit,
         ResampleMode = Enum.ResamplerMode.Pixelated,
         LayoutOrder = 0,
-        Size = UDim2.fromOffset(26, 26),
+        Size = UDim2.fromOffset(24, 24),
         ZIndex = 8,
-    }, pill)
-    create("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
-        VerticalAlignment = Enum.VerticalAlignment.Center,
-        Padding = UDim.new(0, 8),
-        SortOrder = Enum.SortOrder.LayoutOrder,
     }, pill)
     makeLabel(
         pill,
         "You were away for " .. formatAwayTime(awaySeconds),
         17,
         rgb(255, 220, 120),
-        { Size = UDim2.new(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, ZIndex = 7 }
+        { Size = UDim2.new(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 1, ZIndex = 7 }
     )
-    -- hero: glow + coin pile
+    -- hero: coin pile + sparkles over the drawn glow
     local hero = create("Frame", {
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 140),
-        Size = UDim2.fromOffset(300, 150),
+        Position = UDim2.new(0.5, 0, 0, 148),
+        Size = UDim2.fromOffset(300, 140),
         BackgroundTransparency = 1,
         ZIndex = 6,
     }, window)
-    local halo = create("ImageLabel", {
-        BackgroundTransparency = 1,
-        Image = GLOW_IMAGE,
-        ImageColor3 = rgb(255, 220, 90),
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(260, 260),
-        ZIndex = 6,
-    }, hero)
-    TweenService:Create(
-        halo,
-        TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        { ImageTransparency = 0.35, Size = UDim2.fromOffset(290, 290) }
-    ):Play()
     local pile = { { 0, 18, 92 }, { -60, 34, 70 }, { 62, 32, 72 }, { -28, -6, 64 }, { 34, -8, 66 } }
     for i, coin in pile do
         local coinImage = create("ImageLabel", {
@@ -278,7 +220,7 @@ local function showWindow()
         "$0",
         72,
         rgb(130, 255, 110),
-        { Position = UDim2.fromOffset(0, 292), Size = UDim2.new(1, 0, 0, 80), ZIndex = 8 }
+        { Position = UDim2.fromOffset(0, 288), Size = UDim2.new(1, 0, 0, 78), ZIndex = 8 }
     )
     local amountGlow = amountLabel:Clone()
     amountGlow.ZIndex = 7
@@ -291,8 +233,8 @@ local function showWindow()
         window,
         "earned while you were away · collect it from your money stands",
         15,
-        rgb(210, 205, 240),
-        { Position = UDim2.fromOffset(0, 370), Size = UDim2.new(1, 0, 0, 20), ZIndex = 8, NoStroke = true }
+        rgb(220, 215, 245),
+        { Position = UDim2.fromOffset(0, 364), Size = UDim2.new(1, 0, 0, 20), ZIndex = 8 }
     )
     task.spawn(function()
         local startedAt = os.clock()
@@ -323,65 +265,45 @@ local function showWindow()
             screenGui:Destroy()
         end)
     end
-    local function makeButton(text, subtitle, color, anchorX, width, onClick, pulse)
+    -- the drawn X closes too
+    local closeButton = create("TextButton", {
+        Text = "",
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(494, 3),
+        Size = UDim2.fromOffset(62, 55),
+        ZIndex = 20,
+    }, window)
+    closeButton.Activated:Connect(close)
+    -- a button piece (OffGreen / OffGold) at rect with its title + subtitle and a press bounce
+    local function makeButton(text, subtitle, pieceName, rect, onClick, pulse)
         local buttonHolder = create("Frame", {
-            AnchorPoint = Vector2.new(0.5, 1),
-            Position = UDim2.new(anchorX, 0, 1, -26),
-            Size = UDim2.fromOffset(width, 84),
+            Position = UDim2.fromOffset(rect[1], rect[2]),
+            Size = UDim2.fromOffset(rect[3], rect[4]),
             BackgroundTransparency = 1,
             ZIndex = 8,
         }, window)
-        create("Frame", {
-            BackgroundColor3 = BLACK,
-            BorderSizePixel = 0,
-            Position = UDim2.fromOffset(0, 6),
-            Size = UDim2.fromScale(1, 1),
-            ZIndex = 8,
-        }, buttonHolder).Name =
-            "Base"
-        addCorner(buttonHolder.Base, 14)
-        local buttonFace = create("TextButton", {
-            Text = "",
-            AutoButtonColor = false,
-            BackgroundColor3 = WHITE,
-            Size = UDim2.fromScale(1, 1),
-            ZIndex = 9,
-            ClipsDescendants = true,
-        }, buttonHolder)
-        addCorner(buttonFace, 14)
-        create(
-            "UIGradient",
-            { Rotation = 90, Color = ColorSequence.new(color:Lerp(WHITE, 0.25), color:Lerp(BLACK, 0.12)) },
-            buttonFace
-        )
-        addStuds(buttonFace, 0.55)
-        create(
-            "UIStroke",
-            { Color = WHITE, Thickness = 3.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-            buttonFace
-        )
-        create("Frame", {
-            BackgroundColor3 = WHITE,
-            BackgroundTransparency = 0.65,
-            BorderSizePixel = 0,
-            Position = UDim2.fromOffset(10, 6),
-            Size = UDim2.new(1, -20, 0, 5),
-            ZIndex = 10,
-        }, buttonFace)
-        makeLabel(buttonFace, text, 28, WHITE, {
-            Position = UDim2.fromOffset(0, subtitle and 10 or 0),
-            Size = UDim2.new(1, 0, 0, subtitle and 34 or 84),
+        local art = MenuArt.piece(buttonHolder, "Art", pieceName, { 0, 0, rect[3], rect[4] }, 9, 18)
+        makeLabel(art, text, 28, WHITE, {
+            Position = UDim2.fromOffset(0, subtitle and 14 or 0),
+            Size = UDim2.new(1, 0, 0, subtitle and 34 or rect[4]),
             ZIndex = 11,
         })
         if subtitle then
             makeLabel(
-                buttonFace,
+                art,
                 subtitle,
                 16,
                 rgb(255, 255, 225),
-                { Position = UDim2.fromOffset(0, 46), Size = UDim2.new(1, 0, 0, 22), ZIndex = 11 }
+                { Position = UDim2.fromOffset(0, 50), Size = UDim2.new(1, 0, 0, 22), ZIndex = 11 }
             )
         end
+        local hit = create("TextButton", {
+            Text = "",
+            AutoButtonColor = false,
+            BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 1),
+            ZIndex = 12,
+        }, buttonHolder)
         local pulseScale = create("UIScale", {}, buttonHolder)
         if pulse then
             TweenService:Create(
@@ -389,45 +311,29 @@ local function showWindow()
                 TweenInfo.new(0.65, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
                 { Scale = 1.05 }
             ):Play()
-            local pulseGlow = create("ImageLabel", {
-                BackgroundTransparency = 1,
-                Image = GLOW_IMAGE,
-                ImageColor3 = color,
-                ImageTransparency = 0.4,
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromScale(0.5, 0.5),
-                Size = UDim2.new(1, 70, 1, 70),
-                ZIndex = 7,
-            }, buttonHolder)
-            TweenService:Create(
-                pulseGlow,
-                TweenInfo.new(0.65, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                { ImageTransparency = 0.75 }
-            ):Play()
         end
-        buttonFace.MouseEnter:Connect(function()
+        hit.MouseEnter:Connect(function()
             UISound.Play("Hover")
         end)
-        buttonFace.MouseButton1Down:Connect(function()
-            buttonFace.Position = UDim2.fromOffset(0, 3)
+        hit.MouseButton1Down:Connect(function()
+            art.Position = UDim2.fromOffset(0, 3)
         end)
-        buttonFace.MouseButton1Up:Connect(function()
-            buttonFace.Position = UDim2.new()
+        hit.MouseButton1Up:Connect(function()
+            art.Position = UDim2.fromScale(0, 0)
         end)
-        buttonFace.Activated:Connect(function()
+        hit.Activated:Connect(function()
             UISound.Play("Click")
             onClick()
         end)
         return buttonHolder
     end
     if canDouble then
-        makeButton("COLLECT", formatShortCash(amount), rgb(70, 190, 70), 0.27, 230, close)
+        makeButton("COLLECT", formatShortCash(amount), "OffGreen", { 39, 408, 240, 101 }, close)
         local doubleButton = makeButton(
             "2× COLLECT",
             formatShortCash(amount * 2) .. "  ·  R$ " .. tostring(ShopConfig.Prices.Offline2x or 19),
-            rgb(255, 180, 30),
-            0.73,
-            250,
+            "OffGold",
+            { 284, 408, 240, 101 },
             function()
                 pcall(function()
                     shopRemote:InvokeServer("Buy", "Offline2x")
@@ -435,25 +341,9 @@ local function showWindow()
             end,
             true
         )
-        local badge = create("Frame", {
-            AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, 8, 0, 0),
-            Size = UDim2.fromOffset(0, 28),
-            AutomaticSize = Enum.AutomaticSize.X,
-            BackgroundColor3 = rgb(226, 52, 60),
-            Rotation = -6,
-            ZIndex = 14,
-        }, doubleButton)
-        addCorner(badge, 8)
-        create("UIStroke", { Color = WHITE, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, badge)
-        create("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, badge)
-        makeLabel(
-            badge,
-            "2× CASH!",
-            15,
-            WHITE,
-            { Size = UDim2.new(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, ZIndex = 15 }
-        )
+        local badge = MenuArt.piece(doubleButton, "Badge", "OffBadge", { 162, -26, 90, 40 }, 14, 12)
+        badge.Rotation = -6
+        makeLabel(badge, "2× CASH!", 15, WHITE, { Size = UDim2.fromScale(1, 1), ZIndex = 15 })
         player:GetAttributeChangedSignal("OfflineDoubled"):Connect(function()
             if not player:GetAttribute("OfflineDoubled") or not amountLabel.Parent then
                 return
@@ -476,11 +366,12 @@ local function showWindow()
                 { BackgroundColor3 = WHITE, BackgroundTransparency = 0.2, Size = UDim2.fromScale(1, 1), ZIndex = 30 },
                 window
             )
+            addCorner(flash, 18)
             TweenService:Create(flash, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
             task.delay(1.8, close)
         end)
     else
-        makeButton("AWESOME!", nil, rgb(70, 190, 70), 0.5, 300, close)
+        makeButton("AWESOME!", nil, "OffGreen", { 130, 408, 300, 101 }, close)
     end
     UISound.Play("Open")
 end

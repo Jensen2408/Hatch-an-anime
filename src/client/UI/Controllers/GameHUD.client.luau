@@ -1757,20 +1757,34 @@ do
         ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 150, 255)),
     })
     local activeTab, rarityIndex, mutationIndex, searchQuery, sellMode, armedItem = "All", 1, 1, "", false, nil
-    local PANEL_WIDTH, PANEL_HEIGHT = 660, 340
+    -- the window art (ReplicatedStorage.MenuArt): background with the header, title, chips and grid face; tab /
+    -- cell / sell pieces drawn on top. Every rect is in pixels of the 660 x 402 art.
+    local MenuArt = require(ReplicatedStorage:WaitForChild("MenuArt"):WaitForChild("MenuArt"))
+    local ART = {
+        Tabs = { All = { 223, 17, 125, 35 }, Eggs = { 352, 17, 124, 35 }, Characters = { 481, 17, 120, 35 } },
+        Count = { 190, 17, 30, 35 },
+        Close = { 607, 17, 38, 35 },
+        Search = { 23, 68, 199, 33 },
+        Rarity = { 234, 68, 142, 33 },
+        Mutation = { 384, 68, 116, 33 },
+        Sell = { 507, 68, 131, 33 },
+        Grid = { 20, 112, 626, 282 },
+        Cell = Vector2.new(118, 94),
+        CellGap = Vector2.new(6, 7),
+    }
+    local PANEL_WIDTH, PANEL_HEIGHT = 660, 402
     local inventoryFrame = create("Frame", {
         Name = "Inventory",
         Active = true,
         AnchorPoint = Vector2.new(0.5, 1),
         Position = UDim2.new(0.5, 0, 1, -122),
         Size = UDim2.fromOffset(PANEL_WIDTH, PANEL_HEIGHT),
-        BackgroundColor3 = PLATE,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Visible = false,
         ZIndex = 20,
     }, gui)
-    addStroke(inventoryFrame, 4, BLACK)
-    addStuds(inventoryFrame, 26, 0.85)
+    MenuArt.background(inventoryFrame, "Inventory", nil, 20)
     local inventoryScale = create("UIScale", {}, inventoryFrame)
     local function fitScale()
         local screenSize = gui.AbsoluteSize
@@ -1784,115 +1798,66 @@ do
             inventoryScale.Scale = fitScale()
         end
     end)
-    local header = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 46),
-        BackgroundColor3 = Color3.fromRGB(240, 110, 20),
-        BorderSizePixel = 0,
-        ZIndex = 21,
-    }, inventoryFrame)
-    addStuds(header, 22, 0.1)
-    create("Frame", {
-        Position = UDim2.new(0, 0, 1, 0),
-        Size = UDim2.new(1, 0, 0, 3),
-        BackgroundColor3 = BLACK,
-        BorderSizePixel = 0,
-        ZIndex = 22,
-    }, header)
-    local titleLabel = create("TextLabel", {
-        Position = UDim2.fromOffset(14, 0),
-        Size = UDim2.fromOffset(160, 46),
-        BackgroundTransparency = 1,
-        Text = "INVENTORY",
-        FontFace = FONT,
-        TextSize = 25,
-        TextColor3 = Color3.new(1, 1, 1),
-        TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 22,
-    }, header)
-    addStroke(titleLabel, 2.5).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+    -- a transparent button over the art with a centred label
+    local function artButton(r, textSize)
+        local button = create("TextButton", {
+            Position = UDim2.fromOffset(r[1], r[2]),
+            Size = UDim2.fromOffset(r[3], r[4]),
+            BackgroundTransparency = 1,
+            Text = "",
+            FontFace = FONT,
+            TextSize = textSize,
+            TextColor3 = Color3.new(1, 1, 1),
+            AutoButtonColor = false,
+            ZIndex = 23,
+        }, inventoryFrame)
+        addStroke(button, 2, BLACK).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+        return button
+    end
     local countLabel = create("TextLabel", {
-        Position = UDim2.fromOffset(150, 0),
-        Size = UDim2.fromOffset(40, 46),
+        Position = UDim2.fromOffset(ART.Count[1], ART.Count[2]),
+        Size = UDim2.fromOffset(ART.Count[3], ART.Count[4]),
         BackgroundTransparency = 1,
         Text = "",
         FontFace = FONT,
-        TextSize = 16,
+        TextSize = 18,
         TextColor3 = CREAM,
         ZIndex = 22,
-    }, header)
-    local tabButtons = {}
-    for i, tabName in { "All", "Eggs", "Characters" } do
-        local tabButton = create("TextButton", {
-            Position = UDim2.fromOffset(196 + (i - 1) * 118, 8),
-            Size = UDim2.fromOffset(110, 30),
-            BackgroundColor3 = PLATE,
-            BorderSizePixel = 0,
-            Text = string.upper(tabName),
-            FontFace = FONT,
-            TextSize = 15,
-            TextColor3 = CREAM,
-            AutoButtonColor = false,
-            ZIndex = 22,
-        }, header)
-        addStroke(tabButton, 2, BLACK)
+    }, inventoryFrame)
+    addStroke(countLabel, 2, BLACK).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+    local tabButtons, tabArt = {}, {}
+    for _, tabName in { "All", "Eggs", "Characters" } do
+        local r = ART.Tabs[tabName]
+        tabArt[tabName] = MenuArt.piece(inventoryFrame, "TabArt" .. tabName, "InvTabOff", r, 21)
+        local tabButton = artButton(r, 15)
+        tabButton.Text = string.upper(tabName)
         tabButtons[tabName] = tabButton
     end
-    local closeButton = create("TextButton", {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -8, 0.5, 0),
-        Size = UDim2.fromOffset(34, 34),
-        BackgroundColor3 = Color3.fromRGB(226, 50, 44),
-        Text = "X",
-        FontFace = FONT,
-        TextSize = 20,
-        TextColor3 = Color3.new(1, 1, 1),
-        ZIndex = 22,
-    }, header)
-    addStroke(closeButton, 2.5, BLACK)
-    local filterRow = create("Frame", {
-        Position = UDim2.fromOffset(10, 56),
-        Size = UDim2.new(1, -20, 0, 30),
-        BackgroundTransparency = 1,
-        ZIndex = 21,
-    }, inventoryFrame)
+    local closeButton = artButton(ART.Close, 20)
     local searchBox = create("TextBox", {
-        Size = UDim2.fromOffset(196, 30),
-        BackgroundColor3 = Color3.fromRGB(26, 38, 46),
-        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(ART.Search[1] + 10, ART.Search[2]),
+        Size = UDim2.fromOffset(ART.Search[3] - 20, ART.Search[4]),
+        BackgroundTransparency = 1,
         PlaceholderText = "Search…",
         Text = "",
         ClearTextOnFocus = false,
         FontFace = FONT,
         TextSize = 15,
         TextColor3 = Color3.new(1, 1, 1),
-        PlaceholderColor3 = Color3.fromRGB(150, 160, 170),
+        PlaceholderColor3 = Color3.fromRGB(150, 160, 185),
         TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 22,
-    }, filterRow)
-    addStroke(searchBox, 2, BLACK)
-    create("UIPadding", { PaddingLeft = UDim.new(0, 8) }, searchBox)
-    local function createChip(offsetX, width)
-        local chipButton = create("TextButton", {
-            Position = UDim2.fromOffset(offsetX, 0),
-            Size = UDim2.fromOffset(width, 30),
-            BackgroundColor3 = Color3.fromRGB(26, 38, 46),
-            BorderSizePixel = 0,
-            FontFace = FONT,
-            TextSize = 14,
-            TextColor3 = CREAM,
-            AutoButtonColor = false,
-            ZIndex = 22,
-        }, filterRow)
-        addStroke(chipButton, 2, BLACK)
-        return chipButton
-    end
-    local rarityButton = createChip(206, 150)
-    local mutationButton = createChip(364, 130)
-    local sellModeButton = createChip(502, 138)
-    sellModeButton.TextColor3 = Color3.new(1, 1, 1)
+        ZIndex = 23,
+    }, inventoryFrame)
+    local rarityButton = artButton(ART.Rarity, 14)
+    rarityButton.TextColor3 = CREAM
+    local mutationButton = artButton(ART.Mutation, 14)
+    mutationButton.TextColor3 = CREAM
+    local sellArt = MenuArt.piece(inventoryFrame, "SellArt", "SellRed", ART.Sell, 21)
+    sellArt.Visible = false
+    local sellModeButton = artButton(ART.Sell, 14)
     local itemGrid = create("ScrollingFrame", {
-        Position = UDim2.fromOffset(10, 96),
-        Size = UDim2.new(1, -20, 1, -106),
+        Position = UDim2.fromOffset(ART.Grid[1], ART.Grid[2]),
+        Size = UDim2.fromOffset(ART.Grid[3], ART.Grid[4]),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ScrollBarThickness = 6,
@@ -1902,21 +1867,22 @@ do
         ZIndex = 21,
     }, inventoryFrame)
     create("UIGridLayout", {
-        CellSize = UDim2.fromOffset(86, 98),
-        CellPadding = UDim2.fromOffset(9, 12),
+        CellSize = UDim2.fromOffset(ART.Cell.X, ART.Cell.Y),
+        CellPadding = UDim2.fromOffset(ART.CellGap.X, ART.CellGap.Y),
         SortOrder = Enum.SortOrder.LayoutOrder,
     }, itemGrid)
-    create("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 3) }, itemGrid)
+    create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 4) }, itemGrid)
     local emptyLabel = create("TextLabel", {
-        Position = UDim2.fromOffset(10, 96),
-        Size = UDim2.new(1, -20, 1, -106),
+        Position = UDim2.fromOffset(ART.Grid[1], ART.Grid[2]),
+        Size = UDim2.fromOffset(ART.Grid[3], ART.Grid[4]),
         BackgroundTransparency = 1,
         Text = "",
         FontFace = FONT,
-        TextSize = 18,
-        TextColor3 = Color3.fromRGB(200, 185, 205),
+        TextSize = 20,
+        TextColor3 = Color3.fromRGB(200, 195, 225),
         ZIndex = 21,
     }, inventoryFrame)
+    addStroke(emptyLabel, 2, BLACK).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
     -- tab + rarity + mutation ("Mutated" = any) + case-insensitive plain-text search on "<mutation> <name>"
     local function matchesFilters(tool)
         local kind = getCategory(tool)
@@ -1950,17 +1916,15 @@ do
     -- tab highlight + rarity / mutation / SELL chip labels and colours
     local function refreshControls()
         for tabName, tabButton in tabButtons do
-            tabButton.BackgroundColor3 = tabName == activeTab and GOLD or PLATE
-            tabButton.TextColor3 = tabName == activeTab and INK or CREAM
+            MenuArt.setPiece(tabArt[tabName], tabName == activeTab and "InvTabOn" or "InvTabOff")
+            tabButton.TextColor3 = Color3.new(1, 1, 1)
         end
         rarityButton.Text = "RARITY: " .. string.upper(RARITY_FILTERS[rarityIndex])
         mutationButton.Text = MUTATION_FILTERS[mutationIndex] == "Any" and "MUTATION: ANY"
             or string.upper(MUTATION_FILTERS[mutationIndex])
-        mutationButton.BackgroundColor3 = INVENTORY_MUTATION_COLORS[MUTATION_FILTERS[mutationIndex]]
-                and INVENTORY_MUTATION_COLORS[MUTATION_FILTERS[mutationIndex]]:Lerp(Color3.new(0, 0, 0), 0.45)
-            or Color3.fromRGB(26, 38, 46)
+        mutationButton.TextColor3 = INVENTORY_MUTATION_COLORS[MUTATION_FILTERS[mutationIndex]] or CREAM
         sellModeButton.Text = sellMode and "SELLING: TAP x2" or "SELL ITEMS"
-        sellModeButton.BackgroundColor3 = sellMode and Color3.fromRGB(226, 50, 44) or Color3.fromRGB(92, 192, 70)
+        sellArt.Visible = sellMode -- the red piece over the art's green SELL button
     end
     local render
     -- One inventory cell: rarity strip, icon, name, mutation tag + animated edge, held highlight, SELL-mode price
@@ -1969,30 +1933,28 @@ do
         local name, rarity = describeTool(tool)
         local rarityColor = RARITY_COLORS[rarity] or Color3.fromRGB(150, 140, 160)
         local mutation = tool:GetAttribute("Mutation")
-        local cell = create(
-            "Frame",
-            { LayoutOrder = index, BackgroundColor3 = Color3.fromRGB(26, 38, 46), BorderSizePixel = 0, ZIndex = 22 },
-            itemGrid
-        )
+        local cell = create("Frame", { LayoutOrder = index, BackgroundTransparency = 1, ZIndex = 22 }, itemGrid)
+        MenuArt.piece(cell, "Art", "Cell", { 0, 0, ART.Cell.X, ART.Cell.Y }, 22, 10)
+        -- the art has no outline of its own around a cell's edge: the stroke only shows for mutated / held items
         local cellStroke = addStroke(cell, 2.5, BLACK)
+        cellStroke.Transparency = 1
         create("Frame", {
-            AnchorPoint = Vector2.new(0, 1),
-            Position = UDim2.fromScale(0, 1),
-            Size = UDim2.new(1, 0, 0, 4),
+            Position = UDim2.fromOffset(9, ART.Cell.Y - 10),
+            Size = UDim2.new(1, -18, 0, 3),
             BackgroundColor3 = rarityColor,
             BorderSizePixel = 0,
             ZIndex = 24,
         }, cell)
         local iconFrame = create("Frame", {
-            Position = UDim2.fromOffset(5, 5),
-            Size = UDim2.new(1, -10, 0, 66),
+            Position = UDim2.fromOffset(6, 5),
+            Size = UDim2.new(1, -12, 0, 56),
             BackgroundTransparency = 1,
             ZIndex = 23,
         }, cell)
         buildPreview(tool, iconFrame)
         local nameLabel = create("TextLabel", {
-            Position = UDim2.fromOffset(3, 72),
-            Size = UDim2.new(1, -6, 0, 20),
+            Position = UDim2.fromOffset(8, 64),
+            Size = UDim2.new(1, -16, 0, 17),
             BackgroundTransparency = 1,
             Text = string.upper(name),
             FontFace = FONT,
@@ -2025,6 +1987,7 @@ do
             end
             cellStroke.Color = Color3.new(1, 1, 1)
             cellStroke.Thickness = 3
+            cellStroke.Transparency = 0
             local edgeGradient = create("UIGradient", {
                 Color = mutation == "Rainbow" and RAINBOW_GRADIENT
                     or ColorSequence.new({
@@ -2044,6 +2007,7 @@ do
         if getEquippedTool() == tool then
             cellStroke.Color = GOLD
             cellStroke.Thickness = 4
+            cellStroke.Transparency = 0
         end
         -- hotbar slot number (top-left), like the number on the hotbar itself
         local barSlot = barSlotOf(tool)

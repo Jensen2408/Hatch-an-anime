@@ -345,7 +345,7 @@ end)
 
 -- ===== 4. Backpack art (the left menu itself is GameMenus.LeftMenuComponent) =====
 local MENU_ART = {
-    BagButton = "rbxassetid://122727444829967",
+    BagButton = "rbxassetid://116322244078947", -- assets/ui/menus2/backpack_button.png (GPT Image, menu-button style)
 }
 local function setFigmaArt(button, art, keepNames)
     button:SetAttribute("FS", nil)

@@ -1,37 +1,28 @@
 -- ReplicatedStorage.SettingsMenu.SettingsConfig  (ModuleScript, client)
--- Every number for the Settings window (SettingsComponent). Layout values come from the Figma frame
--- "06 Settings" (Hatch an Anime • Screens & Components), measured from the Panel's top-left corner, in Figma
--- pixels, on the StudTheme canvas (1160x730). Colors, fonts and the kit pieces: StudKit.
---
--- The frame has four toggle rows (1100x94, 112 px apart) and a UI SCALE slider. The game has two volume
--- sliders and three switches, so all five use the frame's row: volume rows lay the UI SCALE slider
--- (label, 600 px bar, value) inside the row, toggle rows keep the Toggle at the frame's spot. Five rows fit
--- at 106 px apart; the frame's placeholder note becomes the save hint.
+-- Every number for the Settings window (SettingsComponent). The art is ReplicatedStorage.MenuArt (the window
+-- background with five rows, slider and switch pieces); rects are measured on it, in pixels of the StudTheme
+-- canvas (1160 x 730) the window is drawn on.
 local SettingsConfig = {}
 
-SettingsConfig.Title = "SETTINGS" -- Header/purple
-
--- Rect = { x, y, w, h } in canvas pixels (inner rects are relative to their row)
+-- Rect = { x, y, w, h } in canvas pixels; row rects are relative to the row's top
+SettingsConfig.Close = { 1046, 60, 62, 62 } -- the drawn X
 SettingsConfig.Rows = {
-    X = 30,
-    Y = 108,
-    Width = 1100,
-    Height = 94,
-    Step = 106,
-    Radius = 12,
-    TitleSize = 32,
+    Tops = { 152, 272, 395, 493, 590 },
+    Heights = { 106, 106, 83, 82, 82 },
+    TitleSize = 36,
+    -- slider row
+    SliderTitle = { 92, 30, 270, 46 },
+    Slider = { 378, 43, 538, 17 }, -- the track
+    Value = { 950, 30, 125, 46 },
+    ValueSize = 34,
+    SliderHitPadding = 18, -- the drag area reaches this far above / below the track
     -- toggle row
-    TitleRect = { 24, 10, 720, 42 },
-    TextRect = { 24, 52, 720, 30 },
-    TextSize = 20,
-    ToggleRect = { 984, 25, 86, 44 },
-    -- slider row (UI SCALE layout)
-    SliderTitleRect = { 24, 25, 290, 45 },
-    SliderRect = { 330, 37, 600, 20 },
-    ValueRect = { 960, 25, 116, 45 },
-    ValueSize = 30,
+    ToggleTitle = { 92, 10, 700, 40 },
+    Text = { 92, 49, 700, 26 },
+    TextSize = 22,
+    Toggle = { 976, 13, 93, 45 },
 }
 
-SettingsConfig.Note = { Rect = { 54, 650, 1052, 32 }, Size = 22, Text = "Settings are saved automatically." }
+SettingsConfig.Note = { Rect = { 80, 677, 1000, 24 }, Size = 22, Text = "Settings are saved automatically." }
 
 return SettingsConfig

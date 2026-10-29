@@ -1,13 +1,8 @@
 -- ReplicatedStorage.FeedbackMenu.FeedbackConfig  (ModuleScript, client)
--- Every number for the Feedback window (FeedbackComponent). Layout values come from the Figma frame
--- "05 Feedback" (Hatch an Anime • Screens & Components), measured from the Panel's top-left corner, in Figma
--- pixels, on the StudTheme canvas (1160x730). Colors, fonts and the kit pieces: StudKit.
---
--- Tidied overlaps: the note line (y 650..685) and the SEND button (y 640..696) now share one centre line;
--- the status of a send replaces the note while it shows.
+-- Every number for the Feedback window (FeedbackComponent). The art is ReplicatedStorage.MenuArt (the window
+-- background from assets/ui/menus3, tab pieces); rects are measured on it, in pixels of the StudTheme canvas
+-- (1160 x 730) the window is drawn on.
 local FeedbackConfig = {}
-
-FeedbackConfig.Title = "FEEDBACK" -- Header/blue
 
 FeedbackConfig.Kinds = {
     { Key = "Bug", Label = "🐞 BUG" },
@@ -19,22 +14,26 @@ FeedbackConfig.MaxLength = 500 -- the server re-checks and trims (FeedbackServic
 
 -- Rect = { x, y, w, h } in canvas pixels
 FeedbackConfig.Layout = {
-    IntroRect = { 46, 120, 1068, 50 },
-    IntroSize = 38,
+    CloseRect = { 1074, 15, 66, 62 }, -- the drawn X
+    IntroRect = { 60, 104, 1040, 50 },
+    IntroSize = 40,
     Intro = "Help us make Hatch an Anime better",
-    PromptRect = { 46, 190, 1068, 32 },
-    PromptSize = 24,
+    PromptRect = { 60, 164, 1040, 32 },
+    PromptSize = 26,
     Prompt = "Choose a category",
-    Tabs = { Y = 234, Height = 58, Xs = { 46, 400, 754 }, Width = 338 },
-    InputRect = { 46, 324, 1068, 226 },
+    TabRects = { { 60, 231, 318, 58 }, { 406, 231, 330, 58 }, { 765, 231, 330, 58 } },
+    TabTextSize = 28,
+    InputRect = { 56, 310, 1048, 241 }, -- the drawn text box
+    InputInset = 18,
     InputTextSize = 26,
     Placeholder = "Tell us what happened...",
-    CounterRect = { 46, 573, 1068, 32 },
-    CounterSize = 22,
-    NoteRect = { 46, 650, 640, 36 },
+    CounterRect = { 60, 562, 700, 30 },
+    CounterSize = 24,
+    NoteRect = { 78, 642, 586, 46 }, -- inside the drawn note strip
     NoteSize = 22,
     Note = "Please do not include personal information.",
-    SendRect = { 710, 640, 404, 56 },
+    SendRect = { 704, 638, 406, 58 }, -- the drawn green button
+    SendSize = 32,
     StatusSeconds = 3,
 }
 

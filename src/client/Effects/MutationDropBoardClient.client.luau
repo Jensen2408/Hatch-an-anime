@@ -6,6 +6,32 @@ local screen = workspace:WaitForChild("MutationDropBoard"):WaitForChild("Board")
 local timerLabel = screen:FindFirstChild("Timer", true)
 local tiersLabel = screen:FindFirstChild("Tiers", true)
 
+-- The sign's art (ReplicatedStorage.MenuArt.BoardArt: GPT Image, Halloween Shop style, title baked in) replaces the
+-- place's flat frame / studs / header; the subtitle, timer and tiers labels stay and are drawn on top of it.
+do
+    local MenuArt = require(game:GetService("ReplicatedStorage"):WaitForChild("MenuArt"):WaitForChild("MenuArt"))
+    local face = timerLabel.Parent
+    face.BackgroundTransparency = 1
+    for _, child in face:GetChildren() do
+        if child:IsA("ImageLabel") or (child:IsA("Frame") and child.Name == "Header") then
+            child.Visible = false
+        elseif child:IsA("TextLabel") then
+            child.ZIndex = 3
+        end
+    end
+    local art = Instance.new("ImageLabel")
+    art.Name = "BoardArt"
+    art.BackgroundTransparency = 1
+    art.Image = MenuArt.BoardArt
+    art.Size = UDim2.fromScale(1, 1)
+    art.ZIndex = 1
+    art.Parent = face
+    local subtitle = face:FindFirstChild("T")
+    if subtitle and subtitle:IsA("TextLabel") then
+        subtitle.Position = UDim2.fromScale(0.06, 0.25) -- right under the drawn header
+    end
+end
+
 local TIER_COLORS = {
     Silver = Color3.fromRGB(220, 225, 235),
     Gold = Color3.fromRGB(255, 200, 60),

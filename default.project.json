@@ -3476,6 +3476,19 @@
           "$path": "src/shared/UI/FeedbackMenu/FeedbackComponent.luau"
         }
       },
+      "MenuArt": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "MenuArt": {
+          "$path": "src/shared/UI/MenuArt/MenuArt.luau"
+        },
+        "MenuArtAtlas": {
+          "$path": "src/shared/UI/MenuArt/MenuArtAtlas.luau"
+        },
+        "MenuArt3Atlas": {
+          "$path": "src/shared/UI/MenuArt/MenuArt3Atlas.luau"
+        }
+      },
       "SettingsMenu": {
         "$className": "Folder",
         "$ignoreUnknownInstances": true,
