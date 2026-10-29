@@ -2,15 +2,16 @@
 -- The collapsible quest tracker. Builds its instances once (rows come from a fixed pool of QuestsConfig.MaxRows)
 -- and afterwards only changes text, fill widths, visibility and the collapse tween. Display only: the quest data
 -- comes from the server through FigmaSkin's tracker loop (GameMenu GetState "quests").
--- Its ScreenGui uses Sibling ZIndexBehavior: art = ZIndex 1, text / bars / chevron = 2, later rows above earlier.
+-- Every image is a piece of one atlas (QuestsConfig.Pieces), drawn at its own pixel size: no stretching.
+-- Its ScreenGui uses Sibling ZIndexBehavior: children draw above their parent, later siblings above earlier.
 --
 --   QuestsHUD (Frame, UIScale)
---   └── QuestContainer
---       ├── HeaderButton (ImageButton, transparent, covers the header)
---       │   ├── HeaderBackground, TitleText, ChevronIcon
---       └── CollapsibleContent (ClipsDescendants)
---           └── QuestList
---               └── QuestRow1..N: RowBackground, DescriptionText, ProgressTrack > ProgressFill, ProgressText
+--   ├── HeaderImage
+--   ├── CollapsibleContent (ClipsDescendants)
+--   │   └── QuestRow1..N (card piece; the last shown row uses the piece with the bottom border):
+--   │       DescriptionText, ProgressTrack > FillClip > ProgressFill, ProgressText
+--   ├── FooterImage (bottom border, pinned to the bottom; covers the same pixels of the last card)
+--   └── HeaderButton (TextButton, transparent, covers the header): TitleText, ChevronIcon
 --
 --   local hud = QuestsComponent.new(screenGui)
 --   hud:SetQuests({ { id = "place2", title = "Place 2 characters", progress = 1, target = 2 }, ... })
@@ -23,13 +24,15 @@ local Config = require(script.Parent:WaitForChild("QuestsConfig"))
 local QuestsComponent = {}
 QuestsComponent.__index = QuestsComponent
 
--- reference pixels -> root pixels (keeps TextSize under Roblox's 100 cap; UIScale does the rest)
-local U = Config.Unit
-local W = Config.Width * U
+local Pieces = Config.Pieces
+local W = Config.Width
+local HEADER_HEIGHT = Pieces.Header[4]
+local PITCH = Pieces.Card[4]
+local TRACK_WIDTH = Config.Rows.Track[3]
 
 local function boxPlace(instance, box)
-    instance.Position = UDim2.fromOffset(box[1] * U, box[2] * U)
-    instance.Size = UDim2.fromOffset(box[3] * U, box[4] * U)
+    instance.Position = UDim2.fromOffset(box[1], box[2])
+    instance.Size = UDim2.fromOffset(box[3], box[4])
 end
 
 local function newFrame(name, parent)
@@ -41,159 +44,125 @@ local function newFrame(name, parent)
     return frame
 end
 
--- 9-slice image; sliceScale = how big one image pixel of the border is drawn (root pixels)
-local function newSlicedImage(name, asset, sliceCenter, sliceScale, parent)
+local function setPiece(image, piece)
+    image.ImageRectOffset = Vector2.new(piece[1], piece[2])
+    image.ImageRectSize = Vector2.new(piece[3], piece[4])
+    image.Size = UDim2.fromOffset(piece[3], piece[4])
+end
+
+-- one atlas piece at its own pixel size
+local function newPiece(name, piece, parent)
     local image = Instance.new("ImageLabel")
     image.Name = name
     image.BackgroundTransparency = 1
-    image.Image = asset.Image
-    image.ScaleType = Enum.ScaleType.Slice
-    image.SliceCenter = sliceCenter
-    image.SliceScale = sliceScale
-    image.Size = UDim2.fromScale(1, 1)
+    image.Image = Config.Atlas
+    setPiece(image, piece)
     image.Parent = parent
     return image
 end
 
--- Press Start 2P label with a black pixel outline (copies at the 8 integer offsets, drawn first)
-local function newOutlinedText(name, box, alignment, outline, parent)
-    local holder = newFrame(name, parent)
-    boxPlace(holder, box)
-    holder.ZIndex = 2
-    local labels = {}
-    local offsets = {}
-    for dy = -1, 1 do
-        for dx = -1, 1 do
-            if dx ~= 0 or dy ~= 0 then
-                table.insert(offsets, Vector2.new(dx * outline * U, dy * outline * U))
-            end
-        end
-    end
-    table.insert(offsets, Vector2.zero) -- the white label itself, last = on top (sibling order)
-    for index, offset in offsets do
-        local label = Instance.new("TextLabel")
-        label.Name = index == #offsets and "Text" or "Outline"
-        label.BackgroundTransparency = 1
-        label.FontFace = Config.Font
-        label.TextScaled = true
-        label.TextXAlignment = alignment
-        label.TextColor3 = index == #offsets and Config.Colors.Text or Config.Colors.Outline
-        label.Position = UDim2.fromOffset(offset.X, offset.Y)
-        label.Size = UDim2.fromScale(1, 1)
-        label.ZIndex = index == #offsets and 2 or 1
-        label.Parent = holder
-        table.insert(labels, label)
-    end
-    return {
-        Holder = holder,
-        Set = function(text)
-            if labels[1].Text == text then
-                return
-            end
-            for _, label in labels do
-                label.Text = text
-            end
-        end,
-    }
+-- white text with a dark outline; long text shrinks to fit its box, never grows past maxSize
+local function newText(name, box, alignment, maxSize, strokeThickness, parent)
+    local label = Instance.new("TextLabel")
+    label.Name = name
+    label.BackgroundTransparency = 1
+    label.FontFace = Config.Font
+    label.TextColor3 = Config.Colors.Text
+    label.TextXAlignment = alignment
+    label.TextScaled = true
+    boxPlace(label, box)
+    local limit = Instance.new("UITextSizeConstraint")
+    limit.MaxTextSize = maxSize
+    limit.Parent = label
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Config.Colors.TextStroke
+    stroke.Thickness = strokeThickness
+    stroke.LineJoinMode = Enum.LineJoinMode.Round
+    stroke.Parent = label
+    label.Parent = parent
+    return label
 end
 
+-- every row but the last is a card + gap piece; the last one also carries the bottom border
 local function contentHeight(rowCount)
     if rowCount <= 0 then
         return 0
     end
-    local rows = Config.Rows
-    return ((rowCount - 1) * rows.Pitch + rows.Height) * U
+    return (rowCount - 1) * PITCH + Pieces.LastCard[4]
+end
+
+-- width of the clipped fill: 0 hides it, 1 shows the whole bar with both round ends
+local function fillWidth(ratio)
+    return ratio >= 1 and TRACK_WIDTH or math.floor(TRACK_WIDTH * ratio + 0.5)
 end
 
 function QuestsComponent:_buildRow(index, parent)
     local rows = Config.Rows
-    local rowScale = W / Config.Assets.Row.ImageSize.X
-    local row = newFrame("QuestRow" .. index, parent)
-    row.Position = UDim2.fromOffset(0, (index - 1) * rows.Pitch * U)
-    row.Size = UDim2.fromOffset(W, rows.Height * U)
-    row.ZIndex = index -- later rows draw their top border over the previous row's bottom border
+    local row = newPiece("QuestRow" .. index, Pieces.Card, parent)
+    row.Position = UDim2.fromOffset(0, (index - 1) * PITCH)
     row.Visible = false
-    newSlicedImage("RowBackground", Config.Assets.Row, Config.SliceCenter.Row, rowScale, row)
-    local description =
-        newOutlinedText("DescriptionText", rows.Description, Enum.TextXAlignment.Left, Config.Outline.Description, row)
-    local track = newFrame("ProgressTrack", row)
+    local description = newText(
+        "DescriptionText",
+        rows.Description,
+        Enum.TextXAlignment.Left,
+        rows.DescriptionSize,
+        Config.Stroke.Description,
+        row
+    )
+    description.TextTruncate = Enum.TextTruncate.AtEnd
+    local track = newPiece("ProgressTrack", Pieces.Track, row)
     boxPlace(track, rows.Track)
-    track.ZIndex = 2
-    newSlicedImage(
-        "TrackImage",
-        Config.Assets.Track,
-        Config.SliceCenter.Track,
-        rows.Track[4] * U / Config.Assets.Track.ImageSize.Y,
-        track
-    )
-    -- the fill image keeps its full width inside a clipping frame, so a partial bar is cut off cleanly instead
-    -- of squashing the pixel-art end caps
-    local fill = newFrame("ProgressFill", track)
-    fill.ClipsDescendants = true
-    fill.ZIndex = 2 -- over the track art
-    fill.Position = UDim2.fromOffset(rows.Fill[1] * U, rows.Fill[2] * U)
-    fill.Size = UDim2.fromOffset(0, rows.Fill[4] * U)
-    local fillImage = newSlicedImage(
-        "FillImage",
-        Config.Assets.Fill,
-        Config.SliceCenter.Fill,
-        rows.Fill[4] * U / Config.Assets.Fill.ImageSize.Y,
-        fill
-    )
-    fillImage.Size = UDim2.fromOffset(rows.Fill[3] * U, rows.Fill[4] * U)
-    local count = newOutlinedText("ProgressText", rows.Count, Enum.TextXAlignment.Right, Config.Outline.Count, row)
-    return { Frame = row, Description = description, Fill = fill, Count = count, Ratio = nil, QuestId = nil }
+    -- the full bar sits in a clip frame, so a partial bar ends straight like the mockup's
+    local clip = newFrame("FillClip", track)
+    clip.ClipsDescendants = true
+    clip.Size = UDim2.fromOffset(0, rows.Track[4])
+    newPiece("ProgressFill", Pieces.Fill, clip)
+    local count =
+        newText("ProgressText", rows.Count, Enum.TextXAlignment.Right, rows.CountSize, Config.Stroke.Count, row)
+    return { Frame = row, Description = description, Fill = clip, Count = count, Ratio = nil, QuestId = nil }
 end
 
 function QuestsComponent.new(parent)
     local self = setmetatable({}, QuestsComponent)
     local headerConfig = Config.Header
     local root = newFrame("QuestsHUD", nil)
-    root.Size = UDim2.fromOffset(W, headerConfig.Height * U)
     self.Scale = Instance.new("UIScale")
     self.Scale.Parent = root
-    local container = newFrame("QuestContainer", root)
-    container.Size = UDim2.fromScale(1, 1)
-
-    -- the whole header is the toggle; its art sits inside the transparent button
-    local header = Instance.new("ImageButton")
-    header.Name = "HeaderButton"
-    header.BackgroundTransparency = 1
-    header.ImageTransparency = 1
-    header.AutoButtonColor = false
-    header.Size = UDim2.fromOffset(W, headerConfig.Height * U)
-    header.Parent = container
-    newSlicedImage(
-        "HeaderBackground",
-        Config.Assets.Header,
-        Config.SliceCenter.Header,
-        W / Config.Assets.Header.ImageSize.X,
-        header
-    )
-    local title =
-        newOutlinedText("TitleText", headerConfig.Title, Enum.TextXAlignment.Left, Config.Outline.Title, header)
-    title.Set("QUESTS")
-    local chevron = Instance.new("ImageLabel")
-    chevron.Name = "ChevronIcon"
-    chevron.BackgroundTransparency = 1
-    chevron.Image = Config.Assets.Chevron
-    chevron.ScaleType = Enum.ScaleType.Fit
-    boxPlace(chevron, headerConfig.Chevron)
-    chevron.ZIndex = 2
-    chevron.Parent = header
+    newPiece("HeaderImage", Pieces.Header, root)
 
     -- rows live below the header; the clip frame's height is what collapses
-    local content = newFrame("CollapsibleContent", container)
+    local content = newFrame("CollapsibleContent", root)
     content.ClipsDescendants = true
-    content.Position = UDim2.fromOffset(0, Config.Rows.Top * U)
+    content.Position = UDim2.fromOffset(0, HEADER_HEIGHT)
     content.Size = UDim2.fromOffset(W, 0)
-    content.ZIndex = 2
-    local list = newFrame("QuestList", content)
-    list.Size = UDim2.fromOffset(W, contentHeight(Config.MaxRows))
     self.Rows = {}
     for index = 1, Config.MaxRows do
-        self.Rows[index] = self:_buildRow(index, list)
+        self.Rows[index] = self:_buildRow(index, content)
     end
+
+    local footer = newPiece("FooterImage", Pieces.Footer, root)
+    footer.AnchorPoint = Vector2.new(0, 1)
+    footer.Position = UDim2.fromScale(0, 1)
+
+    -- the whole header is the toggle
+    local header = Instance.new("TextButton")
+    header.Name = "HeaderButton"
+    header.BackgroundTransparency = 1
+    header.Text = ""
+    header.AutoButtonColor = false
+    header.Size = UDim2.fromOffset(W, HEADER_HEIGHT)
+    header.Parent = root
+    local title = newText(
+        "TitleText",
+        headerConfig.Title,
+        Enum.TextXAlignment.Left,
+        headerConfig.TitleSize,
+        Config.Stroke.Title,
+        header
+    )
+    title.Text = "QUESTS"
+    local chevron = newPiece("ChevronIcon", Pieces.Chevron, header)
+    boxPlace(chevron, headerConfig.Chevron)
 
     self.Root, self.Header, self.Chevron, self.Content = root, header, chevron, content
     self.IsExpanded = true
@@ -210,7 +179,7 @@ end
 -- Root and clip heights for the current state; animated = tween, else snap. A running tween is replaced.
 function QuestsComponent:_applyHeight(animated)
     local rowsHeight = self.IsExpanded and contentHeight(self.RowCount) or 0
-    local rootHeight = rowsHeight > 0 and Config.Rows.Top * U + rowsHeight or Config.Header.Height * U
+    local rootHeight = HEADER_HEIGHT + (rowsHeight > 0 and rowsHeight or Pieces.Footer[4])
     local goals = {
         [self.Content] = { Size = UDim2.fromOffset(W, rowsHeight) },
         [self.Root] = { Size = UDim2.fromOffset(W, rootHeight) },
@@ -251,11 +220,11 @@ end
 
 function QuestsComponent:_setRow(row, current, target)
     local ratio = math.clamp(current / math.max(target, 1), 0, 1)
-    row.Count.Set(string.format("%s/%s", QuestsComponent.FormatCount(current), QuestsComponent.FormatCount(target)))
+    row.Count.Text = string.format("%s/%s", QuestsComponent.FormatCount(current), QuestsComponent.FormatCount(target))
     if row.Ratio == ratio then
         return
     end
-    local goal = { Size = UDim2.fromOffset(Config.Rows.Fill[3] * U * ratio, Config.Rows.Fill[4] * U) }
+    local goal = { Size = UDim2.fromOffset(fillWidth(ratio), Config.Rows.Track[4]) }
     if row.FillTween then
         row.FillTween:Cancel()
     end
@@ -290,7 +259,8 @@ function QuestsComponent:SetQuests(quests)
                 row.QuestId = quest.id
                 row.Ratio = nil
             end
-            row.Description.Set(quest.title or "")
+            setPiece(row.Frame, index == count and Pieces.LastCard or Pieces.Card)
+            row.Description.Text = quest.title or ""
             self:_setRow(row, quest.progress or 0, quest.target or 1)
             row.Frame.Visible = true
         else

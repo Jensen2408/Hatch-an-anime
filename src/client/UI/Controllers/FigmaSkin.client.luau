@@ -524,7 +524,7 @@ task.spawn(function()
         local landscape = viewport.X >= viewport.Y
         tracker:SetVisible(not compact or (landscape and viewport.X >= 600))
         local layout = compact and QuestsConfig.Compact or QuestsConfig.Desktop
-        tracker.Scale.Scale = layout.Width / (QuestsConfig.Width * QuestsConfig.Unit)
+        tracker.Scale.Scale = layout.Width / QuestsConfig.Width
         tracker.Root.AnchorPoint = Vector2.new(1, 0)
         tracker.Root.Position = compact and UDim2.new(1, -layout.Margin, 0, layout.Top)
             or UDim2.new(1, -layout.Margin, 0.5, layout.TopFromCentre)
