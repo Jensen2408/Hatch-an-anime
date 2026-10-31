@@ -184,6 +184,9 @@
         "MutationDropBoardClient": {
           "$path": "src/client/Effects/MutationDropBoardClient.client.luau"
         },
+        "LegendaryDropBanner": {
+          "$path": "src/client/Effects/LegendaryDropBanner.client.luau"
+        },
         "AuraFlipbookPump": {
           "$path": "src/client/Effects/AuraFlipbookPump.client.luau"
         },
@@ -3834,6 +3837,9 @@
       },
       "NoDropping": {
         "$path": "src/server/Services/NoDropping.server.luau"
+      },
+      "StarterCharacter": {
+        "$path": "src/server/PlayerData/StarterCharacter.luau"
       },
       "TutorialProgress": {
         "$path": "src/server/PlayerData/TutorialProgress.server.luau"

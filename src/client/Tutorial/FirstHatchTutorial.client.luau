@@ -1,7 +1,7 @@
 --[[ FirstHatchTutorial (LocalScript, StarterPlayerScripts)
 A local first-hatch guide. No client requests can grant progress or rewards.
 
-Steps 1..8 (world guide): ReplicatedStorage.FirstHatchGuide.Resolve(player) picks the step and target part;
+Steps 0..8 (world guide; 0 = a new player's starter cash): ReplicatedStorage.FirstHatchGuide.Resolve(player) picks the step and target part;
 this script shows the top card, a highlight, a destination sign and a beam toward the target.
 Steps 9..12 (UI tour of Plot -> Upgrades): server-driven via Player.TutorialTourStage. The client only reports
 what it saw through ReplicatedStorage.FirstHatchTutorialAction (RemoteEvent, action string:
@@ -725,7 +725,7 @@ table.insert(
         end
         hasShownGuide = true
         local stepInfo = Guide.Steps[currentStep]
-        stepLabel.Text = tostring(currentStep)
+        stepLabel.Text = currentStep == 0 and "$" or tostring(currentStep)
         objectiveLabel.Text = stepInfo.title
         instructionLabel.Text = note or stepInfo.body
         setProgress(currentStep)

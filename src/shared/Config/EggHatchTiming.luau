@@ -6,22 +6,22 @@ Read by PirateEggFreeConveyor (stamps attribute HatchSeconds) and HatchGoo.
 local _Economy = require(script.Parent.CharacterEconomy)
 local Timing = {}
 Timing.Base = {
-    Pirate = 30,
-    Shinobi = 60,
-    Power = 90,
-    Hero = 180,
-    Slayer = 300,
-    Curse = 480,
-    Soul = 720,
-    Titan = 900,
-    Magic = 1200,
-    Academy = 1800,
-    Devil = 2700,
-    Guild = 3600,
-    Sports = 5400,
-    Mecha = 7200,
-    God = 10800,
-    Unknown = 1800,
+    Pirate = 10,
+    Shinobi = 15,
+    Power = 20,
+    Hero = 30,
+    Slayer = 45,
+    Curse = 60,
+    Soul = 120,
+    Titan = 180,
+    Magic = 300,
+    Academy = 600,
+    Devil = 900,
+    Guild = 1200,
+    Sports = 1800,
+    Mecha = 2700,
+    God = 3600,
+    Unknown = 600,
 }
 -- Every egg of a given type has the same base incubation time.
 -- Power rolls do not change the timer; Nighttime speeds up the countdown.

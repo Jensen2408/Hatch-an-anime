@@ -21,6 +21,8 @@ SAVED SCHEMA (one table per player; field names are a persistence contract — n
     tutorialCompleted       boolean
     tutorialIncomeCollected boolean
     tutorialTourStage       number   9..12 (clamped on load)
+    tutorialStarterStage    string?  "Cash" | "Hatch" while a new player's starter tutorial runs (StarterCharacter)
+    starterGiven            boolean? the free starter character was granted (never granted twice)
     settings                table?   SETTING_TYPES keys only (written by the SaveSettings remote)
     discovered              any      GameAdapter.ExportDiscovered(player) / ImportDiscovered
     quests                  any      QuestService.Persistence.Save/Load payload
@@ -65,9 +67,11 @@ if not okStore then
 end
 -- Studio: real DataStores are blocked unless API access is on, so use an in-memory practice store (nothing persists)
 if RunService:IsStudio() then
-    local probeOk = pcall(function()
-        store:GetAsync("__probe")
-    end)
+    -- Attribute StudioFreshSave on this script: play as a brand-new player without touching the real save
+    local probeOk = not script:GetAttribute("StudioFreshSave")
+        and pcall(function()
+            store:GetAsync("__probe")
+        end)
     if not probeOk then
         local memoryStore = {}
         store = {
@@ -88,6 +92,7 @@ local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
 local Economy = require(ReplicatedStorage:WaitForChild("CharacterEconomy"))
 local EggCharacterRewards = require(ServerScriptService:WaitForChild("EggCharacterRewards"))
 local TempleSlotUnlocks = require(ServerScriptService:WaitForChild("TempleSlotUnlocks"))
+local StarterCharacter = require(ServerScriptService:WaitForChild("StarterCharacter"))
 local QuestService -- optional: nil when GameMenu.QuestService fails to load
 do
     local ok, module = pcall(require, ServerScriptService:WaitForChild("GameMenu"):WaitForChild("QuestService"))
@@ -398,6 +403,7 @@ local function snapshot(player, isFinal)
     saved.tutorialCompleted = player:GetAttribute("TutorialCompleted") == true
     saved.tutorialIncomeCollected = player:GetAttribute("TutorialIncomeCollected") == true
     saved.tutorialTourStage = player:GetAttribute("TutorialTourStage") or 9
+    saved.tutorialStarterStage = player:GetAttribute("TutorialStarterStage")
     if plot and #unlocked > 0 then
         saved.unlocked = unlocked
         local chamberLevels = {}
@@ -668,6 +674,7 @@ local function onJoin(player)
             saved.tutorialIncomeCollected == true or saved.tutorialCompleted == true
         )
         player:SetAttribute("TutorialTourStage", math.clamp(tonumber(saved.tutorialTourStage) or 9, 9, 12))
+        player:SetAttribute("TutorialStarterStage", saved.tutorialStarterStage)
         for name, value in saved.settings or {} do
             player:SetAttribute(name, value)
         end
@@ -682,6 +689,18 @@ local function onJoin(player)
         player:SetAttribute("TempleSaveStatus", "Saved")
         task.spawn(function()
             restoreSavedState(player, saved)
+            if
+                player.Parent
+                and restoreState[player]
+                and restoreState[player].all
+                and StarterCharacter.Eligible(saved)
+            then
+                local ok, granted = pcall(StarterCharacter.Grant, player, plotOf(player))
+                if not ok then
+                    warn("[PlayerData] starter grant failed", player.Name, granted)
+                end
+                saved.starterGiven = ok and granted or nil
+            end
             if player.Parent then
                 player:SetAttribute("TutorialDataReady", true)
             end

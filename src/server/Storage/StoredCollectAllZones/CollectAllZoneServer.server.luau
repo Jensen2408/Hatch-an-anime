@@ -80,7 +80,9 @@ task.spawn(function()
                         pcall(function()
                             require(game.ServerScriptService.GameMenu.QuestService).Increment(owner, "CollectIncome", 1)
                         end)
-                        owner:SetAttribute("TutorialIncomeCollected", true)
+                        if require(game.ServerScriptService.StarterCharacter).CountsAsFirstIncome(owner) then
+                            owner:SetAttribute("TutorialIncomeCollected", true)
+                        end
                         local remote = game.ReplicatedStorage:FindFirstChild("MoneyCollected")
                         if remote and stands[1] then
                             pcall(remote.FireClient, remote, owner, stands[1], total)

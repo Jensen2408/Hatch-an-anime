@@ -71,11 +71,11 @@ local ASSET_NAMES = {
 }
 local PRICES = {
     0,
-    750,
-    3000,
-    20000,
-    40000,
-    100000,
+    300,
+    1200,
+    6000,
+    15000,
+    50000,
     400000,
     750000,
     2000000,
@@ -85,7 +85,7 @@ local PRICES = {
     600000000,
     1500000000,
     5000000000,
-} -- economy v4 (Oct 15): ~1 min common → ~1 h legendary payback
+} -- economy v4 (Oct 15): ~1 min common → ~1 h legendary payback; early eggs cheaper since the Oct 31 pacing pass
 local RARITY_NAMES = { "Common", "Uncommon", "Rare", "Epic", "Legendary" } -- index = tier
 local RARITY_COLORS = {
     Color3.fromRGB(190, 195, 205),
@@ -96,7 +96,7 @@ local RARITY_COLORS = {
 }
 
 -- Percent chance per rarity, shared by all eggs within that rarity.
-Catalog.SpawnChances = { Common = 70, Uncommon = 22, Rare = 6.5, Epic = 1.3, Legendary = 0.2 }
+Catalog.SpawnChances = { Common = 70, Uncommon = 22, Rare = 6.5, Epic = 1.3, Legendary = 0.5 }
 
 -- Builds the river spawn roll from egg templates. Two-step roll: pick a rarity bucket by its
 -- SpawnChances weight (only rarities with at least one released template take part), then a uniformly

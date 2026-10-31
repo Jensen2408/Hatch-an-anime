@@ -51,17 +51,17 @@ Config.MoneyLevels = {
 -- Hatch speed: bought with in-game CASH (coins), one level at a time. Permanent, saved with the shop data.
 -- `mult` is the hatch speed at that level (stacks with the 2× Hatch boost and the night bonus); `cash` is its price.
 Config.HatchLevels = {
-    { mult = 1.5, cash = 1e8 },
-    { mult = 2, cash = 1e11 },
-    { mult = 2.5, cash = 1e14 },
-    { mult = 3, cash = 1e17 },
-    { mult = 4, cash = 1e20 },
-    { mult = 5, cash = 1e23 },
-    { mult = 6, cash = 1e26 },
-    { mult = 7, cash = 1e29 },
-    { mult = 8, cash = 1e32 },
-    { mult = 9, cash = 1e35 },
-    { mult = 10, cash = 1e38 },
+    { mult = 1.5, cash = 1e6 },
+    { mult = 2, cash = 25e6 },
+    { mult = 2.5, cash = 500e6 },
+    { mult = 3, cash = 10e9 },
+    { mult = 4, cash = 250e9 },
+    { mult = 5, cash = 5e12 },
+    { mult = 6, cash = 100e12 },
+    { mult = 7, cash = 2.5e15 },
+    { mult = 8, cash = 50e15 },
+    { mult = 9, cash = 1e18 },
+    { mult = 10, cash = 25e18 },
 }
 
 -- Daily rewards (7-day streak, resets if you miss a day)

@@ -12,7 +12,8 @@ recomputes the egg position from the shared Epoch (must be in the "travel" phase
 alive humanoid, Backpack, no egg still being carried home (RiverCarry.IsCarrying), then charges the server-side catalog price (RiverEggPayment) before granting the Tool.
 Feedback on a failed charge: ReplicatedStorage.RiverEggPurchaseFeedback:FireClient(player, reason, priceText),
 throttled to 1 per second per player. After the grant RiverEggCarryService.Begin starts the "carry it home" phase.
-Testing / owner hooks (workspace attributes): ForceRiverMutation, PendingMutationDrop (one-shot), NightRiverLuckMultiplier.
+Testing / owner hooks (workspace attributes): ForceRiverMutation, PendingMutationDrop, PendingLegendaryDrop (both one-shot),
+NightRiverLuckMultiplier.
 ]]
 local _RunService = game:GetService("RunService")
 local Catalog = require(game.ReplicatedStorage.CharacterCatalog)

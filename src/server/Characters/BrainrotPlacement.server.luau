@@ -160,6 +160,11 @@ local function setupPlot(plot)
             if tool:GetAttribute("GoldVariant") then
                 display:SetAttribute("GoldVariant", true)
             end -- CharacterInventory
+            if tool:GetAttribute("StarterCharacter") then
+                display:SetAttribute("StarterCharacter", true) -- survives store / save like the other traits
+            else
+                player:SetAttribute("TutorialStarterStage", nil) -- a hatched character: back to the normal tutorial
+            end
             display:SetAttribute("CharacterId", characterId)
             display:SetAttribute("BrainrotId", characterId) -- golden model carries its own "Golden Pirate" id; keep the real one so it can be picked up
             if mutation then

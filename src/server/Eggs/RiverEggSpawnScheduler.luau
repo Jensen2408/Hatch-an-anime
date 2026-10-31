@@ -5,6 +5,8 @@ Scheduler.new(templates, random?) -> scheduler; scheduler:Next(serverAgeSeconds)
   - The first 6 spawns are always Common (round-robin) so a fresh server starts with affordable eggs.
   - After that: weights = CharacterCatalog.SpawnChances, non-Common weights x workspace "NightRiverLuckMultiplier".
   - A rarity is only eligible after RARITY_MIN_AGE seconds of server age and RARITY_COOLDOWN seconds since its last spawn.
+  - A Legendary is guaranteed LEGENDARY_GUARANTEE seconds after the last one (or now, on the one-shot workspace attribute
+    PendingLegendaryDrop). Publishes workspace NextLegendaryAt / LastLegendaryAt (server time) for the river board and banner.
 ]]
 local Catalog = require(game.ReplicatedStorage.CharacterCatalog)
 
@@ -13,6 +15,7 @@ local Scheduler = {}
 local RARITY_ORDER = { "Common", "Uncommon", "Rare", "Epic", "Legendary" }
 local RARITY_MIN_AGE = { Common = 0, Uncommon = 0, Rare = 24, Epic = 120, Legendary = 300 } -- seconds of server age
 local RARITY_COOLDOWN = { Epic = 90, Legendary = 240 } -- seconds between two spawns of this rarity
+local LEGENDARY_GUARANTEE = 720 -- a Legendary at the latest this many seconds after the last one
 
 function Scheduler.new(templates, random)
     local buckets = {} -- [rarity] = { template, ... } sorted by catalog Order
@@ -30,9 +33,29 @@ function Scheduler.new(templates, random)
     end
     assert(buckets.Common and #buckets.Common > 0, "Common egg templates required")
     -- count = spawns so far; last = [rarity] = server age of the last spawn of that rarity
-    local scheduler = { count = 0, last = {}, buckets = buckets, random = random or Random.new() }
+    -- legendaryDue = server age the next guaranteed Legendary is due at
+    local scheduler = {
+        count = 0,
+        last = {},
+        buckets = buckets,
+        random = random or Random.new(),
+        legendaryDue = LEGENDARY_GUARANTEE,
+    }
+    workspace:SetAttribute("NextLegendaryAt", workspace:GetServerTimeNow() + LEGENDARY_GUARANTEE)
+    function scheduler:RestartLegendaryTimer(age)
+        self.last.Legendary = age
+        self.legendaryDue = age + LEGENDARY_GUARANTEE
+        workspace:SetAttribute("LastLegendaryAt", workspace:GetServerTimeNow())
+        workspace:SetAttribute("NextLegendaryAt", workspace:GetServerTimeNow() + LEGENDARY_GUARANTEE)
+    end
     function scheduler:Next(age)
         self.count += 1
+        local forced = workspace:GetAttribute("PendingLegendaryDrop")
+        if buckets.Legendary and #buckets.Legendary > 0 and (forced or age >= self.legendaryDue) then
+            workspace:SetAttribute("PendingLegendaryDrop", nil)
+            self:RestartLegendaryTimer(age)
+            return buckets.Legendary[self.random:NextInteger(1, #buckets.Legendary)]
+        end
         if self.count <= 6 then
             return buckets.Common[((self.count - 1) % #buckets.Common) + 1]
         end
@@ -62,6 +85,9 @@ function Scheduler.new(templates, random)
             cumulative += candidate.weight
             if roll < cumulative then
                 self.last[candidate.rarity] = age
+                if candidate.rarity == "Legendary" then
+                    self:RestartLegendaryTimer(age)
+                end
                 return candidate.items[self.random:NextInteger(1, #candidate.items)]
             end
         end

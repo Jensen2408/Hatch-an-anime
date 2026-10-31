@@ -21,6 +21,7 @@ and the tutorial attributes TutorialIncomeCollected / TutorialTourStage on the p
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterCharacter = require(game:GetService("ServerScriptService"):WaitForChild("StarterCharacter"))
 
 local Config = {
     Tag = "MoneyStand",
@@ -111,7 +112,11 @@ task.spawn(function()
                     if amount >= 1 then
                         model:SetAttribute("Stored", stored - amount) -- clear first so nothing can be collected twice
                         if awardCurrency(owner, amount) then
-                            if model.Parent:GetAttribute("Occupied") and owner:GetAttribute("TutorialDataReady") then
+                            if
+                                model.Parent:GetAttribute("Occupied")
+                                and owner:GetAttribute("TutorialDataReady")
+                                and StarterCharacter.CountsAsFirstIncome(owner)
+                            then
                                 owner:SetAttribute("TutorialIncomeCollected", true)
                                 if not owner:GetAttribute("TutorialTourStage") then
                                     owner:SetAttribute("TutorialTourStage", 9)

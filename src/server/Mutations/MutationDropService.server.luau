@@ -7,10 +7,15 @@
 --   NextMutationDropAt  (server time of the next drop)
 --   PendingMutationDrop (tier waiting to be spawned in the river; consumed once by PirateEggFreeConveyor)
 --   LastMutationDrop / LastMutationDropAt (tier + server time of the last drop, for the board)
+-- Creates ReplicatedStorage.MutationDropped (RemoteEvent): FireAllClients(tier) for the MutationDropAnnounce banner.
 local INTERVAL = script:GetAttribute("IntervalSeconds") or 600
 local WEIGHTS = { Silver = 60, Gold = 25, Diamond = 11, Rainbow = 4 } -- which tier the guaranteed drop is
 
 local rng = Random.new()
+
+local droppedRemote = Instance.new("RemoteEvent")
+droppedRemote.Name = "MutationDropped"
+droppedRemote.Parent = game:GetService("ReplicatedStorage")
 
 local function pickTier()
     local totalWeight = 0
@@ -40,5 +45,6 @@ while true do
         workspace:SetAttribute("LastMutationDrop", tier)
         workspace:SetAttribute("LastMutationDropAt", workspace:GetServerTimeNow())
         workspace:SetAttribute("NextMutationDropAt", nextDropAt())
+        droppedRemote:FireAllClients(tier)
     end
 end

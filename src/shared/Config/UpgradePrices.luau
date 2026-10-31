@@ -3,8 +3,8 @@
 -- Tables are keyed by the level being bought (e.g. Temple[2] = price of floor 2).
 local Prices = {}
 Prices.Temple = { [2] = 50e9, [3] = 25e12 } -- temple floor 2 / 3 (also needs every slot unlocked)
-Prices.AddIncubator = { [2] = 50e3, [3] = 5e6 } -- 2nd / 3rd incubator
-Prices.IncubatorLevel = { [2] = 100e3, [3] = 10e6 } -- upgrade an incubator to level 2 / 3
+Prices.AddIncubator = { [2] = 10e3, [3] = 500e3 } -- 2nd / 3rd incubator
+Prices.IncubatorLevel = { [2] = 5e3, [3] = 250e3 } -- upgrade an incubator to level 2 / 3
 -- Server only: takes `amount` from leaderstats.Cash. Returns true on success (also for a nil/0 price),
 -- false if the player has no Cash stat or not enough.
 function Prices.Charge(player, amount)

@@ -21,7 +21,7 @@ local MAX_TEMPLE_LEVEL = 3
 local FALLBACK_PRICE = 250000 -- used when Slots.Prices has no entry for a slot
 local MAX_PURCHASE_DISTANCE = 12 -- studs from the slot platform
 
-Slots.Prices = { 0, 250, 2500, 25000, 150000, 750000, 5000000, 25000000, 150000000, 750000000, 3000000000, 15000000000 }
+Slots.Prices = { 0, 100, 1000, 10000, 150000, 750000, 5000000, 25000000, 150000000, 750000000, 3000000000, 15000000000 }
 -- Slots 13..36 (temple levels 2 and 3) each cost 3x the previous slot.
 for i = 13, 36 do
     Slots.Prices[i] = Slots.Prices[i - 1] * 3

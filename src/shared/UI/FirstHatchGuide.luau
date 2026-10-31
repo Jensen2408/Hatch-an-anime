@@ -3,7 +3,9 @@
 --
 -- Guide.Steps: ordered tutorial objectives (title/body/marker text shown to the player).
 -- Guide.Resolve(player) -> stepIndex, target?, note?, revealing?
---   stepIndex  1..12 into Guide.Steps, or 13 once the tutorial is completed.
+--   stepIndex  1..12 into Guide.Steps, or 13 once the tutorial is completed. 0 = a new player's starter cash, before
+--              step 1 (player attribute TutorialStarterStage: "Cash", then "Hatch" for steps 1..7 until a hatched
+--              character is placed; see ServerScriptService.StarterCharacter).
 --   target     Instance the arrows/marker should point at (may be nil).
 --   note       optional override for the step body text.
 --   revealing  true while a hatch reveal is playing (step 5).
@@ -63,6 +65,12 @@ Guide.Steps = {
         marker = "",
     },
 }
+-- Before step 1 for a new player with a starter character; not counted in #Guide.Steps.
+Guide.Steps[0] = {
+    title = "Collect your cash",
+    body = "Your first character is already earning! Step onto the cash plate in front of it.",
+    marker = "COLLECT CASH",
+}
 -- Returns the plot whose "OwnerUserId" attribute matches the player, or nil.
 function Guide.Plot(player)
     local plots = workspace:FindFirstChild("Plots")
@@ -121,7 +129,11 @@ function Guide.Resolve(player)
             firstEmptySlot = slot
         end
     end
-    if richestStand then
+    local starterStage = player:GetAttribute("TutorialStarterStage")
+    if starterStage == "Cash" and richestStand then
+        return 0, richestStand:FindFirstChild("Plate")
+    end
+    if richestStand and not starterStage then
         return 8, richestStand:FindFirstChild("Plate")
     end
     local characterTool = findTool(player, function(item)
