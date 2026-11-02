@@ -264,8 +264,9 @@ local function snapshot(player)
     return {
         items = list,
         capacity = capacityOf(plot),
-        multiplier = (tonumber(workspace:GetAttribute("OwnerIncomeMultiplier")) or 1)
-            * (workspace:GetAttribute("NightCashMultiplier") or 1),
+        multiplier = (tonumber(workspace:GetAttribute("OwnerIncomeMultiplier")) or 1) * (workspace:GetAttribute(
+            "NightCashMultiplier"
+        ) or 1) * (workspace:GetAttribute("AbuseCashMultiplier") or 1),
         allowStore = ServerConfig.AllowStore,
         serverTime = workspace:GetServerTimeNow(),
     }
@@ -939,16 +940,13 @@ function Service.Init()
         hookChamber(descendant)
     end
     plots.DescendantAdded:Connect(hookChamber)
-    workspace:GetAttributeChangedSignal("NightCashMultiplier"):Connect(function()
-        for _, player in Players:GetPlayers() do
-            markDirty(player)
-        end
-    end)
-    workspace:GetAttributeChangedSignal("OwnerIncomeMultiplier"):Connect(function()
-        for _, player in Players:GetPlayers() do
-            markDirty(player)
-        end
-    end)
+    for _, attribute in { "NightCashMultiplier", "OwnerIncomeMultiplier", "AbuseCashMultiplier" } do
+        workspace:GetAttributeChangedSignal(attribute):Connect(function()
+            for _, player in Players:GetPlayers() do
+                markDirty(player)
+            end
+        end)
+    end
 
     -- one loop pushes batched snapshots
     task.spawn(function()

@@ -17,7 +17,7 @@ Placement result (attributes are read by FloatingCharacters / CharacterInfoClien
              SlotSurfaceY, DisplayHome, FloatHeight, DisplayPartCount, ItemId, AcquiredAt, GoldVariant,
              CharacterId, BrainrotId, Mutation + CharacterEconomy stats
 Every second while the plot owner is unchanged and the display exists, the slot's MoneyStand "Stored"
-grows by IncomePerSecond × OwnerIncomeMultiplier × NightCashMultiplier × player CashMultiplier.
+grows by IncomePerSecond × OwnerIncomeMultiplier × NightCashMultiplier × AbuseCashMultiplier × player CashMultiplier.
 Also ensures every player has leaderstats.Cash.
 ]]
 local Players = game:GetService("Players")
@@ -194,6 +194,8 @@ local function setupPlot(plot)
                                 + incomePerSecond
                                     * ((workspace:GetAttribute("OwnerIncomeMultiplier") or 1) * (workspace:GetAttribute(
                                         "NightCashMultiplier"
+                                    ) or 1) * (workspace:GetAttribute(
+                                        "AbuseCashMultiplier"
                                     ) or 1) * (player:GetAttribute("CashMultiplier") or 1))
                         )
                     end

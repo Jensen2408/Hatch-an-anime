@@ -19,6 +19,9 @@ CashConfig.RootSize = Vector2.new(330, 141)
 CashConfig.Scale = { Desktop = 0.68 } -- UIScale, times HudScale
 CashConfig.PortraitLift = 120 -- pixels above the bottom margin on portrait screens, times HudScale
 CashConfig.CompactBreakpoint = 600 -- shortest screen side below this keeps out of the notch (safe insets)
+-- The potion row sits over the Cash UI, but the vertically centred left menu reaches down to it on short screens:
+-- half the screen height below MenuReach (times HudScale) the row moves to BesideMenu px from the left (times HudScale)
+CashConfig.PotionRow = { MenuReach = 342, BesideMenu = 222 }
 
 -- Fractions of the root (CashUI)
 CashConfig.MainBackground = {

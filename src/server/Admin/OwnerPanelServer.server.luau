@@ -37,6 +37,7 @@ openEvent.Parent = ReplicatedStorage
 local AdminRoles = require(script.Parent:WaitForChild("AdminRoles"))
 local StaffServerService = require(script.Parent:WaitForChild("StaffServerService"))
 local CrossServerService = require(script.Parent:WaitForChild("CrossServerService"))
+local AdminAbuseService = require(script.Parent:WaitForChild("AdminAbuseService"))
 local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
 local bridge = game.ServerScriptService:WaitForChild("OwnerControlServer"):WaitForChild("Dispatch")
 local lastRequestAt, busy = {}, {}
@@ -281,6 +282,9 @@ end
 handlers.AnnounceUpdate = function(player, args)
     local msg = type(args.text) == "string" and args.text or nil
     return CrossServerService.AnnounceUpdate(player, msg)
+end
+handlers.AdminAbuse = function(player, args)
+    return AdminAbuseService.RunCommand(player.DisplayName, args.text)
 end
 handlers.SetAdmin = function(_player, args)
     local id = tonumber(args.userId)

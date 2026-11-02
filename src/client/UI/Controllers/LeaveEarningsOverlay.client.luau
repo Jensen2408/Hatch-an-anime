@@ -55,7 +55,9 @@ local function getIncomePerSecond()
             end
         end
     end
-    return total * (workspace:GetAttribute("OwnerIncomeMultiplier") or 1)
+    return total
+        * (workspace:GetAttribute("OwnerIncomeMultiplier") or 1)
+        * (workspace:GetAttribute("AbuseCashMultiplier") or 1)
 end
 
 local screenGui = create(

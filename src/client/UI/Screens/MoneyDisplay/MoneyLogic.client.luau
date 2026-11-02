@@ -1,6 +1,6 @@
 -- Cash display: the Cash UI (CashComponent / CashConfig) + smooth count, +$ popups, coin sounds, income per second.
 -- LocalScript inside the MoneyDisplay ScreenGui. Display only: reads leaderstats.Cash and the IncomePerSecond
--- attributes of the local player's PlacedItems (x workspace OwnerIncomeMultiplier). No remotes.
+-- attributes of the local player's PlacedItems (x workspace OwnerIncomeMultiplier x AbuseCashMultiplier). No remotes.
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -29,6 +29,8 @@ local popupsScale = Instance.new("UIScale")
 popupsScale.Parent = popupsFrame
 popupsFrame.Parent = screenGui
 
+local abusePotions = require(script.Parent:WaitForChild("AbusePotions")).new(screenGui)
+
 local HudScale = require(game:GetService("ReplicatedStorage"):WaitForChild("HudScale"))
 local function layoutCash()
     local viewportSize = screenGui.AbsoluteSize
@@ -54,6 +56,10 @@ local function layoutCash()
     end
     cashUI.Scale.Scale = scale
     popupsScale.Scale = scale
+    local clearOfMenu = viewportSize.Y / 2 >= CashConfig.PotionRow.MenuReach * hud
+    local rowLeft = clearOfMenu and margin or CashConfig.PotionRow.BesideMenu * hud
+    abusePotions.Root.Position = UDim2.new(0, rowLeft, 1, -(margin + lift + scaledHeight))
+    abusePotions.Scale.Scale = hud
 end
 screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutCash)
 layoutCash()
@@ -137,7 +143,9 @@ local function getIncomePerSecond()
             end
         end
     end
-    return total * (workspace:GetAttribute("OwnerIncomeMultiplier") or 1)
+    return total
+        * (workspace:GetAttribute("OwnerIncomeMultiplier") or 1)
+        * (workspace:GetAttribute("AbuseCashMultiplier") or 1)
 end
 task.spawn(function()
     while true do

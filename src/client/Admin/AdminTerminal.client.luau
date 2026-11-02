@@ -396,6 +396,14 @@ end)
 defineCommand({ "update", "shutdown" }, "/update [text]", "update countdown + rejoin all servers", function(_, rest)
     sendAction("AnnounceUpdate", { text = rest ~= "" and rest or nil })
 end)
+defineCommand(
+    { "abuse", "aa" },
+    "/abuse <hatch|cash|legendary> <x> <minutes>",
+    "admin abuse in EVERY server (also: stop [kind], list)",
+    function(_, rest)
+        sendAction("AdminAbuse", { text = rest })
+    end
+)
 local function onPlayer(action, extra)
     return function(args)
         local found = findPlayer(args[1])

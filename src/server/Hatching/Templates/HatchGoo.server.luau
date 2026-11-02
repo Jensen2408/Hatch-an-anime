@@ -344,6 +344,7 @@ local function runCycle(player, resumeTool, resumeLeft)
             end
             local now = workspace:GetServerTimeNow()
             local speed = (workspace:GetAttribute("NightHatchSpeedMultiplier") or 1)
+                * (workspace:GetAttribute("AbuseHatchMultiplier") or 1)
                 * (player and player:GetAttribute("HatchMultiplier") or 1)
                 * EggHatchTiming.LevelSpeed(chamber:GetAttribute("UpgradeLevel"))
             workLeft = math.max(0, workLeft - (now - previousTime) * speed)

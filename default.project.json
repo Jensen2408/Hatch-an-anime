@@ -184,6 +184,9 @@
         "MutationDropBoardClient": {
           "$path": "src/client/Effects/MutationDropBoardClient.client.luau"
         },
+        "AdminAbuseRain": {
+          "$path": "src/client/Effects/AdminAbuseRain.client.luau"
+        },
         "LegendaryDropBanner": {
           "$path": "src/client/Effects/LegendaryDropBanner.client.luau"
         },
@@ -261,6 +264,9 @@
         "$ignoreUnknownInstances": true,
         "MoneyLogic": {
           "$path": "src/client/UI/Screens/MoneyDisplay/MoneyLogic.client.luau"
+        },
+        "AbusePotions": {
+          "$path": "src/client/UI/Screens/MoneyDisplay/AbusePotions.luau"
         },
         "CashConfig": {
           "$path": "src/client/UI/Screens/MoneyDisplay/CashConfig.luau"
@@ -3389,6 +3395,9 @@
       "CharacterEconomy": {
         "$path": "src/shared/Catalogs/CharacterEconomy.luau"
       },
+      "AdminAbuseConfig": {
+        "$path": "src/shared/Config/AdminAbuseConfig.luau"
+      },
       "HudScale": {
         "$path": "src/shared/UI/HudScale.luau"
       },
@@ -3762,6 +3771,9 @@
       },
       "StaffServerService": {
         "$path": "src/server/Admin/StaffServerService.luau"
+      },
+      "AdminAbuseService": {
+        "$path": "src/server/Admin/AdminAbuseService.luau"
       },
       "CrossServerService": {
         "$path": "src/server/Services/CrossServerService.luau"

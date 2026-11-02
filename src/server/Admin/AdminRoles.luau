@@ -50,6 +50,7 @@ AdminRoles.AdminActions = {
     JoinStaffServer = true,
     ReturnToPublic = true,
     AnnounceUpdate = true,
+    AdminAbuse = true,
 }
 
 -- ===== 2. Panel-added admins (DataStore, loaded once at require time; GetAsync yields) =====
