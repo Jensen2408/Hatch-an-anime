@@ -2165,6 +2165,10 @@ do
             goHomeRemote:FireServer()
         end
     end)
+    leftMenu.Buttons.EquipBest.Activated:Connect(function()
+        UISound.Play("Click")
+        runAction("EquipBest")
+    end)
     -- hidden while carrying a river egg home (RiverEggCarryService sets RiverEggCarryId for the whole carry)
     local function refreshHomeVisible()
         leftMenu.Buttons.Home.Visible = player:GetAttribute("RiverEggCarryId") == nil

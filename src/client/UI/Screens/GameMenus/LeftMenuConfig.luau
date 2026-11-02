@@ -27,6 +27,8 @@ LeftMenuConfig.Grid = {
 -- Layout, reference pixels
 LeftMenuConfig.Size = Vector2.new(886, 1543) -- whole menu
 LeftMenuConfig.Home = { Position = Vector2.new(19, 0), Size = Vector2.new(570, 182) } -- as placed in the mockup
+-- above Home, outside Size, so the rest of the menu stays where it was; art: MenuArt piece ButtonGreen + text
+LeftMenuConfig.EquipBest = { Position = Vector2.new(19, -193), Size = Vector2.new(570, 182), TextSize = 100 }
 LeftMenuConfig.GridTop = 193 -- 11 px under the Home bar
 LeftMenuConfig.CellSize = Vector2.new(442, 446)
 LeftMenuConfig.CellPadding = Vector2.new(2, 6) -- between columns, between rows

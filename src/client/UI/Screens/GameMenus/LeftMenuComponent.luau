@@ -5,6 +5,7 @@
 --   LeftMenu (Frame, AnchorPoint and Position set by MenuLogic)
 --   ├── UIScale
 --   └── MenuContainer
+--       ├── EquipBestButton (ImageButton, above Home) + Label
 --       ├── HomeButton (ImageButton)
 --       └── MenuGrid (UIGridLayout, 2 columns)
 --           ├── PlotButton, IndexButton, QuestsButton, ShopButton, DailyButton, SettingsButton
@@ -15,6 +16,7 @@
 local TweenService = game:GetService("TweenService")
 
 local Config = require(script.Parent:WaitForChild("LeftMenuConfig"))
+local MenuArt = require(game:GetService("ReplicatedStorage"):WaitForChild("MenuArt"):WaitForChild("MenuArt"))
 
 local LeftMenuComponent = {}
 LeftMenuComponent.__index = LeftMenuComponent
@@ -72,6 +74,23 @@ function LeftMenuComponent.new(parent)
     container.Parent = root
 
     self.Buttons = {}
+    local equipBest = newImageButton("EquipBestButton", MenuArt.Pieces, container)
+    MenuArt.setPiece(equipBest, "ButtonGreen")
+    equipBest.ScaleType = Enum.ScaleType.Stretch
+    equipBest.Position = UDim2.fromOffset(Config.EquipBest.Position.X, Config.EquipBest.Position.Y)
+    equipBest.Size = UDim2.fromOffset(Config.EquipBest.Size.X, Config.EquipBest.Size.Y)
+    MenuArt.label(
+        equipBest,
+        "Label",
+        "EQUIP BEST",
+        { 34, 22, Config.EquipBest.Size.X - 68, Config.EquipBest.Size.Y - 62 },
+        Config.EquipBest.TextSize,
+        nil,
+        2,
+        { alignX = Enum.TextXAlignment.Center, stroke = 2 }
+    )
+    self.Buttons.EquipBest = equipBest
+
     local home = newImageButton("HomeButton", Config.Assets.Home, container)
     home.Position = UDim2.fromOffset(Config.Home.Position.X, Config.Home.Position.Y)
     home.Size = UDim2.fromOffset(Config.Home.Size.X, Config.Home.Size.Y)
