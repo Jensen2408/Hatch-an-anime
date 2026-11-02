@@ -3,11 +3,29 @@
 -- These acknowledgements cannot buy upgrades, grant cash, or award items.
 -- Runtime: Script in ServerScriptService. Remote: ReplicatedStorage.FirstHatchTutorialAction (RemoteEvent, action string).
 -- Attributes TutorialDataReady / TutorialCompleted / TutorialIncomeCollected / TutorialTourStage are loaded and saved by
--- PlayerDataService.
+-- PlayerDataService. A player who has unlocked a slot (TutorialPlotUpgraded, TempleSlotUnlocks) already found the plot
+-- upgrades, so the tour ends as soon as it would otherwise start or continue.
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local remote = ReplicatedStorage:FindFirstChild("FirstHatchTutorialAction") or Instance.new("RemoteEvent")
 remote.Name = "FirstHatchTutorialAction"
 remote.Parent = ReplicatedStorage
+local function finishTourIfUpgraded(player)
+    if player:GetAttribute("TutorialPlotUpgraded") and player:GetAttribute("TutorialIncomeCollected") then
+        player:SetAttribute("TutorialCompleted", true)
+    end
+end
+local function watchPlayer(player)
+    for _, attribute in { "TutorialPlotUpgraded", "TutorialIncomeCollected" } do
+        player:GetAttributeChangedSignal(attribute):Connect(function()
+            finishTourIfUpgraded(player)
+        end)
+    end
+end
+Players.PlayerAdded:Connect(watchPlayer)
+for _, player in Players:GetPlayers() do
+    watchPlayer(player)
+end
 -- stage -> the action the client must send to leave that stage; stage 12 completes the tutorial
 local EXPECTED_ACTION = { [9] = "PlotOpened", [10] = "UpgradesOpened", [11] = "TempleSeen", [12] = "IncubatorsSeen" }
 remote.OnServerEvent:Connect(function(player, action)

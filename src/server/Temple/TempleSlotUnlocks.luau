@@ -148,6 +148,7 @@ function Slots.Purchase(plot, slot, player)
     end
     -- No yielding between payment and unlock, preventing duplicate charges.
     cash.Value -= price
+    player:SetAttribute("TutorialPlotUpgraded", true) -- ends the Plot menu tour (TutorialProgress)
     slot:SetAttribute("Unlocked", true)
     Slots.Refresh(plot)
     return true
