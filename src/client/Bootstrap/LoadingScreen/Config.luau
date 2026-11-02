@@ -1,23 +1,16 @@
 --[[ ReplicatedFirst.LoadingScreen.Config  (ModuleScript, child of the LoadingScreen LocalScript)
-Edit everything here. Any empty or failed image falls back to a clean built-in shape, and Skip keeps working either way.
-Read by LoadingScreen: MaxSeconds (safety close), MinSeconds (minimum time on screen), Tips / TipSeconds,
-HideCoreGui, DisableControls, ReducedMotionAttribute. Images, PreloadFolders, PlotReadyAttribute, PlotWait
-and Colors are currently not read by LoadingScreen.
+Edit everything here. Skip keeps working if an image fails, and the title falls back to text until the logo loads.
+Read by LoadingScreen: Images, MaxSeconds (safety close), MinSeconds (minimum time on screen), Tips / TipSeconds,
+HideCoreGui, DisableControls, ReducedMotionAttribute. PreloadFolders, PlotReadyAttribute, PlotWait and Colors are
+currently not read by LoadingScreen.
 ]]
 return {
     MaxSeconds = 180,
     MinSeconds = 3.4,
     Images = {
-        Background = "rbxassetid://104665669226233",
-        BackgroundRight = "rbxassetid://121551875103201",
-        Logo = "rbxassetid://136968104266135",
-        Mountains = "",
-        Hills = "",
-        Temple = "",
-        BranchLeft = "",
-        BranchRight = "",
-        Petal = "",
-        Paper = "",
+        Logo = "rbxassetid://91434329847098", -- assets/ui/loading/loading_logo.png
+        Runner = "rbxassetid://84109930595285", -- assets/ui/loading/loading_runner.png
+        GoalEgg = "rbxassetid://74319663850465", -- the Pirate egg icon (ToolIcons)
     },
     PreloadFolders = { "Characters", "Eggs" },
     PlotReadyAttribute = "PlotReady",
