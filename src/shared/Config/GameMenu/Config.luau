@@ -84,7 +84,7 @@ Config.Quests = {
 -- player when that many of them are discovered (GameMenu action ClaimCollection{at}; claimed = "reward:index<at>"
 -- in the player's saved discoveries).
 Config.IndexCollection = {
-    Size = 15,
+    Size = 45,
     Rewards = {
         { at = 5, reward = { cash = 25000 } },
         { at = 10, reward = { cash = 250000 } },

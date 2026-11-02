@@ -125,6 +125,29 @@ function MenuArt.label(parent, name, text, r, maxSize, color, zIndex, options)
     return textLabel
 end
 
+-- 3D portrait of a character: the display copies the Inventory shows (ReplicatedStorage.CharacterInventory.Portraits).
+-- silhouette = all black, for a character not discovered yet. nil if the character has no portrait.
+function MenuArt.characterPortrait(parent, characterId, r, zIndex, silhouette)
+    local inventory = game:GetService("ReplicatedStorage"):WaitForChild("CharacterInventory")
+    local portraits = inventory:FindFirstChild("Portraits")
+    local template = portraits and portraits:FindFirstChild(characterId)
+    if not template then
+        return nil
+    end
+    local viewport = MenuArt.new("ViewportFrame", "Portrait", parent, zIndex)
+    viewport.Ambient = Color3.fromRGB(168, 170, 182)
+    viewport.LightColor = Color3.fromRGB(255, 249, 238)
+    viewport.LightDirection = Vector3.new(-0.55, -1, -0.65)
+    if silhouette then
+        viewport.ImageColor3 = Color3.new(0, 0, 0)
+    end
+    MenuArt.rect(viewport, r)
+    local copy = template:Clone()
+    copy.Parent = viewport
+    require(inventory:WaitForChild("InventoryStyle")).FrameModel(viewport, copy, 20, 1.08)
+    return viewport
+end
+
 function MenuArt.hitBox(parent, name, r, onActivate, zIndex)
     local button = MenuArt.new("TextButton", name, parent, zIndex)
     button.Text = ""

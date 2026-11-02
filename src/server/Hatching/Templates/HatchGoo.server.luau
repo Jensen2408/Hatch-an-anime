@@ -198,7 +198,10 @@ local function runCycle(player, resumeTool, resumeLeft)
         if tool then
             Economy.Apply(tool, rewardId, rewardStats)
         end
-        local hatchSeconds = EggHatchTiming.Seconds(rewardId, rewardStats)
+        local hatchSeconds = EggHatchTiming.Seconds(
+            tool and tool:GetAttribute("EggType") or eggSource:GetAttribute("EggType"),
+            rewardStats
+        )
         if resumeTool and tonumber(tool:GetAttribute("HatchSeconds")) then
             hatchSeconds = tonumber(tool:GetAttribute("HatchSeconds"))
         end
@@ -367,7 +370,7 @@ local function runCycle(player, resumeTool, resumeLeft)
         ---------------------------------------------------------------- wait for the hatch press
         say("Loaded", "READY • PRESS HATCH")
         prompt.ActionText = "Hatch"
-        prompt.ObjectText = rewardId .. " Egg"
+        prompt.ObjectText = tostring(eggType or "Mystery") .. " Egg"
         prompt.Enabled = player ~= nil and not chamber:GetAttribute("StealLock") -- EggSteal
         while player and not startRequested do
             if not ownsChamber(player) or not chamber:IsDescendantOf(workspace) then
@@ -505,7 +508,7 @@ local function runCycle(player, resumeTool, resumeLeft)
                         "Reveal",
                         chamber,
                         home * CFrame.new(0, finalSize.Y * 0.5, 0),
-                        rewardId
+                        Catalog.ById[rewardId].Name
                     )
                 end
             end
@@ -546,7 +549,7 @@ local function runCycle(player, resumeTool, resumeLeft)
         local pickup = Instance.new("ProximityPrompt")
         pickup.Name = "PickUpCharacter"
         pickup.ActionText = "Collect character"
-        pickup.ObjectText = rewardId .. " • Power " .. Economy.Format(rewardStats.Power)
+        pickup.ObjectText = Catalog.ById[rewardId].Name .. " • Power " .. Economy.Format(rewardStats.Power)
         pickup.RequiresLineOfSight = false
         pickup.MaxActivationDistance = 12
         pickup.HoldDuration = 0.2

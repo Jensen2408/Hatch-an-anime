@@ -5,50 +5,27 @@ character as attributes (Apply); everyone else reads it back (Read) and shows it
   Attributes written by Apply: Power, PowerVersion, BasePower, RollQuality, BaseIncomePerSecond,
   IncomePerSecond, PowerRolled. Mutation (Silver/Gold/Diamond/Rainbow) multiplies income.
 ]]
+local DropConfig = require(script.Parent:WaitForChild("EggDropConfig"))
+
 local Economy = {}
 
--- Income per second at base Power, per character id (base Power = BaseIncome * 100).
-Economy.BaseIncome = {
-    Pirate = 5,
-    Shinobi = 12,
-    Power = 25,
-    Hero = 60,
-    Slayer = 125,
-    Curse = 250,
-    Soul = 600,
-    Titan = 1200,
-    Magic = 2500,
-    Academy = 8000,
-    Devil = 20000,
-    Guild = 50000,
-    Sports = 150000,
-    Mecha = 400000,
-    God = 1000000,
-    Unknown = 10000000,
-}
+-- Per character id, from ReplicatedStorage.EggDropConfig:
+--   BaseIncome  income per second at base Power (base Power = BaseIncome * 100)
+--   RarityLuck  multiplier on the chance of every non-Ordinary band: rarer characters roll big less often
+Economy.BaseIncome = {}
+Economy.RarityLuck = {}
+local uncappedIncome = {} -- Limited characters skip the income soft cap
+for _, egg in DropConfig.Eggs do
+    for _, character in egg.Characters do
+        Economy.BaseIncome[character.Id] = character.BaseIncome
+        Economy.RarityLuck[character.Id] = egg.Luck
+        uncappedIncome[character.Id] = egg.Limited
+    end
+end
 -- Saved as attribute PowerVersion. Power saved under version nil/1 used the old 1..100 scale (see Read).
 Economy.Version = 3
 -- Power ceiling is separate from cash. Existing valid Power values are retained.
 Economy.MaxPower = 1e18
--- Multiplier on the chance of every non-Ordinary band: rarer characters roll big less often.
-Economy.RarityLuck = {
-    Pirate = 1,
-    Shinobi = 1,
-    Power = 1,
-    Hero = 0.85,
-    Slayer = 0.85,
-    Curse = 0.85,
-    Soul = 0.65,
-    Titan = 0.65,
-    Magic = 0.65,
-    Academy = 0.45,
-    Devil = 0.45,
-    Guild = 0.45,
-    Sports = 0.25,
-    Mecha = 0.25,
-    God = 0.25,
-    Unknown = 0.25,
-}
 -- Roll-quality bands, lowest first. Weight = percent chance (band 1's weight is recomputed in RollWeights);
 -- Min/Max = Power multiplier range over base Power. Order is a contract (ranks used by other modules).
 Economy.Bands = {
@@ -87,7 +64,7 @@ function Economy.Income(id, power)
     assert(type(power) == "number" and power == power and power >= 1 and power <= Economy.MaxPower, "Invalid power")
     -- Universal power-to-income curve; higher Power always earns at least as much.
     -- Growth softens above 100M Power; giant rolls stay valuable without runaway income.
-    local rate = (id == "Unknown" or power <= 100000000) and power / 100 or 1000000 * (power / 100000000) ^ 0.4 -- Limited Unknown skips the soft cap
+    local rate = (uncappedIncome[id] or power <= 100000000) and power / 100 or 1000000 * (power / 100000000) ^ 0.4
     return math.max(1, math.floor(rate + 0.5))
 end
 

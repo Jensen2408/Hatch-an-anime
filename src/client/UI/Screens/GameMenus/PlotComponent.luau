@@ -28,6 +28,7 @@
 -- }
 local Config = require(script.Parent:WaitForChild("PlotConfig"))
 local Atlas = require(script.Parent:WaitForChild("PlotAtlas"))
+local MenuArt = require(game:GetService("ReplicatedStorage"):WaitForChild("MenuArt"):WaitForChild("MenuArt"))
 
 local CANVAS = Atlas.Canvas
 local Z = 10 -- base ZIndex; layers above it
@@ -292,6 +293,9 @@ function PlotComponent:_slotCard(parent, slot, r)
             portrait.ScaleType = Enum.ScaleType.Fit
             local p = style.Portrait
             rect(portrait, { (tw - p[3]) / 2, p[2], p[3], p[4] })
+        elseif slot.characterId then
+            local p = style.Portrait
+            MenuArt.characterPortrait(contents, slot.characterId, { (tw - p[3]) / 2, p[2], p[3], p[4] }, Z + 4)
         end
         label(
             contents,

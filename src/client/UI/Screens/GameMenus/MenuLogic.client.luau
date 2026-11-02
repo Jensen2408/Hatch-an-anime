@@ -643,19 +643,20 @@ RENDER.Index = function(panel)
     end
     if indexPage == "Characters" then
         for _, character in characters do
-            local eggId = string.match(character.id, "^char:(.+)$")
             addCard({
                 id = character.id,
                 name = character.name,
                 rarity = character.rarity,
                 image = character.image,
+                characterId = character.characterId,
                 discovered = discovered[character.id] == true,
             }, {
                 name = character.name,
                 rarity = character.rarity,
                 image = character.image,
-                egg = eggId and ("MenuEgg_" .. eggId),
-                obtain = eggId and ("Hatch a " .. eggId .. " Egg") or character.obtain,
+                characterId = character.characterId,
+                egg = character.egg and ("MenuEgg_" .. character.egg),
+                obtain = character.obtain,
             })
         end
     elseif indexPage == "Eggs" then
@@ -1815,6 +1816,7 @@ RENDER.Plot = function(panel)
                 number = i,
                 state = "placed",
                 image = item.image,
+                characterId = item.characterId,
                 name = item.name,
                 income = money(item.income or 0) .. "/s",
                 -- REMOVE: back to the inventory (GameMenu action StoreSelected)

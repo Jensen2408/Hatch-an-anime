@@ -1,5 +1,6 @@
 --[[ ReplicatedStorage.EggHatchTiming  (ModuleScript, shared)
-Incubation time per egg type (seconds) and the countdown text format.
+Incubation time per egg type (seconds, by egg id: every character of an egg takes the same time) and the
+countdown text format.
 Read by PirateEggFreeConveyor (stamps attribute HatchSeconds) and HatchGoo.
 ]]
 -- Not used below; the require is kept so load order stays exactly as before.

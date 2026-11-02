@@ -34,6 +34,7 @@ local TweenService = game:GetService("TweenService")
 
 local Config = require(script.Parent:WaitForChild("IndexConfig"))
 local Atlas = require(script.Parent:WaitForChild("IndexAtlas"))
+local MenuArt = require(game:GetService("ReplicatedStorage"):WaitForChild("MenuArt"):WaitForChild("MenuArt"))
 
 local CANVAS = Atlas.Canvas
 local Z = 10 -- base ZIndex; layers above it
@@ -173,9 +174,9 @@ local function eggView(parent, modelName, r, silhouette, zIndex)
     return viewport
 end
 
-local function portrait(parent, image, r, silhouette, zIndex)
+local function portrait(parent, image, r, silhouette, zIndex, characterId)
     if not image or image == "" then
-        return
+        return characterId and MenuArt.characterPortrait(parent, characterId, r, zIndex, silhouette)
     end
     local picture = new("ImageLabel", "Portrait", parent, zIndex)
     picture.Image = image
@@ -212,7 +213,7 @@ function IndexComponent:_card(parent, card, x, y)
     elseif card.egg then
         eggView(frame, card.egg, { p[1] + 20, p[2] + 14, p[3] - 40, p[4] - 20 }, not card.discovered, Z + 4)
     else
-        portrait(frame, card.image, p, not card.discovered, Z + 4)
+        portrait(frame, card.image, p, not card.discovered, Z + 4, card.characterId)
     end
     local style = grid.Badge
     local badgeArt = card.discovered and art.Badge or Config.RarityPieces.Locked.Badge
@@ -280,10 +281,10 @@ function IndexComponent:_buildDetail()
         icon.Position =
             UDim2.fromOffset(style.Portrait[1] + style.Portrait[3] / 2, style.Portrait[2] + style.Portrait[4] / 2)
         icon.Size = UDim2.fromOffset(170, 184)
-    elseif selected.egg and not selected.image then
+    elseif selected.egg and not selected.image and not selected.characterId then
         eggView(frame, selected.egg, style.Portrait, false, Z + 2)
     else
-        portrait(frame, selected.image, style.Portrait, false, Z + 2)
+        portrait(frame, selected.image, style.Portrait, false, Z + 2, selected.characterId)
     end
     local art = mutation or Config.RarityPieces[selected.rarity] or Config.RarityPieces.Common
     badge(

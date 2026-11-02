@@ -71,16 +71,16 @@ end
 
 local function characterIdOf(instance)
     local id = instance:GetAttribute("CharacterId") or instance:GetAttribute("BrainrotId")
-    if type(id) == "string" and Catalog.ById[id] then
+    if type(id) == "string" and Catalog.CharacterById[id] then
         return id
     end
     -- golden displays placed before the fix carry CharacterId "Golden Pirate": fall back to the real id
     local brainrotId = instance:GetAttribute("BrainrotId")
-    if type(brainrotId) == "string" and Catalog.ById[brainrotId] then
+    if type(brainrotId) == "string" and Catalog.CharacterById[brainrotId] then
         return brainrotId
     end
-    if (instance:GetAttribute("GoldVariant") or instance:GetAttribute("Golden")) and Catalog.ById.Pirate then
-        return "Pirate"
+    if instance:GetAttribute("GoldVariant") or instance:GetAttribute("Golden") then
+        return "Luffy" -- the character the Golden Pirate counts as (EggCharacterRewards)
     end
     return nil
 end
@@ -779,6 +779,10 @@ local function buildPortraits()
         end
         local copy = template:Clone()
         copy.Name = name
+        local poses = copy:FindFirstChild("InitialPoses") -- animation data, and most of the model's instances
+        if poses then
+            poses:Destroy()
+        end
         for _, descendant in copy:GetDescendants() do
             if
                 descendant:IsA("LuaSourceContainer")
@@ -800,11 +804,11 @@ local function buildPortraits()
         copy.Parent = folder
     end
     for _, template in brainrotModels:GetChildren() do
-        if characterIdOf(template) or Catalog.ById[template.Name] then
+        if characterIdOf(template) or Catalog.CharacterById[template.Name] then
             addPortrait(template, template.Name)
         end
     end
-    addPortrait(goldenTemplate(), "Pirate_Golden")
+    addPortrait(goldenTemplate(), "Luffy_Golden")
     folder.Parent = Shared
 end
 

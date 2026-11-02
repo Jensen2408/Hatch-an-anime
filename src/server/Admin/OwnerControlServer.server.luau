@@ -46,7 +46,14 @@ local lastRequestAt = {}
 local busy = {}
 local activeEvent = nil
 -- Owner-only gift entry (Golden Pirate). Its templates live in ServerStorage.FutureUpdateContent.<kind>.
-local GOLD_ENTRY = { Id = "Pirate", Name = "Golden Pirate", Rarity = "Legendary", Price = 0, OwnerGold = true }
+local GOLD_ENTRY = {
+    Id = "Pirate",
+    CharacterId = "Luffy",
+    Name = "Golden Pirate",
+    Rarity = "Legendary",
+    Price = 0,
+    OwnerGold = true,
+}
 
 -- ===== 3. Helpers =====
 local function goldTemplate(kind)
@@ -121,16 +128,18 @@ local dispatch = function(player, action, payload)
         -- Catalog + roster snapshot for the panel.
         elseif action == "Info" then
             local items = {}
-            for _, catalogEntry in ipairs(Catalog.Order) do
-                table.insert(items, {
-                    Id = catalogEntry.Id,
-                    Name = catalogEntry.Name,
-                    Rarity = catalogEntry.Rarity,
-                    Price = catalogEntry.Price,
-                    CharacterAvailable = game.ServerStorage.BrainrotModels:FindFirstChild(catalogEntry.Id) ~= nil,
-                    Reserved = false,
-                    EggAvailable = game.ServerStorage.AuxEggTemplates:FindFirstChild(catalogEntry.Id) ~= nil,
-                })
+            for _, list in { Catalog.Eggs, Catalog.Characters } do
+                for _, catalogEntry in ipairs(list) do
+                    table.insert(items, {
+                        Id = catalogEntry.Id,
+                        Name = catalogEntry.Name,
+                        Rarity = catalogEntry.Rarity,
+                        Price = catalogEntry.Price,
+                        CharacterAvailable = game.ServerStorage.BrainrotModels:FindFirstChild(catalogEntry.Id) ~= nil,
+                        Reserved = false,
+                        EggAvailable = game.ServerStorage.AuxEggTemplates:FindFirstChild(catalogEntry.Id) ~= nil,
+                    })
+                end
             end
             table.insert(items, {
                 Id = "Golden Pirate",
@@ -187,7 +196,7 @@ local dispatch = function(player, action, payload)
                     local template = entry.OwnerGold and goldTemplate("Characters")
                         or game.ServerStorage.BrainrotModels:FindFirstChild(entry.Id)
                     assert(template, "Character unavailable.")
-                    local gift = EggCharacterRewards.Tool(template, entry.Id)
+                    local gift = EggCharacterRewards.Tool(template, entry.CharacterId or entry.Id)
                     if entry.OwnerGold then
                         gift:SetAttribute("GoldVariant", true)
                         gift:SetAttribute("Golden", true)

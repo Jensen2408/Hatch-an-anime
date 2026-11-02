@@ -1,6 +1,6 @@
 -- ServerScriptService.ToolIcons (server, no remotes)
 -- ToolIcons: every egg / character Tool gets a picture (TextureId) so Roblox's default backpack + hotbar show what you hold.
--- Characters use their Index art (CharacterCatalog .image); eggs use rendered icons (uploaded 2026-10-18, sources in
+-- Characters use their Index art when they have one (CharacterCatalog .image); eggs use rendered icons (uploaded 2026-10-18, sources in
 -- D:\Roblox Dev\Steal Anime Egg\Eggs\_icons). ToolTip shows the full name incl. mutation on hover.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

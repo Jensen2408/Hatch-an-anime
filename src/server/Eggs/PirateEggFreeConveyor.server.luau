@@ -17,7 +17,6 @@ NightRiverLuckMultiplier.
 ]]
 local _RunService = game:GetService("RunService")
 local Catalog = require(game.ReplicatedStorage.CharacterCatalog)
-local Economy = require(game.ReplicatedStorage.CharacterEconomy)
 local Timing = require(game.ReplicatedStorage.EggHatchTiming)
 local Payment = require(script.Parent.RiverEggPayment)
 local RiverCarry = require(script.Parent.RiverEggCarryService)
@@ -115,9 +114,7 @@ local function spawnEgg(forcedTemplate, mutation)
         Catalog.Stamp(egg, entry)
     end
     egg:SetAttribute("EggType", template.Name)
-    local roll = Economy.Roll(template.Name)
-    Economy.Apply(egg, template.Name, roll)
-    egg:SetAttribute("HatchSeconds", Timing.Seconds(template.Name, roll))
+    egg:SetAttribute("HatchSeconds", Timing.Seconds(template.Name))
     local prompt = egg.CollectAnchor:FindFirstChildOfClass("ProximityPrompt")
     if prompt then
         prompt.ObjectText = (mutation and mutation .. " " or "") .. template.Name .. " Egg"
@@ -169,7 +166,6 @@ local function spawnEgg(forcedTemplate, mutation)
             Catalog.Stamp(tool, entry)
             tool.ToolTip = entry.Rarity .. " • " .. Catalog.FormatPrice(entry.Price)
         end
-        Economy.Apply(tool, template.Name, roll)
         tool:SetAttribute("HatchSeconds", egg:GetAttribute("HatchSeconds"))
         local visual = template:Clone()
         visual.Name = "Egg"

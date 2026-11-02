@@ -3,9 +3,11 @@ Turns a hatch result into a character template and builds the holdable character
 
 API:
   Rewards.Resolve(tool?, source) -> (template: Model?, kind: string)
-      Picks the character model for an egg. A golden egg tool always gives the "Golden Pirate" model
-      (kind "Pirate"). Otherwise the kind comes from tool.EggType, source.EggType or the tool's name
-      (with "Egg"/"egg" and surrounding spaces stripped), defaulting to "Pirate"; the template is
+      Picks the character model for an egg. A golden egg tool always gives the "Golden Pirate" model (kind GOLDEN_ID).
+      Otherwise the egg id comes from tool.EggType, source.EggType or the tool's name (with "Egg"/"egg" and surrounding
+      spaces stripped), defaulting to "Pirate", and CharacterCatalog.RollCharacter picks one of its characters. The pick
+      is sealed on the tool (attribute HatchCharacterId) and any Power the egg carried is dropped, so the first Resolve
+      decides the character and leaving the game can't re-roll it. The template is
       ServerStorage.BrainrotModels.<kind> if it is a Model with a CharacterId.
   Rewards.Tool(template, id, stats?, mutation?) -> Tool
       stats defaults to CharacterEconomy.Read(template, id) or a fresh Economy.Roll(id).
@@ -19,19 +21,28 @@ local Economy = require(game.ReplicatedStorage.CharacterEconomy)
 local Mutations = require(script.Parent:WaitForChild("Mutations"))
 
 local DISPLAY_HEIGHT = 6 -- studs; held characters are scaled to this height
+local GOLDEN_ID = "Luffy" -- the Golden Pirate counts as this character (income, Index, sell rules)
 
 local Rewards = {}
 
 function Rewards.Resolve(tool, source)
     if tool and tool:GetAttribute("GoldVariant") then
-        return game.ServerStorage.FutureUpdateContent.Characters:FindFirstChild("Golden Pirate"), "Pirate"
+        return game.ServerStorage.FutureUpdateContent.Characters:FindFirstChild("Golden Pirate"), GOLDEN_ID
     end
-    local kind = (tool and tool:GetAttribute("EggType"))
+    local eggId = (tool and tool:GetAttribute("EggType"))
         or source:GetAttribute("EggType")
         or (tool and tool.Name)
         or "Pirate"
-    kind = tostring(kind):gsub("[Ee]gg", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    eggId = tostring(eggId):gsub("[Ee]gg", ""):gsub("^%s+", ""):gsub("%s+$", "")
 
+    local kind = tool and tool:GetAttribute("HatchCharacterId")
+    if not Catalog.CharacterById[kind] then
+        kind = Catalog.RollCharacter(eggId) or eggId
+        if tool then
+            tool:SetAttribute("HatchCharacterId", kind)
+            tool:SetAttribute("Power", nil)
+        end
+    end
     local model = brainrotModels:FindFirstChild(kind)
     if model and model:IsA("Model") and model:GetAttribute("CharacterId") then
         return model, kind

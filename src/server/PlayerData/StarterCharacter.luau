@@ -1,5 +1,5 @@
 --[[ ServerScriptService.StarterCharacter  (ModuleScript, server)
-New players start earning before their first hatch: a free Pirate on Slot01 with STARTER_CASH on its plate, and Slot02
+New players start earning before their first hatch: a free Luffy on Slot01 with STARTER_CASH on its plate, and Slot02
 unlocked for the first hatched character. Only for a save with no progress at all; saved.starterGiven stops a repeat.
 
 Player attribute TutorialStarterStage (saved) drives FirstHatchGuide:
@@ -17,7 +17,7 @@ local Economy = require(game:GetService("ReplicatedStorage"):WaitForChild("Chara
 local Rewards = require(script.Parent:WaitForChild("EggCharacterRewards"))
 local TempleSlotUnlocks = require(script.Parent:WaitForChild("TempleSlotUnlocks"))
 
-local STARTER_ID = "Pirate"
+local STARTER_ID = "Luffy"
 local STARTER_CASH = 300
 local WAIT_SECONDS = 15 -- for the plot's slot and money stand to be ready
 

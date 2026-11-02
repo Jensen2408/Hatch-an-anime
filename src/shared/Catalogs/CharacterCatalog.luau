@@ -1,98 +1,33 @@
 --[[ ReplicatedStorage.CharacterCatalog  (ModuleScript, shared)
-Static catalogue of every hatchable character: id, display name, asset (model) name, rarity, shop price,
-rarity colour and menu image. Also owns the river spawn roll (BuildSpawnPool) and the legacy plain-text
-"CharacterInfo" billboard.
+Static catalogue of every egg and hatchable character, built from ReplicatedStorage.EggDropConfig (rarity colour and
+rank are added here). Also owns the river spawn roll (BuildSpawnPool), the hatch roll (RollCharacter) and the legacy
+plain-text "CharacterInfo" billboard.
 
-  Catalog.Order      array of entries in catalogue order (15 regular + the Limited "Unknown")
-  Catalog.ById[id]   the same entries keyed by Id
-  Entry fields: Id, Name, AssetName, Order, Rarity, RarityRank, Price, Color, image (+ Limited on Unknown)
+  Catalog.Eggs        array of egg entries (15 river eggs + the Limited "Unknown")
+  Catalog.Characters  array of character entries, egg by egg
+  Catalog.EggById[id] / Catalog.CharacterById[id]
+  Catalog.ById[id]    either of them: egg and character ids never clash
+  Catalog.LegacyCharacters[oldId]  characters used to share their egg's id: that id -> the egg's main character
+  Egg fields: Id, Name, Order, Rarity, RarityRank, Price, Color, Limited?, Characters
+  Character fields: Id, Name, Order, Rarity, RarityRank, Price (its egg's), Color, Limited?, Egg, Chance, Move, image?
 ]]
+local DropConfig = require(script.Parent:WaitForChild("EggDropConfig"))
+
 local Catalog = {}
 
--- Display text only; model IDs and artwork keys retain their existing names.
--- Player-facing names (Adam, Oct 16): hint at the anime each one references.
-local RENAME = {
-    TideCaptain = "Straw Captain",
-    MoonRunner = "Leaf Runner",
-    SunForger = "Solar Warrior",
-    SproutGuard = "Emerald Hero",
-    LanternWarden = "Ember Slayer",
-    DuskWeaver = "Infinity Sage",
-    AshDuelist = "Soul Reaper",
-    SkyScout = "Titan Shifter",
-    RuneSmith = "Clover Knight",
-}
-Catalog.Rename = RENAME
-
--- Player-facing name for an asset/design name: an explicit RENAME wins, otherwise CamelCase is split
--- into words ("StarScholar" -> "Star Scholar").
+-- Player-facing name for an id / design name: CamelCase is split into words ("StarScholar" -> "Star Scholar").
 function Catalog.DisplayName(name)
-    if RENAME[tostring(name)] then
-        return RENAME[tostring(name)]
-    end
     return (tostring(name):gsub("(%l)(%u)", "%1 %2"):gsub("(%u)(%u%l)", "%1 %2"))
 end
 
--- The arrays below are parallel (index i = one character) and every 3 consecutive characters share a
--- rarity tier. Order matters: it is the catalogue order, the tier grouping and the entry's Order field.
-local CHARACTER_IDS = {
-    "Pirate",
-    "Shinobi",
-    "Power",
-    "Hero",
-    "Slayer",
-    "Curse",
-    "Soul",
-    "Titan",
-    "Magic",
-    "Academy",
-    "Devil",
-    "Guild",
-    "Sports",
-    "Mecha",
-    "God",
-}
-local ASSET_NAMES = {
-    "TideCaptain",
-    "MoonRunner",
-    "SunForger",
-    "SproutGuard",
-    "LanternWarden",
-    "DuskWeaver",
-    "AshDuelist",
-    "SkyScout",
-    "RuneSmith",
-    "StarScholar",
-    "CopperImp",
-    "FrostNomad",
-    "CometStriker",
-    "PrismSentinel",
-    "DawnOracle",
-}
-local PRICES = {
-    0,
-    300,
-    1200,
-    6000,
-    15000,
-    50000,
-    400000,
-    750000,
-    2000000,
-    12000000,
-    35000000,
-    100000000,
-    600000000,
-    1500000000,
-    5000000000,
-} -- economy v4 (Oct 15): ~1 min common → ~1 h legendary payback; early eggs cheaper since the Oct 31 pacing pass
-local RARITY_NAMES = { "Common", "Uncommon", "Rare", "Epic", "Legendary" } -- index = tier
+local RARITY_RANKS = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Limited = 6 }
 local RARITY_COLORS = {
-    Color3.fromRGB(190, 195, 205),
-    Color3.fromRGB(109, 225, 132),
-    Color3.fromRGB(98, 172, 255),
-    Color3.fromRGB(197, 126, 255),
-    Color3.fromRGB(255, 207, 92),
+    Common = Color3.fromRGB(190, 195, 205),
+    Uncommon = Color3.fromRGB(109, 225, 132),
+    Rare = Color3.fromRGB(98, 172, 255),
+    Epic = Color3.fromRGB(197, 126, 255),
+    Legendary = Color3.fromRGB(255, 207, 92),
+    Limited = Color3.fromRGB(255, 60, 90),
 }
 
 -- Percent chance per rarity, shared by all eggs within that rarity.
@@ -138,38 +73,64 @@ function Catalog.BuildSpawnPool(templates)
     end
 end
 
-Catalog.Order = {}
+Catalog.Eggs = {}
+Catalog.Characters = {}
+Catalog.EggById = {}
+Catalog.CharacterById = {}
 Catalog.ById = {}
+Catalog.LegacyCharacters = {}
 
-for i, id in ipairs(CHARACTER_IDS) do
-    local tier = math.ceil(i / 3)
-    local entry = {
-        Id = id,
-        Name = Catalog.DisplayName(ASSET_NAMES[i]),
-        AssetName = ASSET_NAMES[i],
-        Order = i,
-        Rarity = RARITY_NAMES[tier],
-        RarityRank = tier,
-        Price = PRICES[i],
-        Color = RARITY_COLORS[tier],
+for eggOrder, egg in DropConfig.Eggs do
+    local eggEntry = {
+        Id = egg.Id,
+        Name = egg.Id .. " Egg",
+        Order = eggOrder,
+        Rarity = egg.Rarity,
+        RarityRank = RARITY_RANKS[egg.Rarity],
+        Price = egg.Price,
+        Color = RARITY_COLORS[egg.Rarity],
+        Limited = egg.Limited,
+        Characters = egg.Characters,
     }
-    table.insert(Catalog.Order, entry)
-    Catalog.ById[id] = entry
+    table.insert(Catalog.Eggs, eggEntry)
+    Catalog.EggById[egg.Id] = eggEntry
+    Catalog.ById[egg.Id] = eggEntry
+    Catalog.LegacyCharacters[egg.Id] = egg.Characters[1].Id
+    for _, character in egg.Characters do
+        local entry = {
+            Id = character.Id,
+            Name = character.Name,
+            Order = #Catalog.Characters + 1,
+            Rarity = egg.Rarity,
+            RarityRank = RARITY_RANKS[egg.Rarity],
+            Price = egg.Price,
+            Color = RARITY_COLORS[egg.Rarity],
+            Limited = egg.Limited,
+            Egg = egg.Id,
+            Chance = character.Chance,
+            Move = character.Move,
+        }
+        table.insert(Catalog.Characters, entry)
+        Catalog.CharacterById[character.Id] = entry
+        Catalog.ById[character.Id] = entry
+    end
 end
--- LIMITED: Unknown (from the 199 R$ Unknown Egg only; never spawns on the river)
-do
-    local unknownEntry = {
-        Id = "Unknown",
-        Name = "Unknown",
-        Order = 16,
-        Rarity = "Limited",
-        RarityRank = 6,
-        Price = 0,
-        Color = Color3.fromRGB(255, 60, 90),
-        Limited = true,
-    }
-    table.insert(Catalog.Order, unknownEntry)
-    Catalog.ById.Unknown = unknownEntry
+
+-- Picks the character an egg hatches, by each character's Chance. nil for an id that isn't an egg.
+local defaultRandom = Random.new()
+function Catalog.RollCharacter(eggId, random)
+    local egg = Catalog.EggById[eggId]
+    if not egg then
+        return nil
+    end
+    local roll = (random or defaultRandom):NextNumber(0, 100)
+    for _, character in egg.Characters do
+        roll -= character.Chance
+        if roll < 0 then
+            return character.Id
+        end
+    end
+    return egg.Characters[1].Id
 end
 
 -- 1234567 -> "$1,234,567"; 0 -> "FREE".
@@ -229,25 +190,4 @@ function Catalog.Label(model, entry)
     addLine(Catalog.FormatPrice(entry.Price), 48, Color3.fromRGB(255, 223, 143), 16)
 end
 
--- Menu portrait per asset name (stored as entry.image). Unknown has no AssetName and no image.
-local MENU_IMAGES = {
-    ["AshDuelist"] = "rbxassetid://86519861962600",
-    ["CometStriker"] = "rbxassetid://96416272941728",
-    ["CopperImp"] = "rbxassetid://112987882831167",
-    ["DawnOracle"] = "rbxassetid://77906939709813",
-    ["DuskWeaver"] = "rbxassetid://99801009246682",
-    ["FrostNomad"] = "rbxassetid://119820320826727",
-    ["LanternWarden"] = "rbxassetid://74677117609190",
-    ["MoonRunner"] = "rbxassetid://126333199801308",
-    ["PrismSentinel"] = "rbxassetid://87083032561086",
-    ["RuneSmith"] = "rbxassetid://139172704925469",
-    ["SkyScout"] = "rbxassetid://126336500094509",
-    ["SproutGuard"] = "rbxassetid://76887827944280",
-    ["StarScholar"] = "rbxassetid://81810975929521",
-    ["SunForger"] = "rbxassetid://138059275161423",
-    ["TideCaptain"] = "rbxassetid://126909405621214",
-}
-for _, entry in Catalog.Order do
-    entry.image = MENU_IMAGES[entry.AssetName or entry.Name]
-end
 return Catalog

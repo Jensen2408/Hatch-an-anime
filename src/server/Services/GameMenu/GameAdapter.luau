@@ -54,15 +54,19 @@ end
 
 function GameAdapter.GetCatalog()
     local catalog = { eggs = {}, characters = {} }
-    for _, entry in CharacterCatalog.Order do
+    for _, entry in CharacterCatalog.Characters do
         table.insert(catalog.characters, {
             id = "char:" .. entry.Id,
+            characterId = entry.Id,
             name = entry.Name,
             rarity = entry.Rarity,
             image = entry.image,
+            egg = entry.Egg,
             description = "Each hatch rolls individual Power and earnings.",
-            obtain = "Hatch a " .. entry.Id .. " egg in your incubator.",
+            obtain = ("Hatch a %s Egg (%g%%)"):format(entry.Egg, entry.Chance),
         })
+    end
+    for _, entry in CharacterCatalog.Eggs do
         local model = ServerStorage.AuxEggTemplates:FindFirstChild(entry.Id)
         if model and model:GetAttribute("ReleaseEnabled") ~= false then
             table.insert(catalog.eggs, {
@@ -94,6 +98,7 @@ function GameAdapter.GetPlot(player)
             state = ({ Placed = "placed", Held = "held", Backpack = "stored" })[item.state],
             slot = item.slot, -- slot number while placed (Plot menu grid)
             acquired = item.acquired,
+            characterId = item.characterId,
             image = entry.image,
         })
     end
@@ -136,7 +141,10 @@ function GameAdapter.ImportDiscovered(player, list)
     discoveries[player] = discoveries[player] or {}
     for _, key in list do
         if type(key) == "string" then
-            discoveries[player][key] = true
+            -- discovered before the V2 roster: the old character id becomes its egg's main character
+            local prefix, id = key:match("^(%a+):(.+)$")
+            local newId = (prefix == "char" or prefix == "hatch") and CharacterCatalog.LegacyCharacters[id]
+            discoveries[player][newId and (prefix .. ":" .. newId) or key] = true
         end
     end
 end
@@ -178,7 +186,7 @@ function GameAdapter.ClaimCollection(player, at)
         return false, "Already claimed"
     end
     local found, counted = 0, 0
-    for _, entry in CharacterCatalog.Order do
+    for _, entry in CharacterCatalog.Characters do
         if entry.Rarity ~= "Limited" and counted < collection.Size then
             counted += 1
             if discovered["char:" .. entry.Id] then

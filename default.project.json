@@ -3594,6 +3594,9 @@
           "$path": "src/shared/Hatching/HatchFX/HatchFXClient.luau"
         }
       },
+      "EggDropConfig": {
+        "$path": "src/shared/Config/EggDropConfig.luau"
+      },
       "EggHatchTiming": {
         "$path": "src/shared/Config/EggHatchTiming.luau"
       },

@@ -127,7 +127,7 @@ local function plotSummary(player)
 end
 local function releasableEggs()
     local eggs = {}
-    for _, entry in ipairs(Catalog.Order) do
+    for _, entry in ipairs(Catalog.Eggs) do
         local template = game.ServerStorage.AuxEggTemplates:FindFirstChild(entry.Id)
         if template and template:GetAttribute("ReleaseEnabled") ~= false then
             table.insert(eggs, entry)

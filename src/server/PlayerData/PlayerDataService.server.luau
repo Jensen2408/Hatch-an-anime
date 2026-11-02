@@ -154,6 +154,34 @@ local function serializeTool(tool)
     return nil -- bat and other gear are given by their own scripts
 end
 
+------------------------------------------------------------ migration
+-- Characters saved before the V2 roster carry their egg's id. Each becomes that egg's main character on load and keeps
+-- everything else (ItemId, Power, mutation, slot). Safe on every load: current character ids are never egg ids.
+local function migrateRecord(record)
+    local attributes = record.k == "char" and record.a
+    if not attributes then
+        return
+    end
+    local oldId = Catalog.LegacyCharacters[attributes.CharacterId] and attributes.CharacterId or attributes.BrainrotId
+    local newId = Catalog.LegacyCharacters[oldId]
+    if not newId then
+        return
+    end
+    local entry = Catalog.CharacterById[newId]
+    attributes.CharacterId, attributes.BrainrotId = newId, newId
+    attributes.DesignName, attributes.Order = entry.Name, entry.Order
+    if record.n and not attributes.GoldVariant then
+        record.n = record.n:gsub(oldId, newId, 1)
+    end
+end
+local function migrateCharacters(saved)
+    for _, list in { saved.tools or {}, saved.placed or {} } do
+        for _, record in list do
+            migrateRecord(record)
+        end
+    end
+end
+
 ------------------------------------------------------------ rebuild (saved record -> Tool)
 local function goldenTemplate()
     local futureContent = ServerStorage:FindFirstChild("FutureUpdateContent")
@@ -163,7 +191,7 @@ end
 local function buildCharacterTool(record)
     local attributes = record.a
     local characterId = attributes.CharacterId or attributes.BrainrotId
-    if not characterId or not Catalog.ById[characterId] then
+    if not characterId or not Catalog.CharacterById[characterId] then
         return nil
     end
     local template = (attributes.GoldVariant or attributes.Golden) and goldenTemplate()
@@ -666,6 +694,7 @@ local function onJoin(player)
         return
     end
     if saved then
+        migrateCharacters(saved)
         sessionData[player] = saved
         isLoaded[player] = true
         player:SetAttribute("TutorialCompleted", saved.tutorialCompleted == true)
@@ -746,6 +775,7 @@ if RunService:IsStudio() then
             hasFinalSnapshot[player] = nil
             local saved = sessionData[player]
             saved.savedAt = os.time() - (tonumber(secondsAway) or 0)
+            migrateCharacters(saved)
             for _, container in
                 {
                     player:FindFirstChildOfClass("Backpack"),
