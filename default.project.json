@@ -3389,6 +3389,9 @@
       "CharacterEconomy": {
         "$path": "src/shared/Catalogs/CharacterEconomy.luau"
       },
+      "HudScale": {
+        "$path": "src/shared/UI/HudScale.luau"
+      },
       "EggLabel": {
         "$path": "src/shared/UI/EggLabel.luau"
       },

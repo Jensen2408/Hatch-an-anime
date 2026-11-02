@@ -21,8 +21,8 @@ TopRightConfig.Font = Font.new("rbxasset://fonts/families/PressStart2P.json")
 TopRightConfig.RefBounds = { 78.18, 89.33, 2054.94, 503.19 }
 -- Root pixels per mockup pixel. RootSize = RefBounds size * Unit; the on-screen size comes from the UIScale.
 TopRightConfig.Unit = 0.2
-TopRightConfig.Scale = { Desktop = 0.58, Compact = 0.4 } -- ~238 x 58 px on desktop, ~164 x 40 px on phones
-TopRightConfig.CompactBreakpoint = 600 -- shortest screen side below this = phone layout
+TopRightConfig.Scale = { Desktop = 0.58 } -- ~238 x 58 px, times HudScale
+TopRightConfig.CompactBreakpoint = 600 -- shortest screen side below this keeps out of the notch (safe insets)
 
 TopRightConfig.Boxes = {
     -- the purple counter: colour frame 82..1576 x 129..572 on the mockup. The PNG is wider than the mockup's

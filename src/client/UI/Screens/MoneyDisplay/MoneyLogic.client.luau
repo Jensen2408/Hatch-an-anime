@@ -29,6 +29,7 @@ local popupsScale = Instance.new("UIScale")
 popupsScale.Parent = popupsFrame
 popupsFrame.Parent = screenGui
 
+local HudScale = require(game:GetService("ReplicatedStorage"):WaitForChild("HudScale"))
 local function layoutCash()
     local viewportSize = screenGui.AbsoluteSize
     if viewportSize.X <= 0 or viewportSize.Y <= 0 then
@@ -36,21 +37,17 @@ local function layoutCash()
     end
     local compact = math.min(viewportSize.X, viewportSize.Y) < CashConfig.CompactBreakpoint
     screenGui.ScreenInsets = compact and Enum.ScreenInsets.CoreUISafeInsets or Enum.ScreenInsets.None
-    local scale = compact and CashConfig.Scale.Compact or CashConfig.Scale.Desktop
-    local portrait = compact and viewportSize.X < viewportSize.Y
-    local anchorPoint, position
-    if compact then
-        -- phones: top-right (bottom-left belongs to the thumbstick)
-        anchorPoint = Vector2.new(1, 0)
-        position = UDim2.new(1, portrait and -10 or -184, 0, 0)
-    else
-        -- desktop: bottom-left, 16 px margins. Anchored at its centre so the UIScale shrink can't shift the
-        -- visible (scaled) panel away from the corner.
-        local scaledWidth = CashConfig.RootSize.X * scale
-        local scaledHeight = CashConfig.RootSize.Y * scale
-        anchorPoint = Vector2.new(0.5, 0.5)
-        position = UDim2.new(0, 16 + scaledWidth / 2, 1, -(16 + scaledHeight / 2))
-    end
+    local hud = HudScale.For(viewportSize)
+    local scale = CashConfig.Scale.Desktop * hud
+    -- bottom-left, 16 px margins (scaled). Anchored at its centre so the UIScale shrink can't shift the visible
+    -- (scaled) panel away from the corner.
+    local margin = 16 * hud
+    local scaledWidth = CashConfig.RootSize.X * scale
+    local scaledHeight = CashConfig.RootSize.Y * scale
+    -- portrait: too narrow to share the bottom row with the hotbar, so it sits right above it
+    local lift = viewportSize.X < viewportSize.Y and CashConfig.PortraitLift * hud or 0
+    local anchorPoint = Vector2.new(0.5, 0.5)
+    local position = UDim2.new(0, margin + scaledWidth / 2, 1, -(margin + lift + scaledHeight / 2))
     for _, frame in { root, popupsFrame } do
         frame.AnchorPoint = anchorPoint
         frame.Position = position

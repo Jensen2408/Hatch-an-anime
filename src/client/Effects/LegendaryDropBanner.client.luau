@@ -6,6 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local MenuArt = require(ReplicatedStorage:WaitForChild("MenuArt"):WaitForChild("MenuArt"))
+local HudScale = require(ReplicatedStorage:WaitForChild("HudScale"))
 local UISound = require(ReplicatedStorage:WaitForChild("UISound"))
 
 local SHOW_SECONDS = 4
@@ -40,8 +41,8 @@ local showCount = 0
 workspace:GetAttributeChangedSignal("LastLegendaryAt"):Connect(function()
     showCount += 1
     local thisShow = showCount
-    local camera = workspace.CurrentCamera
-    local fit = camera and math.min(1, camera.ViewportSize.X / (BANNER_SIZE.X + 40)) or 1
+    local fit = HudScale.For(gui.AbsoluteSize)
+    banner.Position = UDim2.new(0.5, 0, 0, 96 * fit)
     bannerScale.Scale = fit * 0.5
     banner.Visible = true
     UISound.Play("Purchase")

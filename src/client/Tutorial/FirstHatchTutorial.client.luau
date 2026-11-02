@@ -22,6 +22,7 @@ local RunService = game:GetService("RunService")
 local _PathfindingService = game:GetService("PathfindingService")
 local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HudScale = require(ReplicatedStorage:WaitForChild("HudScale"))
 local guideModule = ReplicatedStorage:WaitForChild("FirstHatchGuide")
 local Guide = require(guideModule)
 local tourRemote = ReplicatedStorage:WaitForChild("FirstHatchTutorialAction")
@@ -219,10 +220,9 @@ local function fitToScreen()
     end
     local viewportSize = camera.ViewportSize
     local isPhone = viewportSize.Y < 500 or (game:GetService("UserInputService").TouchEnabled and viewportSize.X < 1100)
-    local useCompactScale = isPhone
-    -- Phones get a smaller card that sits just under the top bar instead of over the play area.
-    cardScale.Scale = useCompactScale and 0.5 or 0.8
-    local targetTop = isPhone and 2 or 30
+    local hud = HudScale.For(gui.AbsoluteSize)
+    cardScale.Scale = 0.8 * hud
+    local targetTop = math.round(30 * hud)
     -- Slide below the stolen/returning egg banner while it is showing (title row only on phones).
     local banner = playerGui:FindFirstChild("StolenEggBanner")
     local bannerFrame = banner and banner:IsA("ScreenGui") and banner.Enabled and banner:FindFirstChild("Frame")

@@ -6,9 +6,9 @@ local TimeConfig = {}
 
 -- Root container in pixels before UIScale (the day reference's 1619:344 aspect ratio)
 TimeConfig.RootSize = Vector2.new(480, 102)
-TimeConfig.Scale = { Desktop = 0.75, CompactMax = 0.55, CompactMin = 0.3 }
-TimeConfig.CompactBreakpoint = 600 -- shortest screen side below this = phone layout
-TimeConfig.TopMargin = 10 -- pixels from the top of the screen (desktop) / safe area (phones)
+TimeConfig.Scale = { Desktop = 0.75 } -- UIScale, times HudScale
+TimeConfig.CompactBreakpoint = 600 -- shortest screen side below this keeps out of the notch (safe insets)
+TimeConfig.TopMargin = 10 -- pixels from the top of the screen (phones: of the safe area), times HudScale
 
 -- Press Start 2P ships with Roblox (built-in font family, no upload needed)
 TimeConfig.Font = Font.new("rbxasset://fonts/families/PressStart2P.json")

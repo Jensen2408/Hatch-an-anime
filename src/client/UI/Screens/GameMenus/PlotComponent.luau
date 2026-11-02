@@ -207,7 +207,9 @@ end
 -- buy button of an upgrade row: green PURCHASE art, or the grey button with the reason / MAX
 local function buyButton(parent, r, item, zIndex)
     if item.enabled then
-        slicedPiece(parent, "Purchase", "PurchaseButton", r, Rect.new(12, 8, 100, 34), zIndex)
+        -- the word is part of the art: 9-slice corners ignore UIScale and would crop it on small screens
+        slicedPiece(parent, "Purchase", "PurchaseButton", r, Rect.new(12, 8, 100, 34), zIndex).ScaleType =
+            Enum.ScaleType.Stretch
     else
         slicedPiece(parent, "Disabled", "GreyButton", r, Rect.new(12, 8, 95, 34), zIndex)
         local style, inset = Config.GreyButtonText, Config.GreyButtonText.Inset

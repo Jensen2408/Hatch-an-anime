@@ -357,12 +357,12 @@ local function setFigmaArt(button, art, keepNames)
 end
 
 -- ===== 5. (retired) FEEDBACK button art: the top-right HUD is ReplicatedStorage.TopRightHUD (FeedbackClient) =====
+local HudScale = require(game:GetService("ReplicatedStorage"):WaitForChild("HudScale"))
 -- ===== 6. FIGMA HUD LAYOUT =====
--- money bottom-left (MoneyLogic), time HUD top-centre (GameHUD), left menu (MenuLogic), Backpack left of the hotbar
--- (phones: under the left menu), quest tracker on the right
+-- money bottom-left (MoneyLogic), time HUD top-centre (GameHUD), left menu (MenuLogic), Backpack left of the hotbar,
+-- quest tracker on the right
 -- MoneyLogic owns cash positioning so the skin cannot fight safe-area layout.
--- phones: small Backpack row under the left menu (GameMenus.LeftMenu); desktop: the Backpack button sits next to
--- the hotbar
+-- The Backpack button sits next to the hotbar; everything follows the shared HudScale on smaller screens.
 task.spawn(function()
     local gameMenus = playerGui:WaitForChild("GameMenus")
     local leftMenu = gameMenus:WaitForChild("LeftMenu")
@@ -380,53 +380,39 @@ task.spawn(function()
     rowScale.Name = "ResponsiveScale"
     rowScale.Parent = row
     local gameHud = playerGui:WaitForChild("GameHUD")
-    -- Desktop only: the Backpack button sits in its own slot just left of the hotbar (bottoms lined up with
-    -- the hotbar slots; the hotbar has 8 px bottom padding and grows with the item count). On phones it stays
-    -- in the row under the grid, because the bottom of the screen belongs to the thumbstick / hotbar.
+    -- The Backpack button sits in its own slot just left of the hotbar (bottoms lined up with the hotbar slots;
+    -- the hotbar has 8 px bottom padding and grows with the item count).
     local bagSlot = Instance.new("Frame")
     bagSlot.Name = "HotbarBagSlot"
     bagSlot.BackgroundTransparency = 1
     bagSlot.Size = UDim2.fromOffset(62, 65)
     bagSlot.Parent = gameMenus
+    local bagSlotScale = Instance.new("UIScale") -- shrinks the button and its badge together
+    bagSlotScale.Parent = bagSlot
     local bag -- GameHUD.RightButtons.BagButton once it has been found (below)
     local function placeRow()
-        local compact = math.min(gameMenus.AbsoluteSize.X, gameMenus.AbsoluteSize.Y) < 600
+        local hud = HudScale.For(gameMenus.AbsoluteSize)
         local sidePosition, sideSize = leftMenu.AbsolutePosition, leftMenu.AbsoluteSize
         local hotbar = gameHud:FindFirstChild("Hotbar")
-        local bagNextToHotbar = not compact and hotbar ~= nil
         if bag then
-            local wantedParent = bagNextToHotbar and bagSlot or row
+            local wantedParent = hotbar ~= nil and bagSlot or row
             if bag.Parent ~= wantedParent then
                 bag.Parent = wantedParent
             end
         end
-        if bagNextToHotbar then
+        if hotbar then
             local hotbarPosition, hotbarSize = hotbar.AbsolutePosition, hotbar.AbsoluteSize
+            bagSlotScale.Scale = hud
             bagSlot.Position = UDim2.fromOffset(
-                hotbarPosition.X - gameMenus.AbsolutePosition.X - 62 - 12,
-                hotbarPosition.Y - gameMenus.AbsolutePosition.Y + hotbarSize.Y - 8 - 65
+                hotbarPosition.X - gameMenus.AbsolutePosition.X - (62 + 12) * hud,
+                hotbarPosition.Y - gameMenus.AbsolutePosition.Y + hotbarSize.Y - (8 + 65) * hud
             )
-            if bag then
-                bag.Size = UDim2.fromOffset(62, 65)
-            end
         end
-        -- the row (Backpack on phones) stays under the left menu
+        -- the row holds the Backpack only until the hotbar exists
         row.Position = UDim2.fromOffset(
             sidePosition.X - gameMenus.AbsolutePosition.X,
-            sidePosition.Y - gameMenus.AbsolutePosition.Y + sideSize.Y + (compact and 6 or 10)
+            sidePosition.Y - gameMenus.AbsolutePosition.Y + sideSize.Y + 10 * hud
         )
-        row.Size = compact and UDim2.fromOffset(190, 92) or UDim2.fromOffset(140, 65)
-        rowScale.Scale = compact and sideSize.X / 190 or 1
-        rowLayout.Padding = UDim.new(0, compact and 6 or 10)
-        for _, child in row:GetChildren() do
-            if child:IsA("GuiObject") then
-                child.Size = compact and UDim2.fromOffset(92, 92) or UDim2.fromOffset(62, 65)
-                local phone = child:FindFirstChild("PhoneScale")
-                if phone then
-                    phone.Scale = 1
-                end
-            end
-        end
     end
     row.ChildAdded:Connect(function()
         task.defer(placeRow)
@@ -458,7 +444,7 @@ task.spawn(function()
         end
         bagButton.ZIndex = 20
         bag = bagButton
-        placeRow() -- desktop: move it next to the hotbar
+        placeRow() -- moves it next to the hotbar
     end
 end)
 -- right side: live quest tracker (ReplicatedStorage.QuestsHUD; the Daily button is in the left menu)
@@ -516,18 +502,13 @@ task.spawn(function()
             task.wait(8)
         end
     end)
-    -- desktop: right edge, top where the old panel's top was; phones (landscape only): top-right, smaller.
-    -- Anchored at the top so collapsing never moves the header.
+    -- right edge, top where the old panel's top was. Anchored at the top so collapsing never moves the header.
     local function layoutTracker()
-        local viewport = gui.AbsoluteSize
-        local compact = math.min(viewport.X, viewport.Y) < QuestsConfig.CompactBreakpoint
-        local landscape = viewport.X >= viewport.Y
-        tracker:SetVisible(not compact or (landscape and viewport.X >= 600))
-        local layout = compact and QuestsConfig.Compact or QuestsConfig.Desktop
-        tracker.Scale.Scale = layout.Width / QuestsConfig.Width
+        local hud = HudScale.For(gui.AbsoluteSize)
+        local layout = QuestsConfig.Desktop
+        tracker.Scale.Scale = layout.Width / QuestsConfig.Width * hud
         tracker.Root.AnchorPoint = Vector2.new(1, 0)
-        tracker.Root.Position = compact and UDim2.new(1, -layout.Margin, 0, layout.Top)
-            or UDim2.new(1, -layout.Margin, 0.5, layout.TopFromCentre)
+        tracker.Root.Position = UDim2.new(1, -layout.Margin * hud, 0.5, layout.TopFromCentre * hud)
     end
     gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutTracker)
     layoutTracker()

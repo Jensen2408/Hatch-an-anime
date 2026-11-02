@@ -60,6 +60,7 @@ gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
 local closingPanel -- panel playing its close tween
 -- The left menu (LeftMenuComponent, art buttons) replaces the Studio-built SideButtons, which stay hidden.
 local LeftMenuConfig = require(gui:WaitForChild("LeftMenuConfig"))
+local HudScale = require(game:GetService("ReplicatedStorage"):WaitForChild("HudScale"))
 local StudKit = ReplicatedStorage:WaitForChild("StudKit")
 local StudTheme = require(StudKit:WaitForChild("StudTheme"))
 local StudToast = require(StudKit:WaitForChild("StudToast"))
@@ -110,21 +111,11 @@ local function layoutMenus()
         return
     end
     extendDimPastInsets(screenSize)
-    local compact = math.min(screenSize.X, screenSize.Y) < LeftMenuConfig.CompactBreakpoint
-    -- left menu: desktop = left edge, vertically centred; phones = top-left with smaller buttons
-    if compact then
-        local phone = LeftMenuConfig.Compact
-        leftMenu:SetButtonPx(
-            math.clamp(screenSize.Y * phone.ButtonPxPerScreenHeight, phone.MinButtonPx, phone.MaxButtonPx)
-        )
-        leftMenu.Root.AnchorPoint = Vector2.new(0, 0)
-        leftMenu.Root.Position =
-            UDim2.fromOffset(phone.Margin, screenSize.X < screenSize.Y and phone.TopPortrait or phone.Top)
-    else
-        leftMenu:SetButtonPx(LeftMenuConfig.Desktop.ButtonPx)
-        leftMenu.Root.AnchorPoint = Vector2.new(0, 0.5)
-        leftMenu.Root.Position = UDim2.new(0, LeftMenuConfig.Desktop.Margin, 0.5, 0)
-    end
+    -- left menu: left edge, vertically centred, scaled with the rest of the HUD
+    local hud = HudScale.For(screenSize)
+    leftMenu:SetButtonPx(LeftMenuConfig.Desktop.ButtonPx * hud)
+    leftMenu.Root.AnchorPoint = Vector2.new(0, 0.5)
+    leftMenu.Root.Position = UDim2.new(0, LeftMenuConfig.Desktop.Margin * hud, 0.5, 0)
     for _, name in { "Plot", "Index", "Quests", "VipShop" } do
         fitPanelToScreen(name, screenSize)
     end

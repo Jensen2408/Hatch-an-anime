@@ -49,6 +49,7 @@ local openButton = topRight.FeedbackButton
 -- panel) so the UIScale shrink can't shift the visible panel away from the corner.
 -- Desktop: the gui ignores the top-bar inset like GameHUD's NightBar, so the counter frame's top edge lines up
 -- with the night timer's (TimeConfig.TopMargin from the screen top; the backpack icon pokes out above it).
+local HudScale = require(game:GetService("ReplicatedStorage"):WaitForChild("HudScale"))
 local function layoutTopRight()
     local compact = math.min(gui.AbsoluteSize.X, gui.AbsoluteSize.Y) < TopRightConfig.CompactBreakpoint
     gui.ScreenInsets = compact and Enum.ScreenInsets.CoreUISafeInsets or Enum.ScreenInsets.None
@@ -56,19 +57,14 @@ local function layoutTopRight()
     if view.X <= 0 or view.Y <= 0 then
         return
     end
-    local scale = compact and TopRightConfig.Scale.Compact or TopRightConfig.Scale.Desktop
+    local hud = HudScale.For(view)
+    local scale = TopRightConfig.Scale.Desktop * hud
     local rootSize = topRight.Root.Size
     local width, height = rootSize.X.Offset * scale, rootSize.Y.Offset * scale
-    -- phones: same spots as the old button (top-right; portrait drops below the cash panel)
-    local right, top = 12, 0
-    if compact then
-        right, top = 10, view.X >= view.Y and 8 or 150
-    else
-        local iconOverhang = (TopRightConfig.Boxes.CounterBackground[2] - TopRightConfig.RefBounds[2])
-            * TopRightConfig.Unit
-            * scale
-        top = TimeConfig.TopMargin - iconOverhang
-    end
+    local iconOverhang = (TopRightConfig.Boxes.CounterBackground[2] - TopRightConfig.RefBounds[2])
+        * TopRightConfig.Unit
+        * scale
+    local right, top = 12 * hud, TimeConfig.TopMargin * hud - iconOverhang
     topRight.Scale.Scale = scale
     topRight.Root.AnchorPoint = Vector2.new(0.5, 0.5)
     topRight.Root.Position = UDim2.new(1, -(right + width / 2), 0, top + height / 2)

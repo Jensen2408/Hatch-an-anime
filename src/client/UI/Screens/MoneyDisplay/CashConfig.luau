@@ -16,8 +16,9 @@ CashConfig.Font = Font.new("rbxasset://fonts/families/PressStart2P.json")
 
 -- Root container, in pixels before UIScale; 330x141 has the mockup's 1920:819 aspect ratio
 CashConfig.RootSize = Vector2.new(330, 141)
-CashConfig.Scale = { Desktop = 0.68, Compact = 0.46 } -- UIScale; "compact" = shortest screen side < 600 px
-CashConfig.CompactBreakpoint = 600
+CashConfig.Scale = { Desktop = 0.68 } -- UIScale, times HudScale
+CashConfig.PortraitLift = 120 -- pixels above the bottom margin on portrait screens, times HudScale
+CashConfig.CompactBreakpoint = 600 -- shortest screen side below this keeps out of the notch (safe insets)
 
 -- Fractions of the root (CashUI)
 CashConfig.MainBackground = {

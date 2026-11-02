@@ -32,17 +32,7 @@ LeftMenuConfig.CellSize = Vector2.new(442, 446)
 LeftMenuConfig.CellPadding = Vector2.new(2, 6) -- between columns, between rows
 
 -- On-screen size: the menu is shrunk so one square button is this many screen pixels wide
-LeftMenuConfig.Desktop = { ButtonPx = 98, Margin = 16 } -- left edge, vertically centred
--- phones (shortest screen side < CompactBreakpoint): top-left; button size follows the screen height
-LeftMenuConfig.Compact = {
-    ButtonPxPerScreenHeight = 0.15,
-    MinButtonPx = 44,
-    MaxButtonPx = 52,
-    Margin = 10,
-    Top = 48, -- landscape
-    TopPortrait = 82,
-}
-LeftMenuConfig.CompactBreakpoint = 600
+LeftMenuConfig.Desktop = { ButtonPx = 98, Margin = 16 } -- left edge, vertically centred; times HudScale
 
 -- Light feedback only
 LeftMenuConfig.HoverScale = 1.02

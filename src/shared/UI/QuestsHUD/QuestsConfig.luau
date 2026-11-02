@@ -37,9 +37,7 @@ QuestsConfig.Rows = {
 QuestsConfig.MaxRows = 3 -- the tracker shows the 3 open quests closest to done (as before)
 
 -- On-screen width of the whole HUD (screen pixels), right side of the screen
-QuestsConfig.Desktop = { Width = 246, Margin = 16, TopFromCentre = -121 } -- top edge, from the screen centre
-QuestsConfig.Compact = { Width = 165, Margin = 10, Top = 62 } -- phones: top-right, under the top bar
-QuestsConfig.CompactBreakpoint = 600
+QuestsConfig.Desktop = { Width = 246, Margin = 16, TopFromCentre = -121 } -- top edge from the screen centre; times HudScale
 
 QuestsConfig.Colors = {
     Text = Color3.fromRGB(255, 255, 255),

@@ -489,22 +489,15 @@ hotbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
     trayShadow.Size = barSize
     traySkin.Size = barSize
 end)
--- phones: shrink fixed-pixel HUD pieces (hotbar, night timer) on short screens; desktop stays 1
-local function phoneScale()
-    local camera = workspace.CurrentCamera
-    local viewportSize = camera and camera.ViewportSize or Vector2.new(1280, 720)
-    local shortSide = math.min(viewportSize.X, viewportSize.Y)
-    return shortSide < 600 and math.clamp(shortSide / 720, 0.6, 1) or 1
+local HudScale = require(game:GetService("ReplicatedStorage"):WaitForChild("HudScale"))
+-- fixed-pixel HUD pieces (hotbar, night timer, right buttons) follow the shared HUD scale
+local function hudScaleNow()
+    return HudScale.For(gui.AbsoluteSize)
 end
-local hotbarScale = create("UIScale", { Scale = phoneScale() }, hotbar)
+local hotbarScale = create("UIScale", { Scale = hudScaleNow() }, hotbar)
 local bagOpen = false
 local MAX_SLOTS = 9
 local slots = {}
-local function visibleSlotCount()
-    local screenSize = gui.AbsoluteSize
-    return math.min(screenSize.X, screenSize.Y) < 600 and math.clamp(math.floor((screenSize.X - 240) / 60), 2, 5)
-        or MAX_SLOTS
-end
 local function getBackpack()
     return player:FindFirstChildOfClass("Backpack")
 end
@@ -606,7 +599,7 @@ local function isPinned(tool)
     return tool ~= nil and tool.Name == PINNED_TOOL_NAME and getCategory(tool) == nil
 end
 -- buildGroups() without the benched stacks, the pinned bat first: what the hotbar shows (first
--- visibleSlotCount() of them)
+-- MAX_SLOTS of them)
 local function hotbarGroups()
     local groups = {}
     for _, group in buildGroups() do
@@ -808,7 +801,7 @@ local function renderBar()
         return
     end
     local groups = hotbarGroups()
-    local slotCount = math.min(#groups, visibleSlotCount())
+    local slotCount = math.min(#groups, MAX_SLOTS)
     -- reuse the slots when nothing changed except which one is held
     local signatures = {}
     for i = 1, slotCount do
@@ -852,7 +845,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
     local slotIndex = input.KeyCode.Value - Enum.KeyCode.One.Value + 1
     if slotIndex >= 1 and slotIndex <= MAX_SLOTS then
-        local group = slotIndex <= visibleSlotCount() and hotbarGroups()[slotIndex]
+        local group = slotIndex <= MAX_SLOTS and hotbarGroups()[slotIndex]
         if group then
             toggleEquip(group.tools[1])
         end
@@ -881,7 +874,7 @@ local function slotIndexAt(position)
 end
 -- Free space for one more slot: the strip along the bottom edge (where the hotbar sits), outside the Inventory.
 local function isHotbarAppendZone(position)
-    if #slots >= visibleSlotCount() then
+    if #slots >= MAX_SLOTS then
         return false
     end
     local guiBottom = gui.AbsolutePosition.Y + gui.AbsoluteSize.Y
@@ -1113,21 +1106,15 @@ local bagBadge = create("TextLabel", {
 }, bagButton)
 addCorner(bagBadge, UDim.new(1, 0))
 addStroke(bagBadge, 2)
--- phones: the EGGS button would sit on the jump button at y=250, so shrink it and stack it right under the settings gear
 local rightScale = create("UIScale", {}, rightButtons)
 local function layoutRightButtons()
     local screenSize = gui.AbsoluteSize
     if screenSize.Y <= 0 then
         return
     end
-    local scale = phoneScale()
+    local scale = hudScaleNow()
     rightScale.Scale = scale
-    if scale < 1 then
-        local menuScale = math.min(1, screenSize.X / 600, screenSize.Y / 560)
-        rightButtons.Position = UDim2.new(1, -10, 0, 20 + 104 * menuScale + (56 + 10) * scale)
-    else
-        rightButtons.Position = UDim2.new(1, -8, 0, 250)
-    end
+    rightButtons.Position = UDim2.new(1, -8 * scale, 0, 250 * scale)
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutRightButtons)
 task.defer(layoutRightButtons)
@@ -2364,7 +2351,7 @@ local nightGui = create("ScreenGui", {
 }, playerGui)
 local timeHud = TimeComponent.new(nightGui)
 timeHud.Root.AnchorPoint = Vector2.new(0.5, 0)
-local hudScale = phoneScale()
+local hudScale = hudScaleNow()
 local bigCountdownLabel = create("TextLabel", {
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.fromScale(0.5, 0.32),
@@ -2379,12 +2366,7 @@ local bigCountdownLabel = create("TextLabel", {
 addStroke(bigCountdownLabel, 5).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 local bigCountdownScale = create("UIScale", { Scale = hudScale }, bigCountdownLabel)
 
--- Time HUD: top centre. Phones: as large as fits between the screen centre and the cash panel (top-right);
--- when even the minimum scale would overlap the cash panel, it drops below it instead.
-local function getCashUI()
-    local moneyDisplay = playerGui:FindFirstChild("MoneyDisplay")
-    return moneyDisplay and moneyDisplay:FindFirstChild("CashUI")
-end
+-- Time HUD: top centre, scaled with the rest of the HUD
 local function layoutTimeHud()
     local screenSize = nightGui.AbsoluteSize
     if screenSize.X <= 0 or screenSize.Y <= 0 then
@@ -2392,35 +2374,11 @@ local function layoutTimeHud()
     end
     local compact = math.min(screenSize.X, screenSize.Y) < TimeConfig.CompactBreakpoint
     nightGui.ScreenInsets = compact and Enum.ScreenInsets.CoreUISafeInsets or Enum.ScreenInsets.None
-    local rootWidth = TimeConfig.RootSize.X
-    local scale, top = TimeConfig.Scale.Desktop, TimeConfig.TopMargin
-    if compact then
-        scale = math.min(TimeConfig.Scale.CompactMax, (screenSize.X - 16) / rootWidth)
-        local cashUI = getCashUI()
-        if cashUI and cashUI.Visible then
-            local origin = nightGui.AbsolutePosition
-            local cashLeft = cashUI.AbsolutePosition.X - origin.X
-            local fitScale = 2 * (math.min(screenSize.X / 2, cashLeft - screenSize.X / 2) - 8) / rootWidth
-            if fitScale >= TimeConfig.Scale.CompactMin then
-                scale = math.min(scale, fitScale)
-            else
-                top = cashUI.AbsolutePosition.Y - origin.Y + cashUI.AbsoluteSize.Y + 6
-            end
-        end
-    end
-    timeHud.Scale.Scale = scale
-    timeHud.Root.Position = UDim2.new(0.5, 0, 0, top)
+    local hud = HudScale.For(screenSize)
+    timeHud.Scale.Scale = TimeConfig.Scale.Desktop * hud
+    timeHud.Root.Position = UDim2.new(0.5, 0, 0, TimeConfig.TopMargin * hud)
 end
 nightGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutTimeHud)
-task.spawn(function()
-    local moneyDisplay = playerGui:WaitForChild("MoneyDisplay", 30)
-    local cashUI = moneyDisplay and moneyDisplay:WaitForChild("CashUI", 30)
-    if cashUI then
-        cashUI:GetPropertyChangedSignal("AbsolutePosition"):Connect(layoutTimeHud)
-        cashUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutTimeHud)
-        layoutTimeHud()
-    end
-end)
 layoutTimeHud()
 
 -- the bonuses the night event gives (published by NighttimeService, day or night)
@@ -2436,14 +2394,14 @@ for _, attributeName in { "NightBonusCash", "NightBonusHatchSpeed", "NightBonusR
 end
 updateNightBonuses()
 
--- re-applies the phone scale to the hotbar and the big countdown (tracks the start-up camera's ViewportSize)
+-- re-applies the HUD scale to the hotbar and the big countdown
 local function rescale()
-    hudScale = phoneScale()
+    hudScale = hudScaleNow()
     hotbarScale.Scale = hudScale
     bigCountdownScale.Scale = hudScale
     renderBar()
 end
-workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale)
+gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(rescale)
 local lastCountdownSecond, countdownTween = nil, nil
 local function hideBigCountdown()
     lastCountdownSecond = nil
