@@ -93,6 +93,14 @@ local function spawnEgg(forcedTemplate, mutation)
     local template = forcedTemplate or scheduler:Next(os.clock() - serverStart)
     local egg = template:Clone()
     egg.Name = "RiverEgg_" .. spawnSerial
+    -- Clients move their own copy down the river (PirateEggConveyorMotion): nothing of the egg may fall on its own.
+    for _, part in egg:GetDescendants() do
+        if part:IsA("BasePart") then
+            part.Anchored = true
+            part.CanCollide = false
+            part.CanTouch = false
+        end
+    end
     if mutation then
         egg:SetAttribute("Mutation", mutation)
     end
