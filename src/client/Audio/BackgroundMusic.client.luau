@@ -1,16 +1,70 @@
 --[[ StarterPlayerScripts.BackgroundMusic
-Background music. Plays the workspace.Music.Day playlist normally; while workspace.NighttimeActive is true
-(20 s every 5 min, see NighttimeService) it crossfades to the workspace.Music.Night playlist and back.
+Background music. Plays the workspace.Music.Day playlist normally; crossfades to:
+  * workspace.Music.Arena   while the player is inside the Arena Brawl (Player attribute ArenaIn == true)
+  * workspace.Music.Volcano while the Volcano Eruption event is running (workspace attribute VolcanoStart ~= nil)
+  * workspace.Music.Night   while nighttime is active (workspace attribute NighttimeActive == true)
 Each playlist plays its sounds in Order and loops. A faded-out playlist pauses and resumes where it left off;
-night also moves on to its next track each night so every night track gets heard.
-Volume slider lives in MusicSettings. Client-only: no remotes; reads the replicated workspace attribute
-NighttimeActive.
+event/night playlists also advance to their next track on each re-entry so every track gets heard.
+Volume slider lives in MusicSettings. Client-only: no remotes; reads replicated attributes.
 ]]
+local Players = game:GetService("Players")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
+local player = Players.LocalPlayer
 local FADE_TIME = 2.5
+local EVENT_FADE_IN = 0.8 -- the volcano music comes in almost at once (the day music still fades out over FADE_TIME)
 local musicFolder = workspace:WaitForChild("Music")
+
+-- Licensed APMOfficial tracks for Arena Brawl and Volcano Eruption (created automatically if the folder is missing).
+local DEFAULT_EVENT_TRACKS = {
+    Arena = {
+        { name = "Shogun Warlord", id = "rbxassetid://1836683148", volume = 0.4, order = 1, startOffset = 36 },
+        { name = "Extreme Challenge", id = "rbxassetid://1836691037", volume = 0.4, order = 2, startOffset = 50 },
+        { name = "Battleground", id = "rbxassetid://1840866092", volume = 0.4, order = 3, startOffset = 45 },
+        { name = "Too Fast To Die", id = "rbxassetid://9044962270", volume = 0.4, order = 4, startOffset = 58 },
+    },
+    Volcano = {
+        { name = "Outbreak Plan", id = "rbxassetid://9044961825", volume = 0.8, order = 1 },
+        { name = "Wild Ambush", id = "rbxassetid://9039925079", volume = 0.8, order = 2 },
+    },
+}
+
+local function ensurePlaylistFolder(name)
+    local folder = musicFolder:FindFirstChild(name)
+    local defaults = DEFAULT_EVENT_TRACKS[name]
+    if not folder and not defaults then
+        folder = musicFolder:WaitForChild(name)
+    elseif not folder then
+        folder = Instance.new("Folder")
+        folder.Name = name
+        folder.Parent = musicFolder
+    end
+    if defaults then
+        local hasSound = false
+        for _, child in folder:GetChildren() do
+            if child:IsA("Sound") then
+                hasSound = true
+                break
+            end
+        end
+        if not hasSound then
+            for _, spec in defaults do
+                local sound = Instance.new("Sound")
+                sound.Name = spec.name
+                sound.SoundId = spec.id
+                sound.Volume = spec.volume
+                sound.Looped = false
+                sound:SetAttribute("Order", spec.order)
+                if spec.startOffset then
+                    sound:SetAttribute("StartOffset", spec.startOffset)
+                end
+                sound.Parent = folder
+            end
+        end
+    end
+    return folder
+end
 
 -- Resume a paused track where it stopped, otherwise start it from TimePosition.
 local function startTrack(sound)
@@ -26,7 +80,7 @@ end
 
 -- fades run on a SoundGroup per playlist so they don't fight MusicSettings, which scales Sound.Volume
 local function makePlaylist(name, rotate)
-    local folder = musicFolder:WaitForChild(name)
+    local folder = ensurePlaylistFolder(name)
     local group = Instance.new("SoundGroup")
     group.Name = "MusicFade" .. name
     group.Volume = 0
@@ -51,7 +105,12 @@ local function makePlaylist(name, rotate)
             end
             playlist.index = playlist.index % #playlist.tracks + 1
             if playlist.active then
-                startTrack(playlist.tracks[playlist.index])
+                local nextSound = playlist.tracks[playlist.index]
+                local nextOffset = nextSound:GetAttribute("StartOffset") or 0
+                if nextOffset > 0 then
+                    nextSound.TimePosition = nextOffset
+                end
+                startTrack(nextSound)
             end
         end)
     end
@@ -65,7 +124,7 @@ local function fadePlaylist(playlist, fadeIn)
     end
     local tween = TweenService:Create(
         playlist.group,
-        TweenInfo.new(FADE_TIME, Enum.EasingStyle.Sine),
+        TweenInfo.new((fadeIn and playlist.fastIn) and EVENT_FADE_IN or FADE_TIME, Enum.EasingStyle.Sine),
         { Volume = fadeIn and 1 or 0 }
     )
     tween.Completed:Connect(function(state)
@@ -82,7 +141,7 @@ local function fadePlaylist(playlist, fadeIn)
     tween:Play()
 end
 
--- Night (rotate = true) moves on to the next track on every re-entry; day resumes the paused track.
+-- Night / event playlists (rotate = true) move on to the next track on every re-entry; day resumes the paused track.
 local function enterPlaylist(playlist)
     if #playlist.tracks == 0 then
         return
@@ -95,7 +154,12 @@ local function enterPlaylist(playlist)
         playlist.index = playlist.index % #playlist.tracks + 1
     end
     playlist.entered, playlist.active = true, true
-    startTrack(playlist.tracks[playlist.index])
+    local sound = playlist.tracks[playlist.index]
+    if playlist.fastIn then
+        local offset = sound:GetAttribute("StartOffset") or 0
+        sound.TimePosition = offset
+    end
+    startTrack(sound)
     fadePlaylist(playlist, true)
 end
 
@@ -104,10 +168,37 @@ local function leavePlaylist(playlist)
     fadePlaylist(playlist, false)
 end
 
-local dayPlaylist, nightPlaylist = makePlaylist("Day", false), makePlaylist("Night", true)
+local dayPlaylist = makePlaylist("Day", false)
+local nightPlaylist = makePlaylist("Night", true)
+local arenaPlaylist = makePlaylist("Arena", true)
+local volcanoPlaylist = makePlaylist("Volcano", true)
+arenaPlaylist.fastIn = true
+volcanoPlaylist.fastIn = true
+
+-- Preload event tracks now so they are ready the moment the player enters
+task.spawn(function()
+    pcall(function()
+        local ContentProvider = game:GetService("ContentProvider")
+        ContentProvider:PreloadAsync(volcanoPlaylist.tracks)
+        ContentProvider:PreloadAsync(arenaPlaylist.tracks)
+    end)
+end)
+
+local function shouldPlayArena()
+    -- Only plays when the player is inside the Arena Brawl
+    return player:GetAttribute("ArenaIn") == true
+end
+
 local currentPlaylist
 local function updatePlaylist()
-    local target = if workspace:GetAttribute("NighttimeActive") == true then nightPlaylist else dayPlaylist
+    local target = dayPlaylist
+    if shouldPlayArena() and #arenaPlaylist.tracks > 0 then
+        target = arenaPlaylist
+    elseif workspace:GetAttribute("VolcanoStart") ~= nil and #volcanoPlaylist.tracks > 0 then
+        target = volcanoPlaylist
+    elseif workspace:GetAttribute("NighttimeActive") == true then
+        target = nightPlaylist
+    end
     if target == currentPlaylist then
         return
     end
@@ -117,5 +208,9 @@ local function updatePlaylist()
     currentPlaylist = target
     enterPlaylist(target)
 end
+
+player:GetAttributeChangedSignal("ArenaIn"):Connect(updatePlaylist)
+workspace:GetAttributeChangedSignal("VolcanoStart"):Connect(updatePlaylist)
 workspace:GetAttributeChangedSignal("NighttimeActive"):Connect(updatePlaylist)
+
 updatePlaylist()

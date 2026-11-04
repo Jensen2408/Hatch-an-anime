@@ -6,8 +6,22 @@
 -- (the canvas is 1092 x 679); ShopMenuComponent shrinks the canvas to the panel with one UIScale.
 local ShopMenuConfig = {}
 
-ShopMenuConfig.Background = "rbxassetid://128787042530520" -- shop_background.png (1024 x 637, the canvas at 0.938)
-ShopMenuConfig.Featured = "rbxassetid://91365008569326" -- shop_featured.png (the FEATURED page, full size)
+-- 2026-11-02: the Halloween decorations were painted out of both images (pumpkin, haunted houses and the "HALLOWEEN
+-- SHOP" title in the header; the moon / torii scene, LIMITED badge and timer box in FEATURED's left card). The
+-- Halloween originals: background rbxassetid://128787042530520, featured rbxassetid://91365008569326.
+ShopMenuConfig.Background = "rbxassetid://90160610789679" -- shop_background_plain.png (1024 x 637, canvas at 0.938)
+ShopMenuConfig.Featured = "rbxassetid://140290764066456" -- shop_featured_plain.png (the FEATURED page, full size)
+
+-- the header's crest + title, drawn over the plain orange band
+ShopMenuConfig.Header = {
+    Icon = "IconCrown", -- atlas piece (169 x 142), drawn in IconRect
+    IconRect = { 348, 40, 78, 66 },
+    Title = "SHOP",
+    TitleRect = { 440, 30, 300, 88 },
+    TitleSize = 84,
+    Stroke = 6,
+    TitleShade = Color3.fromRGB(196, 222, 255), -- the title fades white -> this, top to bottom
+}
 ShopMenuConfig.Pieces = "rbxassetid://100625909530365" -- shop_pieces.png (full size)
 
 ShopMenuConfig.Font = Font.new("rbxasset://fonts/families/FredokaOne.json")
@@ -20,32 +34,43 @@ ShopMenuConfig.Green = Color3.fromRGB(96, 236, 96)
 ShopMenuConfig.Close = { 968, 36, 78, 76 } -- the X in the header (the panel's own Close button is laid over it)
 
 -- Rect = { x, y, w, h }, mockup pixels. Text sizes: FredokaOne caps are 0.607 x TextSize.
+-- The background has the mockup's five tabs painted in; Cover hides them and the six tabs below are laid out
+-- side by side across Row (equal widths), each tab's icon + label centred and shrunk to fit.
 ShopMenuConfig.Tabs = {
-    Keys = { "FEATURED", "BOOSTS", "PASSES", "CASH", "DAILY" },
+    Keys = { "WEAPONS", "FEATURED", "BOOSTS", "PASSES", "CASH", "DAILY" },
     Slice = 12,
     LabelColor = Color3.fromRGB(255, 255, 255),
-    FEATURED = {
-        Rect = { 42, 125, 208, 57 },
-        Icon = { "TabIconFeatured", 63, 130 },
-        Label = { "TabLabelFeatured", 107, 138 },
+    Cover = { Rect = { 36, 119, 1020, 69 }, Color = Color3.fromRGB(44, 28, 128) }, -- the painted tab row's panel colour
+    Row = { X = 42, Y = 125, W = 1008, H = 57, Gap = 6, Padding = 10, IconGap = 6 },
+    -- WEAPONS has no atlas art: its icon is the bat model (ShopModels.Weapons) and its label is text
+    WEAPONS = {
+        IconModel = "WoodenBat",
+        IconSize = 50,
+        IconDistance = 1.25, -- camera distance in bat lengths (bigger bat)
+        IconTilt = -45,
+        Text = "Weapons",
+        TextSize = 30,
+        TextWidth = 112,
     },
-    BOOSTS = {
-        Rect = { 257, 125, 187, 57 },
-        Icon = { "TabIconBoosts", 283, 130 },
-        Label = { "TabLabelBoosts", 335, 138 },
-    },
-    PASSES = {
-        Rect = { 450, 125, 193, 57 },
-        Icon = { "TabIconPasses", 468, 136 },
-        Label = { "TabLabelPasses", 528, 138 },
-    },
-    CASH = { Rect = { 647, 125, 198, 57 }, Icon = { "TabIconCash", 675, 131 }, Label = { "TabLabelCash", 743, 138 } },
-    DAILY = { Rect = { 852, 125, 198, 57 }, Icon = { "TabIconDaily", 885, 128 }, Label = { "TabLabelDaily", 948, 138 } },
+    FEATURED = { Icon = "TabIconFeatured", Label = "TabLabelFeatured" },
+    BOOSTS = { Icon = "TabIconBoosts", Label = "TabLabelBoosts" },
+    PASSES = { Icon = "TabIconPasses", Label = "TabLabelPasses" },
+    CASH = { Icon = "TabIconCash", Label = "TabLabelCash" },
+    DAILY = { Icon = "TabIconDaily", Label = "TabLabelDaily" },
     Alert = { Size = 26, Inset = 8, Color = Color3.fromRGB(232, 40, 52) }, -- red "!" on DAILY while a reward is ready
 }
 
 -- FEATURED: the page image + the texts the game writes over it, and the buttons' hit-boxes
 ShopMenuConfig.Page = {
+    -- a running limited deal: badge + timer box (atlas pieces) where the original art painted them
+    Deal = { Badge = { 61, 208 }, TimerPill = { 366, 205, 181, 38 }, Clock = { 374, 209 } },
+    -- no deal running: the card features the bat tiers
+    FeaturedWeapon = {
+        Model = { 120, 212, 355, 245 },
+        Distance = 1.7,
+        Tilt = -40,
+        Badge = { Rect = { 62, 206, 96, 36 }, Color = Color3.fromRGB(214, 52, 45), Text = "NEW", Size = 26 },
+    },
     Timer = { Rect = { 404, 211, 138, 27 }, Size = 28 },
     Egg = { 160, 200, 275, 280 }, -- the spinning egg model, standing on the pedestal
     Title = { Rect = { 60, 460, 475, 60 }, Size = 66 },
@@ -170,6 +195,26 @@ ShopMenuConfig.Cash = {
     ButtonSize = 36,
 }
 
+-- WEAPONS: one card per ShopConfig.Weapons entry in a row across the page (built from atlas pieces, no page image;
+-- brown lacquer cards for the shrine look)
+ShopMenuConfig.Weapons = {
+    Area = { 45, 196, 1005, 440 }, -- the cards fill this, side by side
+    Gap = 12,
+    Card = "CardBrown",
+    CardSlice = 22,
+    Badge = { Rect = { 10, 10, 104, 30 }, Color = Color3.fromRGB(214, 52, 45), Text = "SPECIAL", Size = 20 },
+    EquippedStroke = { Color = Color3.fromRGB(255, 226, 80), Thickness = 5 },
+    Model = { 14, 14, -28, 210 }, -- inside a card: x, y, width (negative = card width minus), height
+    Name = { 8, 228, -16, 40 },
+    NameSize = 32,
+    Stats = { 8, 268, -16, 88 },
+    StatsSize = 20, -- four lines: knockback, reach, swing, boss damage
+    Button = { 14, 362, -28, 54 },
+    ButtonSlice = 14,
+    ButtonSize = 32,
+    EquipColor = Color3.fromRGB(70, 150, 255), -- tint on the green button for EQUIP
+}
+
 ShopMenuConfig.Daily = {
     Intro = { 60, 188, 970, 34 },
     IntroSize = 30,
@@ -198,3 +243,4 @@ ShopMenuConfig.Daily = {
 }
 
 return ShopMenuConfig
+

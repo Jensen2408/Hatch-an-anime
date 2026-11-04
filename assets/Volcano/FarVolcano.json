@@ -1,0 +1,24 @@
+{
+ "name": "FarVolcano",
+ "parts": 9,
+ "tris": 26894,
+ "size": [
+  870,
+  680,
+  890
+ ],
+ "top_y": 680,
+ "centre_x": 5.0,
+ "centre_z": 5.0,
+ "crater_radius": 110.0,
+ "lake_depth": 70.0,
+ "block": 10.0,
+ "lake_floor": 560.0,
+ "notch_lip": 595.0,
+ "notch_half": 26.0,
+ "notch_angle": 0.0,
+ "px": [
+  28,
+  56
+ ]
+}

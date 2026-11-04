@@ -5,6 +5,7 @@
 -- in an EggWake folder, shown only while the egg sits on the water surface between START_X and END_X.
 local RunService = game:GetService("RunService")
 local RiverPath = require(game.ReplicatedStorage:WaitForChild("WaterfallRiver"):WaitForChild("RiverPath"))
+local RiverWaves = require(game.ReplicatedStorage.WaterfallRiver:WaitForChild("RiverWaves"))
 local riverRoot = workspace:WaitForChild("WaterfallRiver")
 local eggFolder = workspace:WaitForChild("LocalRiverEggs", 15) or workspace:WaitForChild("WaterfallEggs")
 local wakeRecords = {}
@@ -65,12 +66,14 @@ RunService.RenderStepped:Connect(function(dt)
     if not camera then
         return
     end
+    -- The water rises at high tide; eggs ride the wave field (RollingMotion) with their bottom 0.3 under it.
+    local tideLevel = RiverWaves.State(workspace:GetServerTimeNow()).level
     for egg, wake in wakeRecords do
         if egg.Parent then
             local boxCFrame, size = egg:GetPivot() * wake.offset, wake.size
             local pos = boxCFrame.Position
             local bottom = pos.Y - size.Y / 2
-            local visible = math.abs(bottom - SURFACE_Y) < 1.6
+            local visible = math.abs(bottom - SURFACE_Y - tideLevel) < 1.6 + RiverWaves.SurgeHeight
                 and pos.X > START_X
                 and pos.X < END_X
                 and (camera.CFrame.Position - pos).Magnitude < 180
@@ -89,7 +92,7 @@ RunService.RenderStepped:Connect(function(dt)
                 local radius = 2.65
                 segment.CFrame = CFrame.new(
                     pos.X + math.cos(angle) * radius - 0.15,
-                    SURFACE_Y + 0.06,
+                    bottom + 0.3 + 0.1,
                     pos.Z + math.sin(angle) * radius * 0.78
                 ) * CFrame.Angles(0, -angle + math.pi / 2, 0)
                 segment.Transparency = visible and (0.45 + 0.25 * math.abs(i - 11.5) / 11.5) or 1

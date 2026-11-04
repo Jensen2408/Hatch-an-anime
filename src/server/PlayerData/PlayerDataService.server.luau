@@ -418,6 +418,13 @@ local function snapshot(player, isFinal)
     if cash then
         saved.cash = math.max(0, math.floor(cash.Value + standCash))
     end
+    -- bats: ShopService keeps them in the Player attributes OwnedWeapons (comma list) / EquippedWeapon; saved together
+    -- with cash so a purchase can never be saved without its price (or the other way round)
+    local ownedWeapons = player:GetAttribute("OwnedWeapons")
+    if type(ownedWeapons) == "string" then
+        saved.weapons = ownedWeapons ~= "" and string.split(ownedWeapons, ",") or nil
+    end
+    saved.weapon = player:GetAttribute("EquippedWeapon") or saved.weapon
     if not restoreFlags.all then -- items / plot not fully restored yet: only cash + flags are safe to update
         if isFinal then
             hasFinalSnapshot[player] = true
@@ -714,6 +721,10 @@ local function onJoin(player)
         if GameAdapter and GameAdapter.ImportDiscovered and saved.discovered then
             pcall(GameAdapter.ImportDiscovered, player, saved.discovered)
         end
+        player:SetAttribute("OwnedWeapons", table.concat(type(saved.weapons) == "table" and saved.weapons or {}, ","))
+        if type(saved.weapon) == "string" then
+            player:SetAttribute("EquippedWeapon", saved.weapon)
+        end
         player:SetAttribute("DataLoaded", true)
         player:SetAttribute("TempleSaveStatus", "Saved")
         task.spawn(function()
@@ -735,6 +746,7 @@ local function onJoin(player)
             end
         end)
     elseif failReason == "studio" or failReason == "nostore" then
+        player:SetAttribute("OwnedWeapons", "")
         player:SetAttribute("DataLoaded", true)
         player:SetAttribute("TempleSaveStatus", "Session only (Studio)")
         player:SetAttribute("TutorialCompleted", false)

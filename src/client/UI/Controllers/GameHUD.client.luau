@@ -596,7 +596,9 @@ end
 -- It has no Inventory category, so leaving the bar would hide it completely.
 local PINNED_TOOL_NAME = "WoodenBat"
 local function isPinned(tool)
-    return tool ~= nil and tool.Name == PINNED_TOOL_NAME and getCategory(tool) == nil
+    return tool ~= nil
+        and (tool:GetAttribute("BatWeapon") == true or tool.Name == PINNED_TOOL_NAME)
+        and getCategory(tool) == nil
 end
 -- buildGroups() without the benched stacks, the pinned bat first: what the hotbar shows (first
 -- MAX_SLOTS of them)

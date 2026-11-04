@@ -7,6 +7,7 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local riverAssets = ReplicatedStorage:WaitForChild("WaterfallRiver")
 local RiverPath = require(riverAssets:WaitForChild("RiverPath"))
+local RiverWaves = require(riverAssets:WaitForChild("RiverWaves"))
 local riverRoot = workspace:WaitForChild("WaterfallRiver")
 
 local streaks, ripples = {}, {}
@@ -73,6 +74,8 @@ RunService.RenderStepped:Connect(function(dt)
                 RiverPath.Dash(now * streak.speed + streak.phase, streak.len, streak.alpha, streak.count)
         end
     end
+    -- The waterfall-foot ripples ride the water as it rises at high tide.
+    local tideLevel = RiverWaves.State(workspace:GetServerTimeNow()).level
     for _, ripple in ripples do
         local beam = ripple.beam
         if beam.Parent and beam.Attachment0 and beam.Attachment1 then
@@ -80,7 +83,7 @@ RunService.RenderStepped:Connect(function(dt)
             local distance = RiverPath.LandDistance + 1 + progress * 22
             local position, tangent, right = RiverPath.At(distance)
             local halfWidth = math.min(2 + progress * 5.5, RiverPath.WidthAt(distance) / 2 - 1)
-            local center = Vector3.new(position.X, RiverPath.SurfaceY + 0.1, position.Z)
+            local center = Vector3.new(position.X, RiverPath.SurfaceY + tideLevel + 0.22, position.Z)
             -- selene flags Vector3.yAxis:Cross (below) as incorrect_standard_library_use: false positive (Vector3 method).
             local direction0, direction1 = (right + tangent * 0.9).Unit, (right - tangent * 0.9).Unit
             beam.Attachment0.WorldCFrame =

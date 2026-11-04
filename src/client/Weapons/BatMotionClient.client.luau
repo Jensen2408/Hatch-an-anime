@@ -1,7 +1,9 @@
 -- StarterPlayerScripts.BatMotionClient (client)
--- Plays the uploaded bat swing through the character Animator when the equipped WoodenBat is activated.
+-- Plays the uploaded bat swing through the character Animator when the equipped bat (WoodenBat or any shop bat,
+-- Tool attribute BatWeapon) is activated.
 -- Visual only: hits, knockback and the authoritative cooldown live in the bat's own server Script (BatServer).
--- SWING_COOLDOWN mirrors BatServer's SWING_COOLDOWN so the animation doesn't play for swings the server ignores.
+-- SWING_COOLDOWN mirrors BatServer's SWING_COOLDOWN so the animation doesn't play for swings the server ignores; a bat
+-- tier's Tool attribute SwingCooldown replaces it, and the swing animation plays faster by the same ratio.
 local Players = game:GetService("Players")
 local localPlayer = Players.LocalPlayer
 local SWING_COOLDOWN = 1.1
@@ -14,12 +16,13 @@ animation.Parent = script
 local hookedTools = setmetatable({}, { __mode = "k" })
 
 local function hookTool(tool, character)
-    if not tool:IsA("Tool") or tool.Name ~= "WoodenBat" or hookedTools[tool] then
+    if not tool:IsA("Tool") or (tool.Name ~= "WoodenBat" and not tool:GetAttribute("BatWeapon")) or hookedTools[tool] then
         return
     end
     hookedTools[tool] = true
     local track
     local lastSwing = -math.huge
+    local cooldown = tool:GetAttribute("SwingCooldown") or SWING_COOLDOWN
 
     local function stopSwing()
         if track then
@@ -38,8 +41,10 @@ local function hookTool(tool, character)
         if not animator or humanoid.Health <= 0 then
             return
         end
+        local swingMult = (localPlayer:GetAttribute("ArenaIn") and math.max(0.5, tonumber(localPlayer:GetAttribute("ArenaSwingSpeedMult")) or 1)) or 1
+        local effectiveCooldown = cooldown / swingMult
         local now = os.clock()
-        if now - lastSwing < SWING_COOLDOWN then
+        if now - lastSwing < effectiveCooldown then
             return
         end
         lastSwing = now
@@ -59,7 +64,7 @@ local function hookTool(tool, character)
         if track.IsPlaying then
             return
         end
-        track:Play(0.05)
+        track:Play(0.05, 1, math.max(1, SWING_COOLDOWN / effectiveCooldown))
     end)
     tool.Unequipped:Connect(stopSwing)
     tool.AncestryChanged:Connect(function()

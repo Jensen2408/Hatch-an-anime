@@ -22,13 +22,15 @@ local tool = script.Parent
 local handle = tool:WaitForChild("Handle")
 
 -- ===== SETTINGS =====
-local SWING_COOLDOWN = 1.1 -- seconds between swings
+local SWING_COOLDOWN = tool:GetAttribute("SwingCooldown") or 1.1 -- seconds between swings (shop tier: SwingCooldown)
 local HIT_WINDOW = 0.50 -- seconds the bat can hit after click
-local KNOCKBACK_FORCE = 50 -- horizontal fling strength (multiplied by AssemblyMass)
+-- bat tiers (ShopConfig.Weapons, stamped by WeaponGiver) override SWING_COOLDOWN / KNOCKBACK_FORCE / HIT_RANGE with
+-- the Tool attributes SwingCooldown / Knockback / HitRange
+local KNOCKBACK_FORCE = tool:GetAttribute("Knockback") or 50 -- horizontal fling strength (multiplied by AssemblyMass)
 local UPWARD_FORCE = 20 -- upward lift (multiplied by AssemblyMass)
 local RAGDOLL_TIME = 3 -- seconds the target stays down
 local DAMAGE = 0 -- knockback only; raise above 0 to deal damage
-local HIT_RANGE = 6.5 -- forward reach in studs
+local HIT_RANGE = tool:GetAttribute("HitRange") or 6.5 -- forward reach in studs
 local HIT_ARC_COS = 0.25 -- ~150-degree forward sweep arc (dot product threshold)
 -- ====================
 
@@ -86,7 +88,7 @@ local function playHitFX(_hitPosition)
     end
 end
 
-local function knockDown(targetCharacter, targetHumanoid, targetRoot, attackerRoot)
+local function knockDown(targetCharacter, targetHumanoid, targetRoot, attackerRoot, attackerPlayer)
     -- 1) Fall over immediately
     targetHumanoid.PlatformStand = true
 
@@ -96,13 +98,33 @@ local function knockDown(targetCharacter, targetHumanoid, targetRoot, attackerRo
         targetRoot:SetNetworkOwner(nil)
     end)
 
-    -- 3) Heavy knockback: away from attacker, slightly upward, scaled by mass
+    -- 3) Heavy knockback: away from attacker, slightly upward, scaled by mass + Arena Podium buffs
     local offset = targetRoot.Position - attackerRoot.Position
     local flat = Vector3.new(offset.X, 0, offset.Z)
     local direction = flat.Magnitude > 0.01 and flat.Unit or attackerRoot.CFrame.LookVector
 
+    local kbMult = (
+        attackerPlayer
+        and attackerPlayer:GetAttribute("ArenaIn")
+        and tonumber(attackerPlayer:GetAttribute("ArenaKnockbackMult"))
+    ) or 1
+    local kbResist = (
+        targetPlayer
+        and targetPlayer:GetAttribute("ArenaIn")
+        and math.clamp(tonumber(targetPlayer:GetAttribute("ArenaKnockbackResist")) or 0, 0, 0.55)
+    ) or 0
+    local recoveryMult = (
+        targetPlayer
+        and targetPlayer:GetAttribute("ArenaIn")
+        and math.max(1, tonumber(targetPlayer:GetAttribute("ArenaRecoveryMult")) or 1)
+    ) or 1
+
+    local effectiveKnockback = KNOCKBACK_FORCE * kbMult * (1 - kbResist)
+    local effectiveUpward = UPWARD_FORCE * (1 + (kbMult - 1) * 0.45) * (1 - kbResist * 0.5)
+    local effectiveRagdoll = RAGDOLL_TIME / recoveryMult
+
     local mass = targetRoot.AssemblyMass
-    local impulse = (direction * KNOCKBACK_FORCE + Vector3.new(0, UPWARD_FORCE, 0)) * mass
+    local impulse = (direction * effectiveKnockback + Vector3.new(0, effectiveUpward, 0)) * mass
     targetRoot:ApplyImpulse(impulse)
 
     -- Chaotic spin
@@ -114,7 +136,7 @@ local function knockDown(targetCharacter, targetHumanoid, targetRoot, attackerRo
     local token = {}
     ragdollTokens[targetCharacter] = token
 
-    task.delay(RAGDOLL_TIME, function()
+    task.delay(effectiveRagdoll, function()
         if ragdollTokens[targetCharacter] ~= token then
             return
         end
@@ -146,6 +168,11 @@ local function tryHit(targetCharacter, attackerCharacter, attackerRoot)
     if not targetHumanoid or not targetRoot or targetHumanoid.Health <= 0 then
         return
     end
+    -- Arena Brawl fighters waiting for the fight to start cannot be hit
+    local protectedPlayer = Players:GetPlayerFromCharacter(targetCharacter)
+    if protectedPlayer and protectedPlayer:GetAttribute("ArenaSafe") then
+        return
+    end
 
     hitThisSwing[targetCharacter] = true
     tool:SetAttribute("LastHitTime", workspace:GetServerTimeNow())
@@ -155,6 +182,12 @@ local function tryHit(targetCharacter, attackerCharacter, attackerRoot)
     -- Bat hit makes a player carrying an egg home drop it; anyone can then pick it up and run it home.
     -- Once the egg is secured (carry finished) it belongs to the player and is never knocked out again.
     local victim = Players:GetPlayerFromCharacter(targetCharacter)
+    -- who hit this player last (the Arena Brawl credits knockouts from it)
+    local attackerPlayer = Players:GetPlayerFromCharacter(attackerCharacter)
+    if victim and attackerPlayer then
+        victim:SetAttribute("LastBatHitBy", attackerPlayer.UserId)
+        victim:SetAttribute("LastBatHitAt", workspace:GetServerTimeNow())
+    end
     if victim and victim:GetAttribute("RiverEggCarryId") then
         local ok, dropped = pcall(function()
             return require(game:GetService("ServerScriptService").RiverEggCarryService).Drop(victim)
@@ -170,7 +203,7 @@ local function tryHit(targetCharacter, attackerCharacter, attackerRoot)
     if DAMAGE > 0 then
         targetHumanoid:TakeDamage(DAMAGE)
     end
-    knockDown(targetCharacter, targetHumanoid, targetRoot, attackerRoot)
+    knockDown(targetCharacter, targetHumanoid, targetRoot, attackerRoot, attackerPlayer)
 end
 
 tool.Activated:Connect(function()
@@ -181,6 +214,12 @@ tool.Activated:Connect(function()
     if not attackerCharacter then
         return
     end
+    local attackerPlayer = Players:GetPlayerFromCharacter(attackerCharacter)
+    local inArena = attackerPlayer and attackerPlayer:GetAttribute("ArenaIn") == true
+    local swingMult = inArena and math.max(0.5, tonumber(attackerPlayer:GetAttribute("ArenaSwingSpeedMult")) or 1) or 1
+    local reachBonus = inArena and (tonumber(attackerPlayer:GetAttribute("ArenaReachBonus")) or 0) or 0
+    local effectiveHitRange = HIT_RANGE + reachBonus
+    local effectiveCooldown = SWING_COOLDOWN / swingMult
 
     canSwing = false
     swinging = true
@@ -195,11 +234,32 @@ tool.Activated:Connect(function()
     overlapParams.FilterType = Enum.RaycastFilterType.Exclude
     overlapParams.FilterDescendantsInstances = { attackerCharacter }
 
+    local bossHitThisSwing = false
+    local swingTick = tool:GetAttribute("SwingTick")
     local connection
     connection = RunService.Heartbeat:Connect(function()
         if not swinging then
             connection:Disconnect()
             return
+        end
+
+        if tool.Parent ~= attackerCharacter or not attackerRoot.Parent then
+            connection:Disconnect()
+            return
+        end
+        -- The boss is rendered locally, so its server service tests the swing against shared bounds.
+        if not bossHitThisSwing and workspace:GetServerTimeNow() - swingTick >= 0.12 then
+            local service = game:GetService("ServerScriptService"):FindFirstChild("BossEventService")
+            local hit = service and service:FindFirstChild("BatHit")
+            local attacker = Players:GetPlayerFromCharacter(attackerCharacter)
+            if hit and attacker then
+                local ok, accepted = pcall(hit.Invoke, hit, attacker, tool, swingTick)
+                if ok and accepted then
+                    bossHitThisSwing = true
+                    tool:SetAttribute("LastHitTime", workspace:GetServerTimeNow())
+                    playHitFX(handle.Position)
+                end
+            end
         end
 
         -- Check 1: direct handle intersection
@@ -212,8 +272,8 @@ tool.Activated:Connect(function()
 
         -- Check 2: forward swing cone sweep
         local look = attackerRoot.CFrame.LookVector
-        local forwardCenter = attackerRoot.Position + look * (HIT_RANGE * 0.5)
-        local boxSize = Vector3.new(HIT_RANGE * 1.1, 4.5, HIT_RANGE)
+        local forwardCenter = attackerRoot.Position + look * (effectiveHitRange * 0.5)
+        local boxSize = Vector3.new(effectiveHitRange * 1.1, 4.5, effectiveHitRange)
         local forwardBox = CFrame.new(forwardCenter, forwardCenter + look)
 
         for _, part in ipairs(workspace:GetPartBoundsInBox(forwardBox, boxSize, overlapParams)) do
@@ -223,7 +283,7 @@ tool.Activated:Connect(function()
                 if targetRoot then
                     local toTarget = targetRoot.Position - attackerRoot.Position
                     local distance = toTarget.Magnitude
-                    if distance <= HIT_RANGE then
+                    if distance <= effectiveHitRange then
                         local flatDir = Vector3.new(toTarget.X, 0, toTarget.Z).Unit
                         local dot = flatDir:Dot(Vector3.new(look.X, 0, look.Z).Unit)
                         if dot >= HIT_ARC_COS then
@@ -239,7 +299,7 @@ tool.Activated:Connect(function()
         swinging = false
     end)
 
-    task.delay(SWING_COOLDOWN, function()
+    task.delay(effectiveCooldown, function()
         canSwing = true
     end)
 end)

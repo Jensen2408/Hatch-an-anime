@@ -132,18 +132,15 @@ local function swapTrees(on)
     end
 end
 -- Folders whose CONTENTS are swapped (e.g. egg designs): {container getter, storage name}
+-- Characters are no longer swapped (v2 roster, Nov 1: there are no Halloween versions of the v2 characters).
+-- The Halloween egg designs live in SeasonStorage.Halloween.AuxEggTemplates; a reference set of every
+-- Halloween egg + mutation is kept in ServerStorage.EventEggs.Halloween.
 local SWAP_FOLDERS = {
     {
         function()
             return ServerStorage.AuxEggTemplates
         end,
         "AuxEggTemplates",
-    },
-    {
-        function()
-            return ServerStorage.BrainrotModels
-        end,
-        "BrainrotModels",
     },
 }
 local function swapFolders(on)

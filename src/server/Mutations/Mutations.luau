@@ -11,8 +11,8 @@ Mutation model:
 
 Assets:
   * Models: ServerStorage.UpdatePack_Mutations[_<Theme>].Characters_<tier> (pack model names come from
-    ServerStorage.BrainrotModels.<id>:GetAttribute("DesignName")). Gold has no model in the pack:
-    the base model is tinted gold instead.
+    ServerStorage.BrainrotModels.<id>:GetAttribute("DesignName")). A character with no pack model (Gold,
+    and every tier of the v2 roster) is the base model tinted with Mutations.Tint[tier] instead.
   * Auras:  ServerStorage.MutationAuras.<tier>
 
 Public fields (consumed by PlayerDataService, HatchGoo, InventoryService, EggCharacterRewards, ...):
@@ -23,6 +23,13 @@ local ServerStorage = game:GetService("ServerStorage")
 local Mutations = {}
 Mutations.Order = { "Silver", "Gold", "Diamond", "Rainbow" } -- common -> rarest
 Mutations.Odds = { Silver = 100, Gold = 500, Diamond = 2000, Rainbow = 5000 } -- 1 in N
+-- Texture tint for characters without a pack model (SurfaceAppearance.Color multiplies the colour map)
+Mutations.Tint = {
+    Silver = Color3.fromRGB(205, 215, 235),
+    Gold = Color3.fromRGB(255, 196, 60),
+    Diamond = Color3.fromRGB(140, 225, 255),
+    Rainbow = Color3.fromRGB(255, 150, 230),
+}
 
 local rng = Random.new()
 
@@ -79,21 +86,22 @@ function Mutations.Model(id, tier, base)
         for attributeName, value in (base and base:GetAttributes() or {}) do
             clone:SetAttribute(attributeName, value)
         end
-    elseif tier == "Gold" and base then
+    elseif Mutations.Tint[tier] and base then
+        -- no pack model (every v2 character): tint the base model's textures in the mutation colour
         clone = base:Clone()
-        local gold = Color3.fromRGB(255, 196, 60)
+        local tint = Mutations.Tint[tier]
         for _, descendant in clone:GetDescendants() do
             if descendant:IsA("SurfaceAppearance") then
                 -- SurfaceAppearance.Color may not be writable on every engine version
                 pcall(function()
-                    descendant.Color = gold
+                    descendant.Color = tint
                 end)
             elseif descendant:IsA("BasePart") then
-                descendant.Color = descendant.Color:Lerp(gold, 0.7)
-                if descendant.Material ~= Enum.Material.Neon then
+                descendant.Color = descendant.Color:Lerp(tint, 0.7)
+                if tier == "Gold" and descendant.Material ~= Enum.Material.Neon then
                     descendant.Material = Enum.Material.Metal
+                    descendant.Reflectance = 0.15
                 end
-                descendant.Reflectance = 0.15
             end
         end
     end

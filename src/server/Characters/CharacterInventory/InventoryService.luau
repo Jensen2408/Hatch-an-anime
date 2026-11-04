@@ -967,6 +967,67 @@ function Service.Init()
     end)
 end
 
+-- Boss escape penalty. Server-only API, deliberately absent from the remote Actions table.
+-- Choose a player uniformly first, then one of that player's occupied podiums.
+function Service.TakeRandomPlacedCharacter(random)
+    random = random or Random.new()
+    local eligible = {}
+    for _, player in Players:GetPlayers() do
+        if player:GetAttribute("TutorialDataReady") == true and not busyPlayers[player] then
+            local items, plot = collect(player)
+            local candidates = {}
+            if plot and plot:FindFirstChild("Slots") then
+                for _, item in items do
+                    local slot = item.slotName and plot.Slots:FindFirstChild(item.slotName)
+                    if item.state == "Placed" and slot and slot:GetAttribute("Occupied") == true then
+                        table.insert(candidates, { item = item, slot = slot })
+                    end
+                end
+            end
+            if #candidates > 0 then
+                table.insert(eligible, { player = player, plot = plot, candidates = candidates })
+            end
+        end
+    end
+    if #eligible == 0 then
+        return nil
+    end
+    local victim = eligible[random:NextInteger(1, #eligible)]
+    local selected = victim.candidates[random:NextInteger(1, #victim.candidates)]
+    local item, slot = selected.item, selected.slot
+    -- No yields between selection and removal; inventory actions cannot interleave.
+    local result = {
+        userId = victim.player.UserId, playerName = victim.player.DisplayName,
+        characterName = item.data.name, characterId = item.data.characterId,
+        itemId = item.data.id, slotName = slot.Name,
+    }
+    item.ref:Destroy()
+    slot:SetAttribute("Occupied", false)
+    slot:SetAttribute("PlacementToken", nil)
+    local stand = slot:FindFirstChild("MoneyStand")
+    if stand then
+        stand:SetAttribute("IncomePerSecond", 0)
+    end
+    -- Keep the purchased slot and already-earned cash, exactly as pickup/sell do.
+    SlotUnlocks.Refresh(victim.plot)
+    markDirty(victim.player)
+    task.spawn(function()
+        local snapshotHook = ServerStorage:FindFirstChild("PlayerDataSnapshot")
+        if snapshotHook then
+            local ok, err = pcall(snapshotHook.Invoke, snapshotHook, victim.player)
+            if not ok then warn("[BossEvent] character removal snapshot: " .. tostring(err)) end
+        end
+        local saveHook = ServerStorage:FindFirstChild("PlayerDataSaveNow")
+        if saveHook then
+            local ok, saved = pcall(saveHook.Invoke, saveHook, victim.player)
+            if not ok or saved ~= true then
+                warn("[BossEvent] character removal awaits normal save retry: " .. tostring(saved))
+            end
+        end
+    end)
+    return result
+end
+
 -- Server-side helpers for other systems
 Service.MenuRequest = onRequest -- internal server adapter; existing validation/rate limits
 Service.Snapshot = snapshot

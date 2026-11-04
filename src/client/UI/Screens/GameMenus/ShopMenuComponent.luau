@@ -1,12 +1,15 @@
 -- GameMenus.ShopMenuComponent  (ModuleScript, client)
 -- Draws the Shop menu from the "Halloween Shop" mockup art (ShopMenuConfig / ShopAtlas): the background (panel,
 -- header, tab row) and one page image per tab (FEATURED: the mockup's own; the others GPT Image art in its
--- style) with the live texts, level pips and hit-boxes on top. Display only: MenuLogic (RENDER.VipShop) reads ShopRemote "State", formats prices
+-- style) with the live texts, level pips and hit-boxes on top. WEAPONS (the first tab) has no page image: its
+-- cards are built from atlas pieces with the bat models spinning in ViewportFrames. Display only: MenuLogic (RENDER.VipShop) reads ShopRemote "State", formats prices
 -- and passes the purchases as callbacks. Live countdowns tick here while the view exists.
 --
 --   ShopCanvas (1092x679 mockup pixels, UIScale = panel width / 1092)
---   ├── Background
---   ├── Tab_FEATURED .. Tab_DAILY     tab art + icon + label + hit-box (+ "!" alert on DAILY)
+--   ├── Background                    panel + plain orange header band (Halloween decorations painted out)
+--   ├── HeaderIcon / HeaderTitle      crown + "SHOP"
+--   ├── TabCover                      hides the five tabs painted in the background
+--   ├── Tab_WEAPONS .. Tab_DAILY      tab art + icon + label + hit-box (+ "!" alert on DAILY)
 --   └── Page                          the tab's page image (FEATURED: the mockup's) + the live texts
 --
 --   local view = ShopMenuComponent.new(panel, layer, model)
@@ -14,6 +17,9 @@
 --
 -- model = {
 --   tab, onTab(tab),
+--   weaponModels = Folder of voxel display Models named by weapon key (ShopModels.Weapons, built by WeaponGiver)?,
+--   weapons = { { key, name, stats, price, owned, equipped, special, onBuy, onEquip } },   -- WEAPONS tab
+--   featuredWeapon = { key, title, text, button, onOpen }?,   -- FEATURED's left card when no limited deal runs
 --   limited = { name, text, eggModel?, endsAt (os.clock), price, onBuy }?,
 --   vip = { text, perks, price, owned, onBuy },
 --   boosts = { { title, shortText, text, price, activeEnds? (os.clock), duration, onBuy } x2 },
@@ -194,15 +200,156 @@ function ShopMenuComponent:_egg(eggModel, r)
     end)
 end
 
--- ===== FEATURED: the mockup's page, live texts on top =====
+-- a weapon's display Model (pivot = the bat's centre, length along Y), tilted (spinning when spinSpeed is given), in a
+-- ViewportFrame filling r (nil when the model isn't there). distance = camera distance in bat lengths (smaller =
+-- bigger in the frame).
+function ShopMenuComponent:_weaponModel(parent, key, r, zIndex, spinSpeed, distance, tiltDegrees)
+    local template = self.model.weaponModels and self.model.weaponModels:FindFirstChild(key)
+    if not template then
+        return nil
+    end
+    local viewport = new("ViewportFrame", "Model", parent, zIndex)
+    rect(viewport, r)
+    viewport.Ambient = Color3.fromRGB(200, 190, 230)
+    viewport.LightColor = Color3.new(1, 1, 1)
+    viewport.LightDirection = Vector3.new(-0.4, -0.6, -1)
+    local model = template:Clone()
+    model:PivotTo(CFrame.new())
+    model.Parent = viewport
+    local camera = Instance.new("Camera")
+    camera.FieldOfView = 30
+    camera.CFrame = CFrame.lookAt(Vector3.new(0, 0, -model:GetExtentsSize().Magnitude * (distance or 2)), Vector3.zero)
+    camera.Parent = viewport
+    viewport.CurrentCamera = camera
+    local tilt = CFrame.Angles(0, 0, math.rad(tiltDegrees or -35))
+    model:PivotTo(tilt)
+    if spinSpeed and spinSpeed > 0 then
+        local spinStart = os.clock()
+        local spin
+        spin = RunService.RenderStepped:Connect(function()
+            if not (self.alive and viewport.Parent) then
+                spin:Disconnect()
+                return
+            end
+            if not self.panel.Visible then
+                return
+            end
+            model:PivotTo(tilt * CFrame.Angles(0, (os.clock() - spinStart) * spinSpeed, 0))
+        end)
+    end
+    return viewport
+end
+
+-- ===== WEAPONS: one card per bat (model, name, stats, BUY / EQUIP / EQUIPPED) =====
+function ShopMenuComponent:_weaponsPage()
+    local style, page = Config.Weapons, self.page
+    local weapons = self.model.weapons or {}
+    local area = style.Area
+    local count = math.max(#weapons, 1)
+    local cardWidth = (area[3] - style.Gap * (count - 1)) / count
+    local function inCard(r)
+        return { r[1], r[2], r[3] < 0 and cardWidth + r[3] or r[3], r[4] }
+    end
+    for i, weapon in weapons do
+        local card = new("Frame", "Weapon_" .. weapon.key, page, Z + 1)
+        rect(card, { area[1] + (i - 1) * (cardWidth + style.Gap), area[2], cardWidth, area[4] })
+        sliced(card, "Art", style.Card, { 0, 0, cardWidth, area[4] }, style.CardSlice, Z + 1)
+        if weapon.equipped then
+            local frame = new("Frame", "Equipped", card, Z + 2)
+            frame.Size = UDim2.fromScale(1, 1)
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 14)
+            corner.Parent = frame
+            local stroke = Instance.new("UIStroke")
+            stroke.Color = style.EquippedStroke.Color
+            stroke.Thickness = style.EquippedStroke.Thickness
+            stroke.Parent = frame
+        end
+        self:_weaponModel(card, weapon.key, inCard(style.Model), Z + 2, 0.9)
+        if weapon.special then
+            local badge = new("Frame", "Badge", card, Z + 3)
+            badge.BackgroundTransparency = 0
+            badge.BackgroundColor3 = style.Badge.Color
+            rect(badge, inCard(style.Badge.Rect))
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 8)
+            corner.Parent = badge
+            local stroke = Instance.new("UIStroke")
+            stroke.Color = Config.Stroke
+            stroke.Thickness = 2
+            stroke.Parent = badge
+            local b = style.Badge.Rect
+            label(badge, "Text", style.Badge.Text, { 4, 2, b[3] - 8, b[4] - 4 }, style.Badge.Size, Config.White, Z + 4, {
+                stroke = 2,
+            })
+        end
+        label(card, "Name", weapon.name, inCard(style.Name), style.NameSize, Config.White, Z + 3, { stroke = 4 })
+        label(card, "Stats", weapon.stats, inCard(style.Stats), style.StatsSize, Config.Gold, Z + 3, {
+            wrap = true,
+            stroke = 2,
+        })
+        local buttonRect = inCard(style.Button)
+        local buttonArt = sliced(card, "ButtonArt", "ButtonGreen", buttonRect, style.ButtonSlice, Z + 2)
+        if weapon.equipped then
+            button(card, "Equipped", buttonRect, "EQUIPPED", style.ButtonSize, false, nil, Z + 3)
+        elseif weapon.owned then
+            buttonArt.ImageColor3 = style.EquipColor
+            button(card, "Equip", buttonRect, "EQUIP", style.ButtonSize, true, weapon.onEquip, Z + 3)
+        else
+            button(card, "Buy", buttonRect, weapon.price, style.ButtonSize, true, weapon.onBuy, Z + 3)
+        end
+    end
+end
+
+-- FEATURED's left card when no limited deal runs: the top bat spinning, "NEW" badge, title, pill, SHOP WEAPONS button
+function ShopMenuComponent:_featuredWeapon(featured)
+    local style, spec = Config.Page, Config.Page.FeaturedWeapon
+    self:_weaponModel(self.page, featured.key, spec.Model, Z + 2, 0.9, spec.Distance, spec.Tilt)
+    local badge = new("Frame", "NewBadge", self.page, Z + 3)
+    badge.BackgroundTransparency = 0
+    badge.BackgroundColor3 = spec.Badge.Color
+    rect(badge, spec.Badge.Rect)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = badge
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Config.Stroke
+    stroke.Thickness = 3
+    stroke.Parent = badge
+    local b = spec.Badge.Rect
+    label(badge, "Text", spec.Badge.Text, { 6, 3, b[3] - 12, b[4] - 6 }, spec.Badge.Size, Config.White, Z + 4, {
+        stroke = 2,
+    })
+    label(self.page, "Title", featured.title, style.Title.Rect, style.Title.Size, Config.White, Z + 3, { stroke = 4 })
+    sliced(self.page, "SubtitlePill", "PillDark", style.Subtitle.Pill, Config.PillSlice, Z + 2)
+    label(self.page, "Subtitle", featured.text, style.Subtitle.Rect, style.Subtitle.Size, Config.Muted, Z + 3, {
+        stroke = 2,
+    })
+    label(self.page, "BuyText", featured.button, style.Buy.Text, style.Buy.Size, Config.White, Z + 3, { stroke = 4 })
+    hitBox(self.page, "Buy", style.Buy.Hit, featured.onOpen, Z + 4)
+end
+
+-- ===== FEATURED: the page image, live texts on top =====
 function ShopMenuComponent:_featured()
     local model, style = self.model, Config.Page
     local image = new("ImageLabel", "FeaturedArt", self.page, Z + 1)
     image.Image = Config.Featured
     rect(image, Atlas.Content)
 
+    -- a limited deal only while it runs (the art no longer paints its LIMITED badge and timer box: drawn here);
+    -- otherwise the card features the bat tiers and opens the WEAPONS tab
     local limited = model.limited
+    if limited and limited.endsAt <= os.clock() then
+        limited = nil
+    end
+    if not limited and model.featuredWeapon then
+        self:_featuredWeapon(model.featuredWeapon)
+    end
     if limited then
+        local deal = Config.Page.Deal
+        piece(self.page, "LimitedBadge", "BadgeLimited", Vector2.new(deal.Badge[1], deal.Badge[2]), Z + 2)
+        sliced(self.page, "TimerPill", "PillTimer", deal.TimerPill, Config.PillSlice, Z + 2)
+        piece(self.page, "TimerClock", "IconClock", Vector2.new(deal.Clock[1], deal.Clock[2]), Z + 3)
         if limited.eggModel then
             self:_egg(limited.eggModel, style.Egg)
         end
@@ -469,6 +616,7 @@ function ShopMenuComponent:_dailyPage()
 end
 
 local PAGES = {
+    WEAPONS = ShopMenuComponent._weaponsPage,
     FEATURED = ShopMenuComponent._featured,
     BOOSTS = ShopMenuComponent._boostsPage,
     PASSES = ShopMenuComponent._passesPage,
@@ -477,14 +625,51 @@ local PAGES = {
 }
 
 function ShopMenuComponent:_buildTabs()
-    local tabs = Config.Tabs
-    for _, key in tabs.Keys do
+    local tabs, row = Config.Tabs, Config.Tabs.Row
+    local cover = new("Frame", "TabCover", self.canvas, Z + 1)
+    cover.BackgroundTransparency = 0
+    cover.BackgroundColor3 = tabs.Cover.Color
+    rect(cover, tabs.Cover.Rect)
+    local width = (row.W - row.Gap * (#tabs.Keys - 1)) / #tabs.Keys
+    for i, key in tabs.Keys do
         local spec = tabs[key]
-        local r = spec.Rect
+        local r = { row.X + (i - 1) * (width + row.Gap), row.Y, width, row.H }
         local selected = self.model.tab == key
         sliced(self.canvas, "TabArt_" .. key, selected and "TabOn" or "TabOff", r, tabs.Slice, Z + 1)
-        piece(self.canvas, "TabIcon_" .. key, spec.Icon[1], Vector2.new(spec.Icon[2], spec.Icon[3]), Z + 2)
-        piece(self.canvas, "TabLabel_" .. key, spec.Label[1], Vector2.new(spec.Label[2], spec.Label[3]), Z + 2)
+        -- icon + label side by side, centred in the tab, shrunk to fit
+        local iconSize = spec.IconModel and Vector2.new(spec.IconSize, spec.IconSize)
+            or Vector2.new(Atlas.Pieces[spec.Icon][3], Atlas.Pieces[spec.Icon][4])
+        local labelSize = spec.Text and Vector2.new(spec.TextWidth, spec.TextSize + 2)
+            or Vector2.new(Atlas.Pieces[spec.Label][3], Atlas.Pieces[spec.Label][4])
+        local contentWidth = iconSize.X + row.IconGap + labelSize.X
+        local scale = math.min(1, (width - row.Padding * 2) / contentWidth)
+        local x = r[1] + (width - contentWidth * scale) / 2
+        local centreY = r[2] + row.H / 2
+        local iconRect = {
+            x,
+            centreY - iconSize.Y * scale / 2,
+            iconSize.X * scale,
+            iconSize.Y * scale,
+        }
+        local labelRect = {
+            x + (iconSize.X + row.IconGap) * scale,
+            centreY - labelSize.Y * scale / 2,
+            labelSize.X * scale,
+            labelSize.Y * scale,
+        }
+        if spec.IconModel then
+            self:_weaponModel(self.canvas, spec.IconModel, iconRect, Z + 2, nil, spec.IconDistance, spec.IconTilt)
+        else
+            rect(piece(self.canvas, "TabIcon_" .. key, spec.Icon, Vector2.zero, Z + 2), iconRect)
+        end
+        if spec.Text then
+            label(self.canvas, "TabLabel_" .. key, spec.Text, labelRect, spec.TextSize * scale, tabs.LabelColor, Z + 2, {
+                stroke = 3,
+                alignX = Enum.TextXAlignment.Left,
+            })
+        else
+            rect(piece(self.canvas, "TabLabel_" .. key, spec.Label, Vector2.zero, Z + 2), labelRect)
+        end
         hitBox(self.canvas, "Tab_" .. key, r, function()
             self.model.onTab(key)
         end, Z + 4)
@@ -553,6 +738,17 @@ function ShopMenuComponent.new(panel, layer, model)
     local background = new("ImageLabel", "Background", canvas, Z)
     background.Image = Config.Background
     background.Size = UDim2.fromScale(1, 1)
+    -- header: the art's band is plain; the crest + title are drawn here
+    local header = Config.Header
+    rect(piece(canvas, "HeaderIcon", header.Icon, Vector2.zero, Z + 1), header.IconRect)
+    local title = label(canvas, "HeaderTitle", header.Title, header.TitleRect, header.TitleSize, Config.White, Z + 1, {
+        stroke = header.Stroke,
+        alignX = Enum.TextXAlignment.Left,
+    })
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new(Config.White, header.TitleShade)
+    gradient.Rotation = 90
+    gradient.Parent = title
     self:_buildTabs()
     local page = new("Frame", "Page", canvas, Z)
     page.Size = UDim2.fromScale(1, 1)
@@ -570,3 +766,4 @@ function ShopMenuComponent:Destroy()
 end
 
 return ShopMenuComponent
+

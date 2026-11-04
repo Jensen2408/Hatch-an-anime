@@ -14,6 +14,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local riverFolder = ReplicatedStorage:WaitForChild("WaterfallRiver")
 local Config = require(riverFolder:WaitForChild("RiverConfig"))
 local Path = require(riverFolder:WaitForChild("RiverPath"))
+local Waves = require(riverFolder:WaitForChild("RiverWaves"))
 return function(conveyor, egg)
     local labelAnchor = egg:WaitForChild("LabelAnchor")
     local collectAnchor = egg:WaitForChild("CollectAnchor")
@@ -63,10 +64,19 @@ return function(conveyor, egg)
     local function riverPoint(distance, elapsed)
         local pos, _, right = Path.At(distance)
         local sway = math.sin(elapsed * 0.5 + seed * 10) * 0.7 * math.min(1, elapsed / 3)
-        return pos + right * (lateral + sway)
+        return pos + right * (lateral + sway), lateral + sway
+    end
+    -- Water height (studs above still water) under the egg and the downstream slope there, from the shared wave
+    -- field: eggs bob on the ripples, rise with the high tide and pitch over the surge waves.
+    local function waterAt(state, distance, offset)
+        local height = Waves.SurfaceAt(state, distance, offset) - Path.SurfaceY
+        local slope = (Waves.SurfaceAt(state, distance + 1.2, offset) - Waves.SurfaceAt(state, distance - 1.2, offset))
+            / 2.4
+        return height, slope
     end
     local function pose(elapsed)
         local t = math.clamp(elapsed, 0, duration)
+        local state = Waves.State((egg:GetAttribute("Epoch") or 0) + elapsed)
         local pos, rot, phase
         if t < fallDuration then
             local fallProgress = t / fallDuration
@@ -81,32 +91,39 @@ return function(conveyor, egg)
                 local posX = riverOrigin.X + 1 + (landPoint.X - (riverOrigin.X + 1)) * (1 - (1 - k) ^ 2)
                 pos = Vector3.new(
                     posX,
-                    topY + (floatY - topY) * k * k,
+                    topY + (floatY + state.level - topY) * k * k,
                     (riverOrigin.Z + lateral) + (landPoint.Z - (riverOrigin.Z + lateral)) * k
                 )
                 rot = CFrame.Angles(0.15 * math.sin(math.pi * k), 0, -0.2 * math.sin(math.pi * k))
             end
             phase = "fall"
-        elseif t < fallDuration + travelDuration then
+        else
             local waterTime = t - fallDuration
-            local distance = landDistance + speed * waterTime
+            -- The current carries the egg: FlowTime stretches the clock while the high tide speeds the river up,
+            -- so a tide egg reaches the end early and stays sunk until its (unchanged) despawn time.
+            local epoch = egg:GetAttribute("Epoch") or 0
+            local distance = landDistance + speed * Waves.FlowTime(epoch + fallDuration, epoch + t)
+            if distance >= endDistance then
+                local exitProgress = math.clamp((distance - endDistance) / (speed * exitDuration), 0, 1)
+                local point = riverPoint(endDistance + speed * exitDuration * exitProgress, waterTime)
+                pos = Vector3.new(point.X, floatY + state.level - 6 * exitProgress * exitProgress, point.Z)
+                return CFrame.new(pos), "exit", 0, duration
+            end
             local settleProgress = math.clamp(waterTime / settleDuration, 0, 1)
             local dip = -0.85 * math.sin(math.pi * settleProgress) ^ 2
             local bob = 0.1 * math.sin(waterTime * 2.2 + seed * 20) * settleProgress
-            local point = riverPoint(distance, waterTime)
-            pos = Vector3.new(point.X, floatY + dip + bob, point.Z)
+            local point, offset = riverPoint(distance, waterTime)
+            local water, slope = waterAt(state, distance, offset)
+            -- Blend from the tide level at landing into the full wave field as the egg settles.
+            water = state.level + (water - state.level) * settleProgress
+            pos = Vector3.new(point.X, floatY + water + dip + bob, point.Z)
+            -- The river runs along +X, so pitching over a wave is a rotation about Z.
             rot = CFrame.Angles(
                 0.05 * math.sin(waterTime * 1.7 + seed * 9) * settleProgress,
                 0,
-                0.05 * math.sin(waterTime * 1.3 + seed * 4) * settleProgress
+                (0.05 * math.sin(waterTime * 1.3 + seed * 4) + math.atan(slope) * 0.8) * settleProgress
             )
             phase = waterTime < settleDuration and "land" or "travel"
-        else
-            local exitProgress = (t - fallDuration - travelDuration) / exitDuration
-            local point = riverPoint(endDistance + speed * exitDuration * exitProgress, travelDuration)
-            pos = Vector3.new(point.X, floatY - 6 * exitProgress * exitProgress, point.Z)
-            rot = CFrame.identity
-            phase = "exit"
         end
         -- third return value ("cycle") is always 0 on the river; kept for API compatibility
         return CFrame.new(pos) * rot, phase, 0, duration
@@ -141,7 +158,11 @@ return function(conveyor, egg)
             if river then
                 local Debris = game:GetService("Debris")
                 local TweenService = game:GetService("TweenService")
-                local origin = Vector3.new(eggCFrame.Position.X, Path.SurfaceY + 0.07, eggCFrame.Position.Z)
+                local origin = Vector3.new(
+                    eggCFrame.Position.X,
+                    Path.SurfaceY + Waves.State(workspace:GetServerTimeNow()).level + 0.12,
+                    eggCFrame.Position.Z
+                )
                 local rippleFolder = Instance.new("Folder")
                 rippleFolder.Name = "LandingRipples"
                 rippleFolder.Parent = river

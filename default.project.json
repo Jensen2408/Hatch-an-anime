@@ -49,6 +49,12 @@
         "WaterFX": {
           "$path": "src/client/World/WaterFX.client.luau"
         },
+        "RiverWater": {
+          "$path": "src/client/World/RiverWater.client.luau"
+        },
+        "WaterfallCurtain": {
+          "$path": "src/client/World/WaterfallCurtain.client.luau"
+        },
         "WaterfallFallMotion": {
           "$path": "src/client/World/WaterfallFallMotion.client.luau"
         },
@@ -57,6 +63,9 @@
         },
         "GoldTempleEffects": {
           "$path": "src/client/Temple/GoldTempleEffects.client.luau"
+        },
+        "TempleLOD": {
+          "$path": "src/client/Temple/TempleLOD.client.luau"
         },
         "GoldenLuffyIdle": {
           "$path": "src/client/Characters/GoldenLuffyIdle.client.luau"
@@ -187,8 +196,26 @@
         "AdminAbuseRain": {
           "$path": "src/client/Effects/AdminAbuseRain.client.luau"
         },
-        "LegendaryDropBanner": {
-          "$path": "src/client/Effects/LegendaryDropBanner.client.luau"
+        "MutationDropAnnounce": {
+          "$path": "src/client/Effects/MutationDropAnnounce.client.luau"
+        },
+        "BossEventClient": {
+          "$path": "src/client/World/BossEventClient.client.luau"
+        },
+        "ArenaLava": {
+          "$path": "src/client/World/ArenaLava.client.luau"
+        },
+        "VolcanoEventClient": {
+          "$path": "src/client/World/VolcanoEventClient.client.luau"
+        },
+        "VolcanoLavaPatch": {
+          "$path": "src/client/World/VolcanoLavaPatch.luau"
+        },
+        "VolcanoCinematic": {
+          "$path": "src/client/World/VolcanoCinematic.luau"
+        },
+        "ArenaEventClient": {
+          "$path": "src/client/World/ArenaEventClient.client.luau"
         },
         "AuraFlipbookPump": {
           "$path": "src/client/Effects/AuraFlipbookPump.client.luau"
@@ -207,6 +234,15 @@
         },
         "PixelIconSharpener": {
           "$path": "src/client/UI/Controllers/PixelIconSharpener.client.luau"
+        },
+        "AnimeIdle": {
+          "$path": "src/client/Characters/AnimeIdle.client.luau"
+        },
+        "LegendaryDropBanner": {
+          "$path": "src/client/Effects/LegendaryDropBanner.client.luau"
+        },
+        "V2MoveClient": {
+          "$path": "src/client/Characters/V2MoveClient.client.luau"
         }
       }
     },
@@ -225,29 +261,29 @@
         "LeftMenuComponent": {
           "$path": "src/client/UI/Screens/GameMenus/LeftMenuComponent.luau"
         },
-        "IndexConfig": {
-          "$path": "src/client/UI/Screens/GameMenus/IndexConfig.luau"
-        },
-        "IndexComponent": {
-          "$path": "src/client/UI/Screens/GameMenus/IndexComponent.luau"
-        },
-        "QuestMenuConfig": {
-          "$path": "src/client/UI/Screens/GameMenus/QuestMenuConfig.luau"
-        },
-        "QuestMenuComponent": {
-          "$path": "src/client/UI/Screens/GameMenus/QuestMenuComponent.luau"
+        "PlotConfig": {
+          "$path": "src/client/UI/Screens/GameMenus/PlotConfig.luau"
         },
         "ShopMenuConfig": {
           "$path": "src/client/UI/Screens/GameMenus/ShopMenuConfig.luau"
         },
+        "PlotComponent": {
+          "$path": "src/client/UI/Screens/GameMenus/PlotComponent.luau"
+        },
+        "QuestMenuConfig": {
+          "$path": "src/client/UI/Screens/GameMenus/QuestMenuConfig.luau"
+        },
         "ShopMenuComponent": {
           "$path": "src/client/UI/Screens/GameMenus/ShopMenuComponent.luau"
         },
-        "PlotConfig": {
-          "$path": "src/client/UI/Screens/GameMenus/PlotConfig.luau"
+        "IndexComponent": {
+          "$path": "src/client/UI/Screens/GameMenus/IndexComponent.luau"
         },
-        "PlotComponent": {
-          "$path": "src/client/UI/Screens/GameMenus/PlotComponent.luau"
+        "IndexConfig": {
+          "$path": "src/client/UI/Screens/GameMenus/IndexConfig.luau"
+        },
+        "QuestMenuComponent": {
+          "$path": "src/client/UI/Screens/GameMenus/QuestMenuComponent.luau"
         },
         "PlotAtlas": {
           "$path": "src/client/UI/Screens/GameMenus/PlotAtlas.luau"
@@ -3364,6 +3400,30 @@
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",
       "$ignoreUnknownInstances": true,
+      "ArenaEvent": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "ArenaConfig": {
+          "$path": "src/shared/World/ArenaEvent/ArenaConfig.luau"
+        }
+      },
+      "VolcanoEvent": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "VolcanoConfig": {
+          "$path": "src/shared/World/VolcanoEvent/VolcanoConfig.luau"
+        }
+      },
+      "BossEvent": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "BossConfig": {
+          "$path": "src/shared/World/BossEvent/BossConfig.luau"
+        },
+        "VoxelBossBuilder": {
+          "$path": "src/shared/World/BossEvent/VoxelBossBuilder.luau"
+        }
+      },
       "EggCatalog": {
         "$path": "src/shared/Catalogs/EggCatalog.luau"
       },
@@ -3378,6 +3438,15 @@
         },
         "RiverPath": {
           "$path": "src/shared/World/WaterfallRiver/RiverPath.luau"
+        },
+        "RiverWaves": {
+          "$path": "src/shared/World/WaterfallRiver/RiverWaves.luau"
+        },
+        "WaterTemplates": {
+          "$path": "src/shared/World/WaterfallRiver/WaterTemplates.model.json"
+        },
+        "WaterQuality": {
+          "$path": "src/shared/World/WaterfallRiver/WaterQuality.luau"
         }
       },
       "TempleAppearanceThemes": {
@@ -3400,6 +3469,9 @@
       },
       "HudScale": {
         "$path": "src/shared/UI/HudScale.luau"
+      },
+      "EggDropConfig": {
+        "$path": "src/shared/Config/EggDropConfig.luau"
       },
       "EggLabel": {
         "$path": "src/shared/UI/EggLabel.luau"
@@ -3466,52 +3538,6 @@
         },
         "LeaderboardView": {
           "$path": "src/shared/UI/Leaderboard/LeaderboardView.luau"
-        }
-      },
-      "StudKit": {
-        "$className": "Folder",
-        "$ignoreUnknownInstances": true,
-        "StudTheme": {
-          "$path": "src/shared/UI/StudKit/StudTheme.luau"
-        },
-        "StudUI": {
-          "$path": "src/shared/UI/StudKit/StudUI.luau"
-        },
-        "StudToast": {
-          "$path": "src/shared/UI/StudKit/StudToast.luau"
-        }
-      },
-      "FeedbackMenu": {
-        "$className": "Folder",
-        "$ignoreUnknownInstances": true,
-        "FeedbackConfig": {
-          "$path": "src/shared/UI/FeedbackMenu/FeedbackConfig.luau"
-        },
-        "FeedbackComponent": {
-          "$path": "src/shared/UI/FeedbackMenu/FeedbackComponent.luau"
-        }
-      },
-      "MenuArt": {
-        "$className": "Folder",
-        "$ignoreUnknownInstances": true,
-        "MenuArt": {
-          "$path": "src/shared/UI/MenuArt/MenuArt.luau"
-        },
-        "MenuArtAtlas": {
-          "$path": "src/shared/UI/MenuArt/MenuArtAtlas.luau"
-        },
-        "MenuArt3Atlas": {
-          "$path": "src/shared/UI/MenuArt/MenuArt3Atlas.luau"
-        }
-      },
-      "SettingsMenu": {
-        "$className": "Folder",
-        "$ignoreUnknownInstances": true,
-        "SettingsConfig": {
-          "$path": "src/shared/UI/SettingsMenu/SettingsConfig.luau"
-        },
-        "SettingsComponent": {
-          "$path": "src/shared/UI/SettingsMenu/SettingsComponent.luau"
         }
       },
       "QuestsHUD": {
@@ -3606,9 +3632,6 @@
           "$path": "src/shared/Hatching/HatchFX/HatchFXClient.luau"
         }
       },
-      "EggDropConfig": {
-        "$path": "src/shared/Config/EggDropConfig.luau"
-      },
       "EggHatchTiming": {
         "$path": "src/shared/Config/EggHatchTiming.luau"
       },
@@ -3649,6 +3672,203 @@
       },
       "UpdateConfig": {
         "$path": "src/shared/Config/UpdateConfig.luau"
+      },
+      "AnimePoses": {
+        "$path": "src/shared/Characters/AnimePoses.luau"
+      },
+      "AnimeFX": {
+        "$path": "src/shared/Characters/AnimeFX.luau"
+      },
+      "StudKit": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "StudTheme": {
+          "$path": "src/shared/UI/StudKit/StudTheme.luau"
+        },
+        "StudToast": {
+          "$path": "src/shared/UI/StudKit/StudToast.luau"
+        },
+        "StudUI": {
+          "$path": "src/shared/UI/StudKit/StudUI.luau"
+        }
+      },
+      "FeedbackMenu": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "FeedbackComponent": {
+          "$path": "src/shared/UI/FeedbackMenu/FeedbackComponent.luau"
+        },
+        "FeedbackConfig": {
+          "$path": "src/shared/UI/FeedbackMenu/FeedbackConfig.luau"
+        }
+      },
+      "SettingsMenu": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "SettingsComponent": {
+          "$path": "src/shared/UI/SettingsMenu/SettingsComponent.luau"
+        },
+        "SettingsConfig": {
+          "$path": "src/shared/UI/SettingsMenu/SettingsConfig.luau"
+        }
+      },
+      "MenuArt": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "MenuArtAtlas": {
+          "$path": "src/shared/UI/MenuArt/MenuArtAtlas.luau"
+        },
+        "MenuArt": {
+          "$path": "src/shared/UI/MenuArt/MenuArt.luau"
+        },
+        "MenuArt3Atlas": {
+          "$path": "src/shared/UI/MenuArt/MenuArt3Atlas.luau"
+        }
+      },
+      "V2Moves": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "V2MoveFX": {
+          "$path": "src/shared/Characters/V2Moves/V2MoveFX.luau"
+        },
+        "Zoro": {
+          "$path": "src/shared/Characters/V2Moves/Zoro.luau"
+        },
+        "Bakugo": {
+          "$path": "src/shared/Characters/V2Moves/Bakugo.luau"
+        },
+        "Goku": {
+          "$path": "src/shared/Characters/V2Moves/Goku.luau"
+        },
+        "Vegeta": {
+          "$path": "src/shared/Characters/V2Moves/Vegeta.luau"
+        },
+        "Lelouch": {
+          "$path": "src/shared/Characters/V2Moves/Lelouch.luau"
+        },
+        "Zenitsu": {
+          "$path": "src/shared/Characters/V2Moves/Zenitsu.luau"
+        },
+        "Naruto": {
+          "$path": "src/shared/Characters/V2Moves/Naruto.luau"
+        },
+        "Tanjiro": {
+          "$path": "src/shared/Characters/V2Moves/Tanjiro.luau"
+        },
+        "Ichigo": {
+          "$path": "src/shared/Characters/V2Moves/Ichigo.luau"
+        },
+        "Asuka": {
+          "$path": "src/shared/Characters/V2Moves/Asuka.luau"
+        },
+        "Kuroko": {
+          "$path": "src/shared/Characters/V2Moves/Kuroko.luau"
+        },
+        "Tatsumaki": {
+          "$path": "src/shared/Characters/V2Moves/Tatsumaki.luau"
+        },
+        "Byakuya": {
+          "$path": "src/shared/Characters/V2Moves/Byakuya.luau"
+        },
+        "Eren": {
+          "$path": "src/shared/Characters/V2Moves/Eren.luau"
+        },
+        "Gojo": {
+          "$path": "src/shared/Characters/V2Moves/Gojo.luau"
+        },
+        "Mikasa": {
+          "$path": "src/shared/Characters/V2Moves/Mikasa.luau"
+        },
+        "Luffy": {
+          "$path": "src/shared/Characters/V2Moves/Luffy.luau"
+        },
+        "Power": {
+          "$path": "src/shared/Characters/V2Moves/Power.luau"
+        },
+        "Makima": {
+          "$path": "src/shared/Characters/V2Moves/Makima.luau"
+        },
+        "Deku": {
+          "$path": "src/shared/Characters/V2Moves/Deku.luau"
+        },
+        "Natsu": {
+          "$path": "src/shared/Characters/V2Moves/Natsu.luau"
+        },
+        "Levi": {
+          "$path": "src/shared/Characters/V2Moves/Levi.luau"
+        },
+        "Itadori": {
+          "$path": "src/shared/Characters/V2Moves/Itadori.luau"
+        },
+        "Genos": {
+          "$path": "src/shared/Characters/V2Moves/Genos.luau"
+        },
+        "Denji": {
+          "$path": "src/shared/Characters/V2Moves/Denji.luau"
+        },
+        "Noelle": {
+          "$path": "src/shared/Characters/V2Moves/Noelle.luau"
+        },
+        "Sukuna": {
+          "$path": "src/shared/Characters/V2Moves/Sukuna.luau"
+        },
+        "HinataHyuga": {
+          "$path": "src/shared/Characters/V2Moves/HinataHyuga.luau"
+        },
+        "Lucy": {
+          "$path": "src/shared/Characters/V2Moves/Lucy.luau"
+        },
+        "Nezuko": {
+          "$path": "src/shared/Characters/V2Moves/Nezuko.luau"
+        },
+        "Nami": {
+          "$path": "src/shared/Characters/V2Moves/Nami.luau"
+        },
+        "MoonGoddess": {
+          "$path": "src/shared/Characters/V2Moves/MoonGoddess.luau"
+        },
+        "Yuno": {
+          "$path": "src/shared/Characters/V2Moves/Yuno.luau"
+        },
+        "Todoroki": {
+          "$path": "src/shared/Characters/V2Moves/Todoroki.luau"
+        },
+        "Asta": {
+          "$path": "src/shared/Characters/V2Moves/Asta.luau"
+        },
+        "Kakashi": {
+          "$path": "src/shared/Characters/V2Moves/Kakashi.luau"
+        },
+        "Sasuke": {
+          "$path": "src/shared/Characters/V2Moves/Sasuke.luau"
+        },
+        "Piccolo": {
+          "$path": "src/shared/Characters/V2Moves/Piccolo.luau"
+        },
+        "Rukia": {
+          "$path": "src/shared/Characters/V2Moves/Rukia.luau"
+        },
+        "HinataCourt": {
+          "$path": "src/shared/Characters/V2Moves/HinataCourt.luau"
+        },
+        "Isagi": {
+          "$path": "src/shared/Characters/V2Moves/Isagi.luau"
+        },
+        "SunGod": {
+          "$path": "src/shared/Characters/V2Moves/SunGod.luau"
+        },
+        "Saitama": {
+          "$path": "src/shared/Characters/V2Moves/Saitama.luau"
+        },
+        "Shinji": {
+          "$path": "src/shared/Characters/V2Moves/Shinji.luau"
+        },
+        "Erza": {
+          "$path": "src/shared/Characters/V2Moves/Erza.luau"
+        },
+        "CosmicOracle": {
+          "$path": "src/shared/Characters/V2Moves/CosmicOracle.luau"
+        }
       }
     },
     "ServerScriptService": {
@@ -3841,6 +4061,30 @@
       "NighttimeClock": {
         "$path": "src/server/Services/NighttimeClock.server.luau"
       },
+      "HighTideService": {
+        "$path": "src/server/Services/HighTideService.luau"
+      },
+      "BossEventService": {
+        "$path": "src/server/World/BossEventService.server.luau"
+      },
+      "ArenaEventService": {
+        "$path": "src/server/World/ArenaEventService.server.luau"
+      },
+      "ArenaZoneBuilder": {
+        "$path": "src/server/World/ArenaZoneBuilder.luau"
+      },
+      "VolcanoEventService": {
+        "$path": "src/server/World/VolcanoEventService.server.luau"
+      },
+      "VolcanoHazardService": {
+        "$path": "src/server/World/VolcanoHazardService.server.luau"
+      },
+      "BossBreakables": {
+        "$path": "src/server/World/BossBreakables.luau"
+      },
+      "RiverWater": {
+        "$path": "src/server/World/RiverWater.server.luau"
+      },
       "PlotReadyFlag": {
         "$path": "src/server/Plots/PlotReadyFlag.server.luau"
       },
@@ -3855,9 +4099,6 @@
       },
       "NoDropping": {
         "$path": "src/server/Services/NoDropping.server.luau"
-      },
-      "StarterCharacter": {
-        "$path": "src/server/PlayerData/StarterCharacter.luau"
       },
       "TutorialProgress": {
         "$path": "src/server/PlayerData/TutorialProgress.server.luau"
@@ -3888,6 +4129,9 @@
       },
       "ToolIcons": {
         "$path": "src/server/Services/ToolIcons.server.luau"
+      },
+      "StarterCharacter": {
+        "$path": "src/server/PlayerData/StarterCharacter.luau"
       }
     }
   }

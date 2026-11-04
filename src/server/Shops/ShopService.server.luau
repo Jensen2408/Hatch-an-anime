@@ -1,13 +1,14 @@
 --[[ ServerScriptService.ShopService
 Shop + Daily Rewards (server-authoritative).
   • Player attributes it maintains: CashMultiplier, HatchMultiplier, VIP, Money2xUntil, Hatch2xUntil, MoneyLevel,
-    HatchLevel (HatchMultiplier = ShopConfig.HatchLevels mult × 2 while Hatch2x is active)
+    HatchLevel, OwnedWeapons / EquippedWeapon (loaded + saved by PlayerDataService; WeaponGiver hands out the equipped
+    bat) (HatchMultiplier = ShopConfig.HatchLevels mult × 2 while Hatch2x is active)
     (BrainrotPlacement multiplies stand income by CashMultiplier; HatchGoo multiplies hatch speed by HatchMultiplier.)
   • RemoteFunction ReplicatedStorage.ShopSystem.ShopRemote: "State" | "ClaimDaily" | "BuyMoneyLevel" | "BuyHatchLevel"
-    | "Buy"(key)
+    | "Buy"(key) | "BuyWeapon"(key) | "EquipWeapon"(key)
   • The game's only ProcessReceipt lives here.
   • Saves (DataStore ShopData_v2; v1 = pre-launch, only money level + receipts carried over): money level, hatch level,
-    daily streak, boost end times. Fails safely in Studio.
+    daily streak, boost end times. Fails safely in Studio. (Bats are saved by PlayerDataService with the cash.)
 
 Network authority: the client only *asks*. Every remote call is validated here (loaded data, load failure lock,
 one call at a time per player via `busy`). Purchases are only *prompted* from the remote; rewards are granted
@@ -16,10 +17,12 @@ exclusively in ProcessReceipt (developer products) and PromptGamePassPurchaseFin
 
 Remote contract (ShopRemote:InvokeServer(action, key) -> ok: boolean, payloadOrMessage):
   "State"          -> true, { daily = {day, ready, nextIn, streak}, moneyLevel, hatchLevel, money2xUntil,
-                              hatch2xUntil, vip, starter, serverTime }
+                              hatch2xUntil, vip, starter, weapons = { [key] = true }, weapon, serverTime }
   "ClaimDaily"     -> true, "Claimed day N!"  |  false, "Come back later"
   "BuyMoneyLevel"  -> true (product prompt shown) | false, "Maxed out!" / "Coming soon"
   "BuyHatchLevel"  -> true, "Hatch speed Nx!" (cash charged here) | false, "Maxed out!" / "Not enough cash"
+  "BuyWeapon", key -> true, "<NAME> unlocked!" (cash charged here, equipped at once) | false, "Not enough cash" / ...
+  "EquipWeapon", key -> true, "<NAME> equipped!" | false, "Buy it first"
   "Buy", key       -> key from ShopConfig.GamePasses or ShopConfig.Products; true | false, message
   any failure      -> false, "Loading…" / "Shop couldn't load. Please rejoin." / "One moment…" / "Server error" / "Unknown"
 
@@ -51,6 +54,7 @@ end -- launch reset: only paid things carry over
 
 -- shopData[player] = { moneyLevel, hatchLevel, streak, dailyAt, money2xUntil, hatch2xUntil, starterGranted, receipts,
 --                      receiptOrder, __loadFailed (never saved) }
+--                      (weapons / weapon: only in saves from 2026-11-02; moved to PlayerDataService on join)
 -- busy[player] = true while a remote call runs; ownedPasses[player][passKey] = cached game-pass ownership
 local shopData, busy, ownedPasses = {}, {}, {}
 local DAY_SECONDS = 86400
@@ -121,6 +125,51 @@ local function refreshMultipliers(player)
     player:SetAttribute("Money2xUntil", playerData.money2xUntil or 0)
     player:SetAttribute("Hatch2xUntil", playerData.hatch2xUntil or 0)
     player:SetAttribute("VIP", isVip)
+end
+
+---------------------------------------------------------------- weapons (bats bought with cash)
+local weaponsByKey = {}
+for _, weapon in Config.Weapons or {} do
+    weaponsByKey[weapon.key] = weapon
+end
+-- owned bats live in the Player attribute OwnedWeapons (comma list), which PlayerDataService loads and saves
+local function ownedWeaponSet(player)
+    local owned = {}
+    for _, key in string.split(player:GetAttribute("OwnedWeapons") or "", ",") do
+        owned[key] = true
+    end
+    return owned
+end
+local function ownsWeapon(player, key)
+    local weapon = weaponsByKey[key]
+    return weapon ~= nil and (weapon.cash == 0 or ownedWeaponSet(player)[key] == true)
+end
+local function addOwnedWeapon(player, key)
+    local owned = ownedWeaponSet(player)
+    owned[key], owned[""] = true, nil
+    local keys = {}
+    for ownedKey in owned do
+        table.insert(keys, ownedKey)
+    end
+    table.sort(keys)
+    player:SetAttribute("OwnedWeapons", table.concat(keys, ","))
+end
+-- the equipped bat, or the default one if it's unknown / not owned
+local function equippedWeapon(player)
+    local key = player:GetAttribute("EquippedWeapon")
+    if key and ownsWeapon(player, key) then
+        return key
+    end
+    return Config.DefaultWeapon or "WoodenBat"
+end
+local function equipWeapon(player, key)
+    player:SetAttribute("EquippedWeapon", key)
+end
+local function saveMainData(player)
+    local saveNow = game:GetService("ServerStorage"):FindFirstChild("PlayerDataSaveNow")
+    if saveNow then
+        pcall(saveNow.Invoke, saveNow, player)
+    end
 end
 
 -- Extends (or starts) a timed boost. boostName: "Money2x" | anything else = Hatch2x.
@@ -237,6 +286,14 @@ shopRemote.OnServerInvoke = function(player, action, key)
                     hatch2xUntil = playerData.hatch2xUntil or 0,
                     vip = player:GetAttribute("VIP") == true,
                     starter = ownsPass(player, "StarterPack"),
+                    weapons = (function()
+                        local owned = {}
+                        for key in weaponsByKey do
+                            owned[key] = ownsWeapon(player, key) or nil
+                        end
+                        return owned
+                    end)(),
+                    weapon = equippedWeapon(player),
                     serverTime = now(),
                 }
         elseif action == "ClaimDaily" then
@@ -276,6 +333,37 @@ shopRemote.OnServerInvoke = function(player, action, key)
                 pcall(saveNow.Invoke, saveNow, player)
             end
             return true, "Hatch speed " .. nextLevel.mult .. "×!"
+        elseif action == "BuyWeapon" and type(key) == "string" then
+            local weapon = weaponsByKey[key]
+            if not weapon then
+                return false, "Unknown"
+            end
+            if ownsWeapon(player, key) then
+                return false, "You already own this"
+            end
+            if not player:GetAttribute("TutorialDataReady") then
+                return false, "Loading…"
+            end -- main save (cash) not restored yet
+            local cashStat = getCashStat(player)
+            if not cashStat or cashStat.Value < weapon.cash then
+                return false, "Not enough cash"
+            end
+            cashStat.Value -= weapon.cash
+            addOwnedWeapon(player, key)
+            equipWeapon(player, key)
+            -- cash and bat are in the main save: write it now
+            saveMainData(player)
+            return true, weapon.name .. " unlocked!"
+        elseif action == "EquipWeapon" and type(key) == "string" then
+            if not player:GetAttribute("TutorialDataReady") then
+                return false, "Loading…"
+            end
+            if not ownsWeapon(player, key) then
+                return false, "Buy it first"
+            end
+            equipWeapon(player, key)
+            saveMainData(player)
+            return true, weaponsByKey[key].name .. " equipped!"
         elseif action == "Buy" and type(key) == "string" then
             if Config.GamePasses[key] ~= nil then
                 local passId = Config.GamePasses[key]
@@ -526,6 +614,29 @@ local function onPlayerAdded(player)
         grantPass(player, "StarterPack")
     end
     refreshMultipliers(player)
+    -- bats bought on 2026-11-02 were first kept in this store: hand them to PlayerDataService once its save is loaded
+    if not failed and (shopData[player].weapons or shopData[player].weapon) then
+        task.spawn(function()
+            while player.Parent and not player:GetAttribute("TutorialDataReady") do
+                task.wait(0.5)
+            end
+            local playerData = shopData[player]
+            if not (player.Parent and playerData) then
+                return
+            end
+            for key in playerData.weapons or {} do
+                if weaponsByKey[key] then
+                    addOwnedWeapon(player, key)
+                end
+            end
+            if playerData.weapon and ownsWeapon(player, playerData.weapon) and not player:GetAttribute("EquippedWeapon") then
+                equipWeapon(player, playerData.weapon)
+            end
+            playerData.weapons, playerData.weapon = nil, nil
+            savePlayer(player)
+            saveMainData(player)
+        end)
+    end
     player.CharacterAdded:Connect(function()
         task.wait(1)
         updateVipCrown(player)
@@ -577,3 +688,4 @@ task.spawn(function()
         end
     end
 end)
+

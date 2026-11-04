@@ -107,13 +107,28 @@ for eggOrder, egg in DropConfig.Eggs do
             Color = RARITY_COLORS[egg.Rarity],
             Limited = egg.Limited,
             Egg = egg.Id,
+            EggType = egg.Id,
             Chance = character.Chance,
+            Weight = character.Chance,
             Move = character.Move,
         }
         table.insert(Catalog.Characters, entry)
         Catalog.CharacterById[character.Id] = entry
         Catalog.ById[character.Id] = entry
     end
+end
+Catalog.Order = Catalog.Characters
+
+function Catalog.CharacterId(id)
+    return (Catalog.CharacterById[id] and id) or Catalog.LegacyCharacters[id]
+end
+
+function Catalog.EggOf(id)
+    local char = Catalog.CharacterById[id]
+    if char then
+        return char.Egg
+    end
+    return Catalog.EggById[id] and id or nil
 end
 
 -- Picks the character an egg hatches, by each character's Chance. nil for an id that isn't an egg.

@@ -1,0 +1,54 @@
+newmtl FarVolcano_S1
+Kd 1 1 1
+map_Kd FarVolcano_S1_color.png
+norm FarVolcano_S1_normal.png
+map_Bump FarVolcano_S1_normal.png
+
+newmtl FarVolcano_S2
+Kd 1 1 1
+map_Kd FarVolcano_S2_color.png
+norm FarVolcano_S2_normal.png
+map_Bump FarVolcano_S2_normal.png
+
+newmtl FarVolcano_S3
+Kd 1 1 1
+map_Kd FarVolcano_S3_color.png
+norm FarVolcano_S3_normal.png
+map_Bump FarVolcano_S3_normal.png
+
+newmtl FarVolcano_S4
+Kd 1 1 1
+map_Kd FarVolcano_S4_color.png
+norm FarVolcano_S4_normal.png
+map_Bump FarVolcano_S4_normal.png
+
+newmtl FarVolcano_S5
+Kd 1 1 1
+map_Kd FarVolcano_S5_color.png
+norm FarVolcano_S5_normal.png
+map_Bump FarVolcano_S5_normal.png
+
+newmtl FarVolcano_S6
+Kd 1 1 1
+map_Kd FarVolcano_S6_color.png
+norm FarVolcano_S6_normal.png
+map_Bump FarVolcano_S6_normal.png
+
+newmtl FarVolcano_S7
+Kd 1 1 1
+map_Kd FarVolcano_S7_color.png
+norm FarVolcano_S7_normal.png
+map_Bump FarVolcano_S7_normal.png
+
+newmtl FarVolcano_S8
+Kd 1 1 1
+map_Kd FarVolcano_S8_color.png
+norm FarVolcano_S8_normal.png
+map_Bump FarVolcano_S8_normal.png
+
+newmtl FarVolcano_S9
+Kd 1 1 1
+map_Kd FarVolcano_S9_color.png
+norm FarVolcano_S9_normal.png
+map_Bump FarVolcano_S9_normal.png
+

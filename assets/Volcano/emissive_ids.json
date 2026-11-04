@@ -1,0 +1,1 @@
+{ "note": "Rev 6 has NO glow and NO lava baked in: no emissive masks are used (VolcanoEventClient GLOW_STRENGTH = 0). Older mask ids are obsolete." }

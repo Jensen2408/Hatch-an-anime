@@ -1,6 +1,10 @@
 -- StarterPlayerScripts.RiverFlow: scrolling current streaks laid along the river so the water visibly flows
 -- downstream (client only, no remotes). Script attributes: Texture (beam texture id), Speed (default 0.9).
 -- Two beam layers follow ReplicatedStorage.WaterfallRiver.RiverPath, sampled every SAMPLE_STEP studs.
+-- Fallback only: when the server reports mesh water (workspace.RiverMeshWater), RiverWater's textures show the current.
+if workspace:GetAttribute("RiverMeshWater") then
+    return
+end
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RiverPath = require(ReplicatedStorage:WaitForChild("WaterfallRiver"):WaitForChild("RiverPath"))
 local TEXTURE = script:GetAttribute("Texture")

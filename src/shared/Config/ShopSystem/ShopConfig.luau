@@ -64,6 +64,87 @@ Config.HatchLevels = {
     { mult = 10, cash = 25e18 },
 }
 
+-- Weapons (WEAPONS tab): bat tiers bought with in-game CASH, owned forever, one equipped at a time.
+-- Ownership + the equipped bat are saved by PlayerDataService (fields `weapons` / `weapon`) through the Player
+-- attributes OwnedWeapons / EquippedWeapon, so cash and bats are always written in the same save.
+-- What bats do: knock players down (they drop a river egg they are carrying home) and damage the river boss.
+--   knockback   horizontal fling strength (BatServer KNOCKBACK_FORCE)
+--   range       forward reach in studs (BatServer HIT_RANGE)
+--   cooldown    seconds between swings (BatServer SWING_COOLDOWN; the swing animation plays faster to match)
+--   bossDamage  damage per hit on the river boss (BossEventService)
+-- Every tier uses the WoodenBat mesh and keeps its SurfaceAppearance (normal map, stud detail). colorMap is the wood
+-- colour map recoloured for the tier (tools/weapons/bat_texture_server.js: luminance mapped through a shadow / mid /
+-- highlight gradient); roughnessMap / metalnessMap, when set, replace the wood ones (metal tiers). tint + material are
+-- the flat fallback used only if a tier has no colorMap. A tier without a tint keeps the wood texture.
+-- cash = 0 means every player owns it from the start.
+Config.Weapons = {
+    {
+        key = "WoodenBat",
+        name = "WOODEN BAT",
+        cash = 0,
+        knockback = 50,
+        range = 6.5,
+        cooldown = 1.1,
+        bossDamage = 3,
+    },
+    {
+        key = "IronBat",
+        name = "IRON BAT",
+        cash = 25000,
+        knockback = 60,
+        range = 7,
+        cooldown = 1.0,
+        bossDamage = 4,
+        tint = Color3.fromRGB(165, 175, 190),
+        material = Enum.Material.Metal,
+        colorMap = "rbxassetid://72957821521051",
+        roughnessMap = "rbxassetid://125695872041779",
+        metalnessMap = "rbxassetid://107827331979590",
+    },
+    {
+        key = "GoldenBat",
+        name = "GOLD BAT",
+        cash = 1e6,
+        knockback = 70,
+        range = 7.5,
+        cooldown = 0.9,
+        bossDamage = 6,
+        tint = Color3.fromRGB(255, 196, 40),
+        material = Enum.Material.Foil,
+        colorMap = "rbxassetid://121153076879293",
+        roughnessMap = "rbxassetid://125695872041779",
+        metalnessMap = "rbxassetid://107827331979590",
+    },
+    {
+        key = "DiamondBat",
+        name = "DIAMOND BAT",
+        cash = 1e8,
+        knockback = 85,
+        range = 8,
+        cooldown = 0.8,
+        bossDamage = 8,
+        tint = Color3.fromRGB(110, 225, 245),
+        material = Enum.Material.Foil,
+        colorMap = "rbxassetid://97683963145498",
+        roughnessMap = "rbxassetid://125695872041779",
+        metalnessMap = "rbxassetid://107827331979590",
+    },
+    {
+        key = "OniBat",
+        name = "ONI BAT",
+        cash = 1e10,
+        special = true, -- gets a "SPECIAL" badge in the shop
+        knockback = 100,
+        range = 8.5,
+        cooldown = 0.7,
+        bossDamage = 12,
+        tint = Color3.fromRGB(190, 28, 40),
+        material = Enum.Material.SmoothPlastic,
+        colorMap = "rbxassetid://75292626258952", -- plastic: keeps the wood bat's own roughness / metalness maps
+    },
+}
+Config.DefaultWeapon = "WoodenBat"
+
 -- Daily rewards (7-day streak, resets if you miss a day)
 Config.Daily = {
     { kind = "cash", amount = 500 },
@@ -95,3 +176,4 @@ Config.LimitedDeal = {
 } -- ends 1 Nov 2026 00:00 UTC
 Config.ComingSoonEgg = { name = "Celestial Egg", text = "A really special egg is on its way…" }
 return Config
+

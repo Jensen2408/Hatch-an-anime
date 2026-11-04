@@ -883,7 +883,7 @@ end
 -- ===== 8. VipShop panel =====
 -- ShopMenuComponent draws the "Halloween Shop" mockup art; RENDER.VipShop only builds its view model.
 -- Data comes from ShopSystem.ShopRemote ("State"), not from the GameMenu remotes.
-local shopTab = "FEATURED" -- ShopMenuConfig.Tabs.Keys; the left menu's Daily button opens "DAILY"
+local shopTab = "WEAPONS" -- ShopMenuConfig.Tabs.Keys; the left menu's Daily button opens "DAILY"
 local shopView -- ShopMenuComponent of the last render
 
 -- Shared Robux price cache (see header). livePrice returns the cached live price or `fallback`.
@@ -1083,12 +1083,53 @@ RENDER.VipShop = function(panel)
     end
 
     local minutes = ShopConfig.BoostMinutes or 30
+    local ownedWeapons = shopState.weapons or {}
+    local equippedWeapon = shopState.weapon or ShopConfig.DefaultWeapon or "WoodenBat"
+    local weapons = {}
+    for i, weapon in ShopConfig.Weapons or {} do
+        local isOwned = weapon.cash == 0 or ownedWeapons[weapon.key] == true
+        local isEquipped = weapon.key == equippedWeapon
+        weapons[i] = {
+            key = weapon.key,
+            name = weapon.name,
+            stats = string.format(
+                "Knockback: %s\nReach: %s studs\nSwing: %.1fs\nBoss dmg: %d",
+                tostring(weapon.knockback or 50),
+                tostring(weapon.range or 6.5),
+                tonumber(weapon.cooldown) or 1.1,
+                tonumber(weapon.bossDamage) or 3
+            ),
+            price = weapon.cash == 0 and "FREE" or ("$" .. Config.Short(weapon.cash)),
+            owned = isOwned,
+            equipped = isEquipped,
+            special = weapon.special == true,
+            onBuy = (not isOwned) and function()
+                shopAction("BuyWeapon", weapon.key)
+            end or nil,
+            onEquip = (isOwned and not isEquipped) and function()
+                shopAction("EquipWeapon", weapon.key)
+            end or nil,
+        }
+    end
+    local featuredWeapon = {
+        key = "OniBat",
+        title = "BAT WEAPONS",
+        text = "Knock back rivals & smash the River Boss!",
+        button = "VIEW WEAPONS",
+        onOpen = function()
+            shopTab = "WEAPONS"
+            RENDER.VipShop(panel)
+        end,
+    }
     shopView = ShopMenuComponent.new(panel, layer, {
         tab = shopTab,
         onTab = function(tab)
             shopTab = tab
             RENDER.VipShop(panel)
         end,
+        weaponModels = shopModels and shopModels:FindFirstChild("Weapons"),
+        weapons = weapons,
+        featuredWeapon = featuredWeapon,
         limited = limited,
         vip = {
             text = "+ Exclusive Perks",

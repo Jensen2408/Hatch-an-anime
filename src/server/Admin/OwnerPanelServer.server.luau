@@ -39,6 +39,8 @@ local StaffServerService = require(script.Parent:WaitForChild("StaffServerServic
 local CrossServerService = require(script.Parent:WaitForChild("CrossServerService"))
 local AdminAbuseService = require(script.Parent:WaitForChild("AdminAbuseService"))
 local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
+local HighTideService = require(script.Parent:WaitForChild("HighTideService"))
+local RiverWaves = require(ReplicatedStorage:WaitForChild("WaterfallRiver"):WaitForChild("RiverWaves"))
 local bridge = game.ServerScriptService:WaitForChild("OwnerControlServer"):WaitForChild("Dispatch")
 local lastRequestAt, busy = {}, {}
 -- Panel action name -> OwnerControlServer dispatch action name.
@@ -254,6 +256,60 @@ end
 handlers.StopNight = function(_player, _args)
     workspace:SetAttribute("NightForcedUntil", nil)
     return true, "Forced nighttime stopped (the regular 5-minute cycle still runs)."
+end
+-- River boss (BossEventService.Control); the service builds the announcement banner itself.
+local function bossControl()
+    local service = script.Parent:FindFirstChild("BossEventService")
+    local bossBridge = service and service:FindFirstChild("Control")
+    assert(bossBridge, "The boss event is not running.")
+    return bossBridge
+end
+handlers.StartBoss = function(player, _args)
+    return bossControl():Invoke("Start", player)
+end
+handlers.StopBoss = function(player, _args)
+    return bossControl():Invoke("Stop", player)
+end
+-- Arena Brawl PvP event (ArenaEventService.Control); the service builds its own announcements.
+local function arenaControl()
+    local service = script.Parent:FindFirstChild("ArenaEventService")
+    local arenaBridge = service and service:FindFirstChild("Control")
+    assert(arenaBridge, "The arena event is not running.")
+    return arenaBridge
+end
+handlers.StartArena = function(player, _args)
+    return arenaControl():Invoke("Start", player)
+end
+handlers.StopArena = function(player, _args)
+    return arenaControl():Invoke("Stop", player)
+end
+-- Volcano Eruption event (VolcanoEventService.Control)
+local function volcanoControl()
+    local service = script.Parent:FindFirstChild("VolcanoEventService")
+    local volcanoBridge = service and service:FindFirstChild("Control")
+    assert(volcanoBridge, "The volcano event is not running.")
+    return volcanoBridge
+end
+handlers.StartVolcano = function(player, _args)
+    return volcanoControl():Invoke("Start", player)
+end
+handlers.StopVolcano = function(player, _args)
+    return volcanoControl():Invoke("Stop", player)
+end
+handlers.StartHighTide = function(player, args)
+    local secs = math.clamp(math.floor(tonumber(args.seconds) or 50), 25, 600)
+    HighTideService.Force(workspace:GetServerTimeNow(), secs)
+    announceEvent:FireAllClients({
+        title = "HIGH TIDE!",
+        text = "The waterfall burst — huge waves and a flood of eggs are racing down the river! (" .. secs .. "s)",
+        color = "tide",
+        by = player.DisplayName,
+    })
+    return true, "High tide started for " .. secs .. " seconds."
+end
+handlers.StopHighTide = function(_player, _args)
+    HighTideService.Stop(workspace:GetServerTimeNow(), RiverWaves.TideFallTime)
+    return true, "Forced high tide is receding (the regular 7-minute cycle still runs)."
 end
 handlers.Announce = function(player, args)
     local message = type(args.text) == "string" and args.text:sub(1, 120) or ""

@@ -20,6 +20,7 @@ local GLOW = "rbxassetid://130563114903838"
 local THEMES = {
     red = { Color3.fromRGB(255, 95, 95), Color3.fromRGB(210, 35, 45), "📢" },
     blue = { Color3.fromRGB(90, 170, 255), Color3.fromRGB(40, 100, 230), "📢" },
+    tide = { Color3.fromRGB(70, 200, 255), Color3.fromRGB(18, 95, 205), "🌊" },
     green = { Color3.fromRGB(130, 235, 90), Color3.fromRGB(55, 170, 40), "✅" },
     gold = { Color3.fromRGB(255, 215, 70), Color3.fromRGB(240, 140, 0), "⭐" },
     pink = { Color3.fromRGB(255, 130, 200), Color3.fromRGB(220, 50, 140), "💬" },

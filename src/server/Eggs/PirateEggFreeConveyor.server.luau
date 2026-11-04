@@ -309,7 +309,9 @@ while true do
                 spawnEgg()
             end
         end
-        local interval = math.clamp(tonumber(conveyor:GetAttribute("SpawnInterval")) or 4, 1.5, 30)
+        local TIDE_SPAWN_INTERVAL = 1
+        local interval = workspace:GetAttribute("HighTideActive") and TIDE_SPAWN_INTERVAL
+            or math.clamp(tonumber(conveyor:GetAttribute("SpawnInterval")) or 4, 1.5, 30)
         nextSpawn = nextSpawn + interval
         if nextSpawn <= os.clock() then
             nextSpawn = os.clock() + interval

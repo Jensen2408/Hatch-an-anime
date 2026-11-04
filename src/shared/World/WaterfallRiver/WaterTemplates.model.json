@@ -1,0 +1,77 @@
+{
+  "className": "Folder",
+  "attributes": {
+    "CrestFoamTexture": "rbxassetid://130450084435388",
+    "PreloadTextures": "rbxassetid://123058452666246,rbxassetid://130450084435388"
+  },
+  "children": [
+    {
+      "name": "RiverFlowAppearance",
+      "className": "SurfaceAppearance",
+      "properties": {
+        "ColorMap": "rbxassetid://71705581317433",
+        "NormalMap": "rbxassetid://127688294488143",
+        "RoughnessMap": "rbxassetid://84845352980505",
+        "AlphaMode": { "Enum": 0 }
+      }
+    },
+    {
+      "name": "RiverFoamAppearance",
+      "className": "SurfaceAppearance",
+      "properties": {
+        "ColorMap": "rbxassetid://132663475191651",
+        "NormalMap": "rbxassetid://87050348324827",
+        "RoughnessMap": "rbxassetid://115245475298380",
+        "AlphaMode": { "Enum": 1 }
+      }
+    },
+    {
+      "name": "RiverTideFoamAppearance",
+      "className": "SurfaceAppearance",
+      "properties": {
+        "ColorMap": "rbxassetid://123058452666246",
+        "NormalMap": "rbxassetid://87050348324827",
+        "RoughnessMap": "rbxassetid://115245475298380",
+        "AlphaMode": { "Enum": 1 }
+      }
+    },
+    {
+      "name": "RiverWaveAppearance",
+      "className": "SurfaceAppearance",
+      "properties": {
+        "NormalMap": "rbxassetid://135929536722264",
+        "RoughnessMap": "rbxassetid://98198092682633",
+        "AlphaMode": { "Enum": 0 }
+      }
+    },
+    {
+      "name": "WaterfallBodyAppearance",
+      "className": "SurfaceAppearance",
+      "properties": {
+        "ColorMap": "rbxassetid://124885764422833",
+        "NormalMap": "rbxassetid://88759007992452",
+        "RoughnessMap": "rbxassetid://97022688794591",
+        "AlphaMode": { "Enum": 1 }
+      }
+    },
+    {
+      "name": "WaterfallVeilAppearance",
+      "className": "SurfaceAppearance",
+      "properties": {
+        "ColorMap": "rbxassetid://72134736655772",
+        "NormalMap": "rbxassetid://88759007992452",
+        "RoughnessMap": "rbxassetid://97022688794591",
+        "AlphaMode": { "Enum": 1 }
+      }
+    },
+    {
+      "name": "WaterfallWaveAppearance",
+      "className": "SurfaceAppearance",
+      "properties": {
+        "NormalMap": "rbxassetid://135929536722264",
+        "RoughnessMap": "rbxassetid://98198092682633",
+        "AlphaMode": { "Enum": 0 }
+      }
+    }
+  ]
+}
