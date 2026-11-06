@@ -349,7 +349,7 @@ local function buildPreview(tool, parent)
         end
         return portrait
     end
-    if tool.TextureId ~= "" then
+    if tool.TextureId ~= "" and not tool:GetAttribute("EggType") then
         return create("ImageLabel", {
             Size = UDim2.fromScale(1, 1),
             BackgroundTransparency = 1,

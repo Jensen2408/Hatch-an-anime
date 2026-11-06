@@ -92,6 +92,7 @@ local function stripNonVisuals(model)
             or descendant:IsA("ProximityPrompt")
             or descendant:IsA("BillboardGui")
             or descendant:IsA("Sound")
+            or descendant.Name == "RarityAura" -- invisible mutation holder must not determine body size
         then
             descendant:Destroy()
         end
@@ -176,10 +177,26 @@ function Service.Attach(player, tool)
     carrier.Parent = model
     local visual = presentationOf(tool):Clone()
     stripNonVisuals(visual)
+    -- Held displays use one rigid carrier, never competing animation joints.
+    for _, tagged in visual:GetDescendants() do
+        if tagged:IsA("Model") then
+            tagged:RemoveTag("AnimatedCharacter")
+            tagged:RemoveTag("AnimeCharacter")
+            tagged:RemoveTag("FloatingCharacter")
+        end
+    end
+    visual:RemoveTag("AnimatedCharacter")
+    visual:RemoveTag("AnimeCharacter")
+    visual:RemoveTag("FloatingCharacter")
+    for _, joint in visual:GetDescendants() do
+        if joint:IsA("Motor6D") then joint:Destroy()
+        elseif joint:IsA("Bone") then joint.Transform = CFrame.identity end
+    end
+
     local _, size = visual:GetBoundingBox()
     local isCharacter = tool:GetAttribute("CharacterId") or tool:GetAttribute("BrainrotId")
     local factor = isCharacter and 6 / math.max(size.Y, 0.01)
-        or math.min(3.3 / math.max(size.Y, 0.01), 2.9 / math.max(size.X, 0.01)) -- eggs held at normal tool size
+        or 3.3 / math.max(size.Y, 0.01) -- eggs held at normal tool size
     visual:ScaleTo(visual:GetScale() * factor)
     calmVFX(visual, factor)
     local box, newSize = visual:GetBoundingBox()
@@ -187,6 +204,19 @@ function Service.Attach(player, tool)
     carrier.CFrame = require(game.ServerScriptService.CarryGripLayout).Frame(character, torso, halfWidth)
     visual:PivotTo(carrier.CFrame * box:ToObjectSpace(visual:GetPivot()))
     visual.Parent = model
+    if tool:GetAttribute("Mutation") then
+        require(game.ServerScriptService.Mutations).AddAura(visual, tool:GetAttribute("Mutation"))
+    end
+    if isCharacter then
+        local outline = Instance.new("Highlight")
+        outline.Name = "HeldCharacterOutline"
+        outline.Adornee = visual
+        outline.FillTransparency = 1
+        outline.OutlineColor = Color3.new(0, 0, 0)
+        outline.OutlineTransparency = 0
+        outline.DepthMode = Enum.HighlightDepthMode.Occluded
+        outline.Parent = model
+    end
     model:SetAttribute("GripHalfWidth", halfWidth)
     for _, part in visual:GetDescendants() do
         if part:IsA("BasePart") then
@@ -320,7 +350,7 @@ function Service.DropTool(player, tool)
     local _, size = visual:GetBoundingBox()
     -- dropped eggs are big and easy to spot (about 1.6x the held size)
     local dropFactor = characterItem and 6 / math.max(size.Y, 0.01)
-        or math.min(5.2 / math.max(size.Y, 0.01), 4.6 / math.max(size.X, 0.01))
+        or 5.2 / math.max(size.Y, 0.01)
     visual:ScaleTo(visual:GetScale() * dropFactor)
     calmVFX(visual, dropFactor)
     local box, newSize = visual:GetBoundingBox()
@@ -336,6 +366,9 @@ function Service.DropTool(player, tool)
     local offset = box:ToObjectSpace(visual:GetPivot())
     visual:PivotTo(CFrame.new(position.X, restY + 6, position.Z) * offset)
     visual.Parent = model
+    if tool:GetAttribute("Mutation") then
+        require(game.ServerScriptService.Mutations).AddAura(visual, tool:GetAttribute("Mutation"))
+    end
     for _, part in visual:GetDescendants() do
         if part:IsA("BasePart") then
             part.Anchored = true
