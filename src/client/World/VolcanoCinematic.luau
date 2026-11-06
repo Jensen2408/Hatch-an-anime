@@ -149,7 +149,7 @@ function Cinematic:_hideWorldUi()
     local ok, controls = pcall(function()
         return require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule", 2)):GetControls()
     end)
-    if ok and controls then
+    if self.active and ok and controls then
         self.controls = controls
         controls:Disable()
     end
@@ -212,8 +212,14 @@ function Cinematic:Start(startedAt)
     end
     self.active = true
     self.startedAt = startedAt
+    -- Capture before any startup yield: an early skip must restore the original camera.
+    self.savedType, self.savedFov = camera.CameraType, camera.FieldOfView
     self:_buildGui()
     self:_hideWorldUi()
+    -- PlayerModule loading can yield while SKIP/Stop has already cancelled us.
+    if not self.active then
+        return
+    end
     self:_buildGround()
     local cfg, v = self.Config, self.volcano
     local floorY, lipY = v.base + cfg.LakeFloor, v.base + cfg.LipHeight
@@ -225,7 +231,6 @@ function Cinematic:Start(startedAt)
         parent = workspace,
     })
     self.keyframes = self:_keyframes()
-    self.savedType, self.savedFov = camera.CameraType, camera.FieldOfView
     camera.CameraType = Enum.CameraType.Scriptable
     self.blasted = false
     self.lastTime = 0
@@ -240,6 +245,9 @@ function Cinematic:Start(startedAt)
 end
 
 function Cinematic:_step(dt)
+    if not self.active then
+        return
+    end
     local cfg = self.Config
     local now = workspace:GetServerTimeNow()
     local t = self.debugTime or (now - self.startedAt) -- debugTime freezes the cutscene at one moment (for testing shots)
