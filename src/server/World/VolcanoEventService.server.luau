@@ -10,6 +10,7 @@ local TextChatService = game:GetService("TextChatService")
 
 local Config = require(ReplicatedStorage:WaitForChild("VolcanoEvent"):WaitForChild("VolcanoConfig"))
 local AdminRoles = require(script.Parent:WaitForChild("AdminRoles"))
+local HighTideService = require(script.Parent:WaitForChild("HighTideService"))
 
 local control = script:FindFirstChild("Control") or Instance.new("BindableFunction")
 control.Name = "Control"
@@ -109,6 +110,7 @@ local state = { running = false, token = 0 }
 
 local function setStart(value)
     workspace:SetAttribute("VolcanoStart", value)
+    HighTideService.Update(workspace:GetServerTimeNow())
 end
 
 local function endEvent(message)
