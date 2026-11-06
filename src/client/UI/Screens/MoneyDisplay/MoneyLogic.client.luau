@@ -1,4 +1,5 @@
--- Cash display: the Cash UI (CashComponent / CashConfig) + smooth count, +$ popups, coin sounds, income per second.
+-- Cash display: the Cash UI (CashComponent / CashConfig) + smooth count, +$ popups, coin sounds, income per second,
+-- and the CashPulse reaction (bump, glow, sparkles) when another UI flies coins into the card.
 -- LocalScript inside the MoneyDisplay ScreenGui. Display only: reads leaderstats.Cash and the IncomePerSecond
 -- attributes of the local player's PlacedItems (x workspace OwnerIncomeMultiplier x AbuseCashMultiplier). No remotes.
 local Players = game:GetService("Players")
@@ -32,6 +33,7 @@ popupsFrame.Parent = screenGui
 local abusePotions = require(script.Parent:WaitForChild("AbusePotions")).new(screenGui)
 
 local HudScale = require(game:GetService("ReplicatedStorage"):WaitForChild("HudScale"))
+local baseScale, pulse = 1, 0 -- cashUI.Scale = baseScale * (1 + pulse); pulse is bumped by CashPulse and decays
 local function layoutCash()
     local viewportSize = screenGui.AbsoluteSize
     if viewportSize.X <= 0 or viewportSize.Y <= 0 then
@@ -54,7 +56,8 @@ local function layoutCash()
         frame.AnchorPoint = anchorPoint
         frame.Position = position
     end
-    cashUI.Scale.Scale = scale
+    baseScale = scale
+    cashUI.Scale.Scale = scale * (1 + pulse)
     popupsScale.Scale = scale
     local clearOfMenu = viewportSize.Y / 2 >= CashConfig.PotionRow.MenuReach * hud
     local rowLeft = clearOfMenu and margin or CashConfig.PotionRow.BesideMenu * hud
@@ -154,7 +157,75 @@ task.spawn(function()
     end
 end)
 
+---------------------------------------------------------------- CashPulse: the card reacts to cash flying into it
+-- screenGui.CashPulse (BindableEvent), fired by other UIs (OfflineEarningsUI's coin flight):
+--   Fire("coin")   one coin landed: a small bump of the card and a wiggle of the coin icon
+--   Fire("burst")  the last one landed: a bigger bump, a golden glow behind the card and a ring of sparkles
+local cashPulse = Instance.new("BindableEvent")
+cashPulse.Name = "CashPulse"
+cashPulse.Parent = screenGui
+local GLOW_IMAGE = "rbxthumb://type=Asset&id=85372533044428&w=420&h=420"
+local SPARK_IMAGE = "rbxthumb://type=Asset&id=87376394612367&w=420&h=420"
+local mainBackground = root:WaitForChild("MainBackground")
+local coinIcon = mainBackground:WaitForChild("CoinIcon")
+local glow = Instance.new("ImageLabel")
+glow.Name = "PulseGlow"
+glow.BackgroundTransparency = 1
+glow.Image = GLOW_IMAGE
+glow.ImageColor3 = Color3.fromRGB(255, 205, 60)
+glow.ImageTransparency = 1
+glow.AnchorPoint = Vector2.new(0.5, 0.5)
+glow.Position = UDim2.fromScale(0.5, 0.42)
+glow.Size = UDim2.fromScale(1.6, 2.4)
+glow.ZIndex = 0
+glow.Parent = root
+local coinWiggle = 0
+cashPulse.Event:Connect(function(kind)
+    if kind == "burst" then
+        pulse = math.max(pulse, 0.16)
+        coinWiggle = 1
+        glow.ImageTransparency = 0.15
+        playTween(glow, 0.9, { ImageTransparency = 1 })
+        for i = 1, 8 do
+            local angle = i / 8 * math.pi * 2 + math.random() * 0.4
+            local spark = Instance.new("ImageLabel")
+            spark.BackgroundTransparency = 1
+            spark.Image = SPARK_IMAGE
+            spark.ImageColor3 = i % 2 == 0 and Color3.new(1, 1, 1) or Color3.fromRGB(255, 225, 120)
+            spark.AnchorPoint = Vector2.new(0.5, 0.5)
+            spark.Position = UDim2.fromScale(0.2, 0.36)
+            spark.Size = UDim2.fromOffset(26, 26)
+            spark.ZIndex = 20
+            spark.Parent = popupsFrame
+            playTween(spark, 0.55, {
+                Position = UDim2.new(0.2, math.cos(angle) * 90, 0.36, math.sin(angle) * 60),
+                Size = UDim2.fromOffset(6, 6),
+                ImageTransparency = 1,
+                Rotation = 90,
+            })
+            task.delay(0.6, function()
+                spark:Destroy()
+            end)
+        end
+    else
+        pulse = math.min(pulse + 0.05, 0.12)
+        coinWiggle = math.max(coinWiggle, 0.6)
+    end
+end)
+
 RunService.RenderStepped:Connect(function(dt)
+    if pulse > 0.001 or coinWiggle > 0.001 then
+        pulse *= math.exp(-dt * 9)
+        coinWiggle *= math.exp(-dt * 5)
+        if pulse <= 0.001 then
+            pulse = 0
+        end
+        if coinWiggle <= 0.001 then
+            coinWiggle = 0
+        end
+        cashUI.Scale.Scale = baseScale * (1 + pulse)
+        coinIcon.Rotation = math.sin(os.clock() * 38) * 14 * coinWiggle
+    end
     if shownCash ~= targetCash then
         shownCash += (targetCash - shownCash) * math.min(1, dt * 10)
         if math.abs(targetCash - shownCash) < 1 then
