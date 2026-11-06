@@ -42,7 +42,7 @@ FLOW
 
 Other scripts: PlotManager waits for player attribute "DataLoaded" and calls ServerStorage.PlayerDataSnapshot before it
 clears the plot; CrossServerService (/update) calls PlayerDataSaveAll; ShopService calls PlayerDataSaveNow.
-Creates: ReplicatedStorage.SaveSettings (RemoteEvent), ServerStorage.PlayerDataSaveAll / PlayerDataSaveNow /
+Creates: ReplicatedStorage.SaveSettings (RemoteEvent), ReplicatedStorage.OfflineCollect (RemoteFunction), ServerStorage.PlayerDataSaveAll / PlayerDataSaveNow /
 PlayerDataSnapshot (BindableFunctions), ServerStorage.PlayerDataDebug (Studio only).
 ]]
 
@@ -126,6 +126,8 @@ local function cashOf(player)
     local leaderstats = player:FindFirstChild("leaderstats")
     return leaderstats and leaderstats:FindFirstChild("Cash")
 end
+-- [player] = { [moneyStand] = cash this join's offline earnings put on it }; cleared once collected (OfflineCollect)
+local offlineStands = {}
 -- Copies the attributes that a DataStore can hold (string / number / boolean).
 local function copyAttributes(instance)
     local result = {}
@@ -625,15 +627,18 @@ local function applySavedState(player, saved)
     if offlineSeconds > 5 and #placedSlots > 0 then
         task.wait(1.5)
         local total = 0
+        local perStand = {}
         for _, slot in placedSlots do
             local stand = slot:FindFirstChild("MoneyStand")
             local rate = stand and tonumber(stand:GetAttribute("IncomePerSecond")) or 0
             if stand and rate > 0 then
                 local earned = math.floor(rate * offlineSeconds * 0.5) --[[ offline earns half ]]
                 stand:SetAttribute("Stored", (stand:GetAttribute("Stored") or 0) + earned)
+                perStand[stand] = earned
                 total += earned
             end
         end
+        offlineStands[player] = total > 0 and perStand or nil
         if total > 0 then
             player:SetAttribute("OfflineEarnings", total)
             player:SetAttribute("OfflineSeconds", offlineSeconds)
@@ -768,6 +773,7 @@ local function onLeave(player)
     end
     sessionData[player], isLoaded[player], hasFinalSnapshot[player], lastHeldTools[player], lastSettingsAt[player], restoreState[player], unbuildable[player] =
         nil, nil, nil, nil, nil, nil, nil
+    offlineStands[player] = nil
 end
 
 ------------------------------------------------------------ studio debug hook
@@ -840,6 +846,39 @@ local SETTING_TYPES = {
     NightFX = "boolean",
     HideLabels = "boolean",
 }
+------------------------------------------------------------ offline earnings collect
+-- ReplicatedStorage.OfflineCollect (RemoteFunction), called by the offline earnings window's COLLECT.
+-- Moves this join's offline earnings from the money stands into Cash, once. Per stand it takes at most what offline
+-- put there and at most what is still stored (anything already picked up from the plate is not paid again).
+-- Returns the amount moved (0 when there is nothing left or it was already collected).
+local offlineCollectRemote = ReplicatedStorage:FindFirstChild("OfflineCollect") or Instance.new("RemoteFunction")
+offlineCollectRemote.Name = "OfflineCollect"
+offlineCollectRemote.Parent = ReplicatedStorage
+offlineCollectRemote.OnServerInvoke = function(player)
+    local perStand = offlineStands[player]
+    local cash = cashOf(player)
+    if not perStand or not cash then
+        return 0
+    end
+    offlineStands[player] = nil -- before any change, so a second call can't pay again
+    local total = 0
+    for stand, earned in perStand do
+        if stand.Parent and stand:GetAttribute("OwnerUserId") == player.UserId then
+            local stored = math.floor(tonumber(stand:GetAttribute("Stored")) or 0)
+            local take = math.max(0, math.min(stored, earned))
+            if take > 0 then
+                stand:SetAttribute("Stored", (tonumber(stand:GetAttribute("Stored")) or 0) - take)
+                total += take
+            end
+        end
+    end
+    if total > 0 then
+        cash.Value += total
+    end
+    player:SetAttribute("OfflineCollected", total)
+    return total
+end
+
 local saveSettingsRemote = ReplicatedStorage:FindFirstChild("SaveSettings") or Instance.new("RemoteEvent")
 saveSettingsRemote.Name = "SaveSettings"
 saveSettingsRemote.Parent = ReplicatedStorage
