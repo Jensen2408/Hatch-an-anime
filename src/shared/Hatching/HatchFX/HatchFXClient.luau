@@ -131,6 +131,10 @@ local function sound(job, slot, props)
     if not soundId or soundId == "" or player:GetAttribute(Config.MuteAttribute) or not job.att then
         return nil
     end
+    -- the owner is watching the summon room (SummonHatch) instead; its own sounds play there
+    if job.mine and player:GetAttribute("SummonHatchActive") then
+        return nil
+    end
     local volume = (Config.SlotVolumes and Config.SlotVolumes[slot]) or Config.Volume
     local snd = make("Sound", { SoundId = soundId, Volume = volume, RollOffMaxDistance = 80 }, job.att)
     local soundGroup = SoundService:FindFirstChild(Config.SoundGroupName)

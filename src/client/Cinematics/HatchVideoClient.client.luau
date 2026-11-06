@@ -21,7 +21,12 @@ local active, chamber, connections, hiddenGuis = false, nil, {}, {}
 -- Runs every Heartbeat while recording, so newly created GUIs / characters are hidden too.
 local function hideStuff()
     for _, gui in player.PlayerGui:GetChildren() do
-        if (gui:IsA("ScreenGui") or gui:IsA("BillboardGui")) and gui.Enabled and not hiddenGuis[gui] then
+        if
+            (gui:IsA("ScreenGui") or gui:IsA("BillboardGui"))
+            and gui.Enabled
+            and not hiddenGuis[gui]
+            and gui.Name ~= "SummonHatchUI" -- the summon reveal is part of the video
+        then
             hiddenGuis[gui] = true
             gui.Enabled = false
         end
@@ -105,9 +110,9 @@ remote.OnClientEvent:Connect(function(kind, payload, _arg2, _arg3)
                 return
             end
             local status = chamber:GetAttribute("Status")
-            if status == "HatchReveal" or status == "Revealing" then
+            if status == "HatchReveal" or status == "Revealing" or player:GetAttribute("SummonHatchActive") then
                 return
-            end -- the game's reveal camera takes over
+            end -- the game's reveal camera (the summon room) takes over
             local pivot = chamber:GetPivot()
             local elapsed = os.clock() - startClock
             local center = pivot.Position + Vector3.new(0, 3, 0)

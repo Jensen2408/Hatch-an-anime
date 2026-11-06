@@ -5,13 +5,15 @@ chamber runs its own copy and everything below uses `script.Parent` (the chamber
 
 Hatch cycle (one at a time per chamber, guarded by `busy`):
   insert egg -> incubate (countdown, liquid drains) -> "READY • PRESS HATCH" -> owner presses again
-  -> camera gate + HatchFX reveal -> reward character waits on the platform -> owner collects it.
+  -> summon reveal for the owner (SummonHatchServer) + HatchFX opening for everyone -> reward character waits on
+  the platform -> owner collects it.
 
 Inputs:   HatchButton.ClickDetector, HatchButton.ProximityPrompt, chamber.RequestHatch (BindableEvent),
           chamber.ResumeEgg (BindableFunction, created here; PlayerDataService puts a saved egg back).
 Outputs:  chamber.HatchCycleCompleted (BindableEvent, fired with player, eggTool, rewardId),
-          ReplicatedStorage.CinematicHatchCue (RemoteEvent: "HatchStarted" / "Reveal" / "End"),
-          chamber attributes Status / Hatching / HatchStart / HatchDuration / CycleEnd / RewardId / Venting ...
+          SummonHatchServer.Play (the owner's summon animation),
+          chamber attributes Status / Hatching / HatchStart / HatchDuration / CycleEnd / RewardId / Venting /
+          SummonReveal (true while a summon-revealed hatch is in progress) ...
           that clients and other server scripts read.
 Server authoritative: the reward roll is read from (or rolled onto) the egg tool before incubation starts.
 EggSteal integration: the "StealLock" / "EggStolen" attributes and "IncubatorChamber" on the tool.
@@ -41,9 +43,10 @@ local prompt = hatchButton.ProximityPrompt
 local loadingDoor = chamber.LoadingDoor
 local tankLiquid = liquidSystem.TankLiquid
 local statusLabel = liquidSystem.TimerAnchor.CycleTimer.Status
-local cinematicCue = game.ReplicatedStorage:WaitForChild("CinematicHatchCue")
 local Rewards = require(game.ServerScriptService:WaitForChild("EggCharacterRewards"))
 local Economy = require(game.ReplicatedStorage.CharacterEconomy)
+-- The hatching player's reveal (summon room); also creates its remotes, so require it before any hatch.
+local SummonHatch = require(game.ServerScriptService:WaitForChild("SummonHatchServer"))
 
 -- `_doorRest` is no longer used: the glass doors are driven by IncubatorController now.
 local buttonRest, _doorRest = hatchButton.CFrame, loadingDoor.CFrame
@@ -117,7 +120,10 @@ end
 -- in the "Loaded" state. resumeTool/resumeLeft: PlayerDataService puts a saved egg back
 -- with its remaining incubation time (see ResumeEgg below).
 local function runCycle(player, resumeTool, resumeLeft)
-    if player and require(game.ServerScriptService.HatchFX.HatchFXServer).IsPlayerBusy(player) then
+    if
+        player
+        and (require(game.ServerScriptService.HatchFX.HatchFXServer).IsPlayerBusy(player) or SummonHatch.IsBusy(player))
+    then
         return
     end
     -- EggSteal
@@ -190,7 +196,6 @@ local function runCycle(player, resumeTool, resumeLeft)
     -- The egg's mutation carries over to the egg in the tank, the reveal and the character.
     local mutation = tool and tool:GetAttribute("Mutation")
     local Mutations = require(game.ServerScriptService.Mutations)
-    local focusSent = false
     local ok, err = xpcall(function()
         ---------------------------------------------------------------- roll + duration
         local EggHatchTiming = require(game.ReplicatedStorage.EggHatchTiming)
@@ -384,9 +389,9 @@ local function runCycle(player, resumeTool, resumeLeft)
             return
         end
         -- A player can only watch one opening at a time: while another chamber of theirs is
-        -- playing HatchFX, drop the press and wait for a fresh one afterwards.
+        -- playing HatchFX or their summon is still on screen, drop the press and wait for a fresh one afterwards.
         local HatchFX = require(game.ServerScriptService.HatchFX.HatchFXServer)
-        while player and HatchFX.IsPlayerBusy(player) do
+        while player and (HatchFX.IsPlayerBusy(player) or SummonHatch.IsBusy(player)) do
             startRequested = false
             prompt.Enabled = true
             if not ownsChamber(player) or not chamber:IsDescendantOf(workspace) then
@@ -407,25 +412,10 @@ local function runCycle(player, resumeTool, resumeLeft)
         prompt.Enabled = false
         eggTimer.Enabled = false
 
-        ---------------------------------------------------------------- camera gate
-        local Config = require(game.ReplicatedStorage.HatchFX.HatchFXConfig)
-        local Catalog = require(game.ReplicatedStorage.CharacterCatalog)
         -- rewardStats was rolled once when the egg was created or inserted.
-        local earlyTimeline = Config.Timeline(rewardStats.RollQuality, Catalog.ById[rewardId].Rarity)
-        if player then
-            focusSent = true
-            -- the cinematic camera is a nice extra: if the client never answers (slow device, UI error) the hatch still happens
-            if
-                not require(game.ServerScriptService.HatchCameraGate).Focus(
-                    player,
-                    chamber,
-                    inside,
-                    earlyTimeline.Break
-                )
-            then
-                warn("[Hatch] camera not ready for " .. player.Name .. " - hatching without the cinematic")
-            end
-        end
+        -- The hatching player watches the summon room (SummonHatchServer, started below once the character exists);
+        -- everyone else sees the HatchFX opening in the incubator. The old incubator camera (HatchCameraGate) is unused.
+        local Catalog = require(game.ReplicatedStorage.CharacterCatalog)
         say("HatchReveal", "OPENING...")
         task.spawn(function()
             glassController:Open(0.65)
@@ -462,11 +452,21 @@ local function runCycle(player, resumeTool, resumeLeft)
         end
 
         local oldEgg = visual
-        local timeline = Config.Timeline(character:GetAttribute("RollQuality"), Catalog.ById[rewardId].Rarity)
 
-        ---------------------------------------------------------------- HatchFX reveal
+        ---------------------------------------------------------------- summon (hatching player) + HatchFX (everyone)
         if player then
-            cinematicCue:FireClient(player, "HatchStarted", chamber)
+            -- The summon shows Power / income itself, so InventoryService skips its Power card for this hatch.
+            chamber:SetAttribute("SummonReveal", true)
+            SummonHatch.Play(player, {
+                chamber = chamber,
+                egg = oldEgg,
+                character = character,
+                characterId = rewardId,
+                mutation = mutation,
+                power = rewardStats.Power,
+                income = rewardStats.IncomePerSecond,
+                golden = tool ~= nil and tool:GetAttribute("GoldVariant") == true,
+            })
         end
         say("HatchReveal", "HATCHING...")
         local finished = false
@@ -494,24 +494,10 @@ local function runCycle(player, resumeTool, resumeLeft)
             error("HatchFX: " .. tostring(reason))
         end
         visual = character
-        local epoch = workspace:GetServerTimeNow()
-        local revealed = false
         while not finished do
             if not ownsChamber(player) or not chamber:IsDescendantOf(workspace) then
                 HatchFX.Cancel(chamber)
                 return
-            end
-            if not revealed and workspace:GetServerTimeNow() - epoch >= timeline.Break then
-                revealed = true
-                if player then
-                    cinematicCue:FireClient(
-                        player,
-                        "Reveal",
-                        chamber,
-                        home * CFrame.new(0, finalSize.Y * 0.5, 0),
-                        Catalog.ById[rewardId].Name
-                    )
-                end
             end
             task.wait(0.05)
         end
@@ -521,10 +507,6 @@ local function runCycle(player, resumeTool, resumeLeft)
         chamber:SetAttribute("RewardId", rewardId)
         CollectionService:AddTag(character, "HatchRewardDisplay")
         cycleCompleted:Fire(player, tool, rewardId)
-        if player then
-            cinematicCue:FireClient(player, "End", chamber)
-            focusSent = false
-        end
 
         ---------------------------------------------------------------- pickup
         chamber:SetAttribute("Venting", true)
@@ -598,9 +580,7 @@ local function runCycle(player, resumeTool, resumeLeft)
     end, debug.traceback)
 
     ---------------------------------------------------------------- cleanup (always runs, also after errors)
-    if focusSent and player and player.Parent == Players then
-        cinematicCue:FireClient(player, "End", chamber)
-    end
+    chamber:SetAttribute("SummonReveal", nil)
     chamber:SetAttribute("Hatching", false)
     chamber:SetAttribute("Venting", false)
     chamber:SetAttribute("CycleEnd", nil)
