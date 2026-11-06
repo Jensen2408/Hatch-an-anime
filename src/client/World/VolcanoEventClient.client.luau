@@ -67,62 +67,6 @@ local function findOpening(model, centre, top)
     return nil
 end
 
--- The opening in the crater's rim is only for the cutscene camera. The rest of the time a rock-coloured plug of studded blocks fills it, so
--- from the map the volcano is a plain cone (the lip of the opening is baked dark red-brown and would show). The plug is local, and is taken
--- out while the cutscene runs.
-local plug = nil -- { folder, model }
-local function destroyPlug()
-    if plug then
-        plug.folder:Destroy()
-        plug = nil
-    end
-end
-local function ensurePlug()
-    if plug and plug.model == (volcano and volcano.model) and plug.folder.Parent then
-        return
-    end
-    destroyPlug()
-    if not volcano or not volcano.opening then
-        return
-    end
-    local folder = Instance.new("Folder")
-    folder.Name = "VolcanoOpeningPlug"
-    local n = volcano.opening
-    local up = Vector3.yAxis
-    local right = n:Cross(up)
-    local centre = Vector3.new(volcano.centre.X, 0, volcano.centre.Z) + n * 108
-    local baseY = volcano.base
-    local function block(width, height, length, bottom, color)
-        local part = Instance.new("Part")
-        part.Name = "PlugBlock"
-        part.Anchored = true
-        part.CanCollide = false
-        part.CanTouch = false
-        part.CanQuery = false
-        part.CastShadow = false
-        part.Size = Vector3.new(width, height, length)
-        part.CFrame = CFrame.fromMatrix(Vector3.new(centre.X, baseY + bottom + height / 2, centre.Z), right, up, -n)
-        part.Material = Enum.Material.Plastic
-        part.MaterialVariant = "Incubator One Stud Cavity"
-        part.Color = color
-        part.Parent = folder
-    end
-    block(64, 40, 56, Config.LipHeight - 22, Color3.fromRGB(122, 100, 90))
-    block(54, 20, 40, Config.LipHeight + 18, Color3.fromRGB(150, 135, 126))
-    folder.Parent = workspace
-    plug = { folder = folder, model = volcano.model }
-end
-local function updatePlug()
-    if not plug then
-        return
-    end
-    local hide = cinematic ~= nil and cinematic.active
-    local target = (not hide) and workspace or nil
-    if plug.folder.Parent ~= target then
-        plug.folder.Parent = target
-    end
-end
-
 local lastLocate = -1e9
 local function locate()
     if os.clock() - lastLocate < 4 then
@@ -185,6 +129,18 @@ local function locate()
         lakeY = lakeY,
         crater = Vector3.new(centre.X, lakeY + 3, centre.Z),
     }
+    -- load every texture of the volcano now, so it never shows as bare grey mesh while they stream in from 2,400 studs away
+    task.spawn(function()
+        local toLoad = {}
+        for _, d in found:GetDescendants() do
+            if d:IsA("MeshPart") or d:IsA("SurfaceAppearance") then
+                table.insert(toLoad, d)
+            end
+        end
+        pcall(function()
+            game:GetService("ContentProvider"):PreloadAsync(toLoad)
+        end)
+    end)
     volcano.opening = findOpening(found, centre, maxV.Y)
     if not volcano.opening then
         local toMap = Vector3.new(-centre.X, 0, -centre.Z)
@@ -298,10 +254,10 @@ ash.Parent = ashPart
 local fx = nil -- { folder, glow, fountain, fountainChunks, light, emitters, plume, calderaSound }
 local bombs = {}
 local smokeCubes = {}
+local lastSmokeCube = 0
 local flows = nil -- { segments = { {part, revealAt} }, built = false }
 local lastBomb = 0
 local lastBombSfx = 0
-local lastSmokeCube = 0
 local eruptionRumble = nil -- ambient map-wide eruption rumble Sound
 local blastFiredFor = nil -- VolcanoStart value for which the main eruption blast sound has played
 local startFiredFor = nil -- ... and the low boom that opens the event
@@ -442,23 +398,6 @@ local function buildFx()
     light.Brightness = 0
     light.Parent = plume
     local emitters = {
-        smoke = emitter(plume, {
-            Texture = "rbxasset://textures/particles/smoke_main.dds",
-            Lifetime = NumberRange.new(16, 22),
-            Speed = NumberRange.new(70, 110),
-            SpreadAngle = Vector2.new(16, 16),
-            EmissionDirection = Enum.NormalId.Top,
-            Rotation = NumberRange.new(0, 360),
-            RotSpeed = NumberRange.new(-12, 12),
-            Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 60), NumberSequenceKeypoint.new(1, 200) }),
-            Transparency = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 0.1),
-                NumberSequenceKeypoint.new(0.7, 0.4),
-                NumberSequenceKeypoint.new(1, 1),
-            }),
-            Color = ColorSequence.new(Color3.fromRGB(34, 30, 32), Color3.fromRGB(96, 82, 80)),
-            Acceleration = Vector3.new(14, 6, 6),
-        }),
         fire = emitter(plume, {
             Texture = "rbxasset://textures/particles/fire_main.dds",
             Lifetime = NumberRange.new(2.5, 4),
@@ -505,6 +444,7 @@ local function buildFx()
     }
 end
 
+local clearSprites -- defined with the sprite system below
 local function destroyFx()
     if fx then
         fx.folder:Destroy()
@@ -514,13 +454,14 @@ local function destroyFx()
         bomb.part:Destroy()
     end
     table.clear(bombs)
+    clearSprites()
     for _, sc in smokeCubes do
         sc.part:Destroy()
     end
     table.clear(smokeCubes)
+    lastSmokeCube = 0
     flows = nil
     lastBomb = 0
-    lastSmokeCube = 0
 end
 
 -- lava running down the cone: segments found by marching out from the rim and raycasting down onto the model
@@ -565,7 +506,26 @@ local function buildFlows()
             local part = neon(Vector3.new(width, 5, length), Color3.fromRGB(255, 120, 30), fx.folder)
             part.CFrame = CFrame.lookAt((a.position + b.position) / 2, b.position, a.normal)
             part.Transparency = 1
-            table.insert(out.segments, { part = part, revealAt = reveal })
+            local embers
+            if step % 2 == 0 then
+                -- the lava throws off embers as it creeps down: little pixel sparks that drift up on the hot air
+                embers = emitter(part, {
+                    Texture = Config.EmberTexture,
+                    Lifetime = NumberRange.new(2.5, 4.5),
+                    Speed = NumberRange.new(10, 34),
+                    SpreadAngle = Vector2.new(48, 48),
+                    EmissionDirection = Enum.NormalId.Top,
+                    Rotation = NumberRange.new(0, 360),
+                    RotSpeed = NumberRange.new(-60, 60),
+                    Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 9), NumberSequenceKeypoint.new(1, 1) }),
+                    Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.7, 0.2), NumberSequenceKeypoint.new(1, 1) }),
+                    Color = ColorSequence.new(Color3.fromRGB(255, 220, 140), Color3.fromRGB(255, 80, 30)),
+                    LightEmission = 1,
+                    LightInfluence = 0,
+                    Acceleration = Vector3.new(7, 22, 3),
+                })
+            end
+            table.insert(out.segments, { part = part, revealAt = reveal, embers = embers })
             reveal += 0.3 -- the head of the flow runs down the cone at about 70 studs a second
         end
     end
@@ -622,6 +582,27 @@ local function stepBombs()
     end
 end
 
+-- The imported volcano's lava is NOT painted on: the lake and the cracks are dark, cooled rock and only light up through the
+-- emissive mask, so the glow can follow the event (and be off when it is over).
+local GLOW_STRENGTH = 4 -- EmissiveStrength at full eruption: the lava veins, embers and crater rim on the mesh glow with the event (0 when idle)
+-- leak: 0 before the blast, ramping to 1 a few seconds after it while the volcano is erupting and leaking lava (fades in cooling).
+-- It multiplies the glow up to 4.5x and shifts the tint from orange to a hot yellow-white.
+local leakLevel = 0
+local function setVolcanoGlow(level)
+    if not volcano then
+        return
+    end
+    for _, appearance in volcano.appearances do
+        if appearance.Parent then
+            appearance.EmissiveStrength = GLOW_STRENGTH * level * (1 + 3.5 * leakLevel)
+            appearance.EmissiveTint = Color3.fromRGB(255, 150, 60):Lerp(Color3.fromRGB(255, 205, 120), leakLevel)
+        end
+    end
+end
+
+-- The plume and the embers are camera-facing sprites (BillboardGuis) instead of ParticleEmitters: Roblox stops drawing particles a
+-- thousand or so studs away, and the volcano stands about 2,400 studs from the map, while a BillboardGui with no distance limit is drawn
+-- at any range. The art is the cartoon cloud sheet (a 2 x 2 grid of puffs) tinted per layer, and a pixel ember.
 -- Real 3D studded voxel smoke cubes rising into the sky (3D BaseParts render at any distance, unlike 2D ParticleEmitters)
 local SMOKE_COLORS = {
     Color3.fromRGB(70, 56, 58),
@@ -725,18 +706,92 @@ local function stepSmokeCubes(now)
     end
 end
 
--- The imported volcano's lava is NOT painted on: the lake and the cracks are dark, cooled rock and only light up through the
--- emissive mask, so the glow can follow the event (and be off when it is over).
-local GLOW_STRENGTH = 0 -- the volcano's own mesh no longer glows: lava on the volcano is seen only in the cutscene (set 5 to bring it back)
-local function setVolcanoGlow(level)
-    if not volcano then
+local sprites = {}
+local lastSpriteTick = os.clock()
+local lastEmberTick = os.clock()
+local emberAccumulator = 0
+local MAX_EMBER_SPRITES = 150
+local emberCount = 0
+local function newSprite(image, rect, parent)
+    local part = Instance.new("Part")
+    part.Name = "VolcanoSprite"
+    part.Anchored = true
+    part.CanCollide = false
+    part.CanTouch = false
+    part.CanQuery = false
+    part.CastShadow = false
+    part.Transparency = 1
+    part.Size = Vector3.one
+    local gui = Instance.new("BillboardGui")
+    gui.Size = UDim2.fromScale(10, 10) -- scale is in studs for a BillboardGui
+    gui.AlwaysOnTop = false
+    pcall(function()
+        gui.MaxDistance = math.huge
+    end)
+    gui.Parent = part
+    local label = Instance.new("ImageLabel")
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.fromScale(1, 1)
+    label.Image = image
+    if rect then
+        label.ImageRectSize = Vector2.new(512, 512)
+        label.ImageRectOffset = rect
+    end
+    label.Parent = gui
+    part.Parent = parent
+    return part, gui, label
+end
+
+local function spawnEmberSprite(position, now)
+    if emberCount >= MAX_EMBER_SPRITES or not fx then
         return
     end
-    for _, appearance in volcano.appearances do
-        if appearance.Parent then
-            appearance.EmissiveStrength = GLOW_STRENGTH * level
+    local rng = Random.new(math.floor(now * 1000) % 1000003 + emberCount * 17)
+    local part, gui, label = newSprite(Config.EmberTexture, nil, fx.folder)
+    gui.LightInfluence = 0
+    label.ImageColor3 = Color3.fromRGB(255, 200, 110)
+    emberCount += 1
+    table.insert(sprites, {
+        kind = "ember",
+        part = part, gui = gui, label = label,
+        born = now,
+        life = rng:NextNumber(2.4, 4.2),
+        origin = position + Vector3.new(rng:NextNumber(-8, 8), 5, rng:NextNumber(-8, 8)),
+        velocity = Vector3.new(rng:NextNumber(-6, 14), rng:NextNumber(14, 38), rng:NextNumber(-8, 8)),
+        size = { rng:NextNumber(22, 40) * (0.5 + 1.4 * leakLevel), 4 }, -- small and quiet until the volcano is leaking
+        fade = 0.45 * (1 - leakLevel), -- extra see-through at the start while it is not leaking yet
+        rotation = 0, rotSpeed = rng:NextNumber(-90, 90),
+        sizeJitter = 1,
+    })
+end
+
+-- (embers only now: the smoke is the original voxel cubes again)
+local function stepSprites(now)
+    for i = #sprites, 1, -1 do
+        local sp = sprites[i]
+        local age = now - sp.born
+        if age >= sp.life or not sp.part.Parent then
+            emberCount -= 1
+            sp.part:Destroy()
+            table.remove(sprites, i)
+        else
+            local u = age / sp.life
+            sp.part.Position = sp.origin + sp.velocity * age + Vector3.new(7, 22, 3) * (age * age * 0.5)
+            local d = sp.size[1] + (sp.size[2] - sp.size[1]) * u
+            sp.gui.Size = UDim2.fromScale(d, d)
+            sp.label.Rotation = age * sp.rotSpeed
+            sp.label.ImageColor3 = Color3.fromRGB(255, 225, 150):Lerp(Color3.fromRGB(255, 70, 25), u)
+            sp.label.ImageTransparency = 1 - (1 - sp.fade) * (1 - smooth(0.55, 1, u))
         end
     end
+end
+
+function clearSprites()
+    for _, sp in sprites do
+        sp.part:Destroy()
+    end
+    table.clear(sprites)
+    emberCount = 0
 end
 
 local function updateVolcano(t, k)
@@ -774,17 +829,27 @@ local function updateVolcano(t, k)
     local glowK = phase == "Warning" and (0.25 + 0.55 * (t / warn)) or phase == "Cooling" and (0.9 * (1 - (t - coolStart) / Config.CoolSeconds)) or 1
     local pulse = 0.5 + 0.5 * math.sin(os.clock() * (phase == "Warning" and 3 or 5))
     fx.glow.Transparency = 1 -- the glowing lake disc is gone: the cutscene's own animated lava lake is the only lava in the caldera
-    setVolcanoGlow(glowK * (0.85 + 0.15 * pulse))
+    leakLevel = smooth(warn, warn + 7, t) * (t >= coolStart and (1 - smooth(coolStart, coolStart + Config.CoolSeconds, t)) or 1)
+    -- the veins and embers on the mesh stay dark through the warning and light up when the eruption happens
+    setVolcanoGlow(glowK * smooth(warn, warn + 4, t) * (0.8 + 0.2 * pulse))
     fx.light.Brightness = 8 * glowK
     if fx.calderaSound then
         fx.calderaSound.Volume = 0.4 * glowK
     end
     local e = fx.emitters
-    e.smoke.Rate = phase == "Warning" and 1.5 + 5 * (t / warn) or 4 + 22 * blast
-    e.fire.Rate = 30 * blast
-    e.sparks.Rate = 70 * blast
-    -- the fountain: rising, pulsing neon voxel blocks & columns
     local now = os.clock()
+    local cameraAtCrater = cinematic ~= nil and cinematic.active and t < warn -- the cutscene camera is right at the crater: no cubes yet
+    -- 3D voxel smoke cubes in the sky (visible from the entire map, unlike 2D particles)
+    local isWarning = phase == "Warning"
+    local smokeActive = isWarning or blast > 0.03
+    local smokeGap = isWarning and (0.45 - 0.22 * math.clamp(t / warn, 0, 1)) or math.max(0.11, 0.32 - 0.21 * blast)
+    if smokeActive and not cameraAtCrater and now - lastSmokeCube > smokeGap then
+        lastSmokeCube = now
+        spawnSmokeCube(now, blast, isWarning)
+    end
+    stepSmokeCubes(now)
+    stepSprites(now)
+    -- the fountain: rising, pulsing neon voxel blocks & columns
     local maxH = 60 + 540 * blast
     for _, fc in fx.fountainChunks do
         if blast <= 0.02 then
@@ -814,15 +879,6 @@ local function updateVolcano(t, k)
         spawnBomb(now)
     end
     stepBombs()
-    -- 3D voxel smoke cubes in the sky (visible from the entire map, unlike 2D particles)
-    local isWarning = phase == "Warning"
-    local smokeActive = isWarning or blast > 0.03
-    local smokeGap = isWarning and (0.45 - 0.22 * math.clamp(t / warn, 0, 1)) or math.max(0.11, 0.32 - 0.21 * blast)
-    if smokeActive and now - lastSmokeCube > smokeGap then
-        lastSmokeCube = now
-        spawnSmokeCube(now, blast, isWarning)
-    end
-    stepSmokeCubes(now)
     -- flows: build as soon as the volcano erupts (t >= warn) and keep across the whole eruption & lava phase so the cone has rivers of lava from afar!
     if t >= warn and not flows then
         local ok, result = pcall(buildFlows)
@@ -833,8 +889,12 @@ local function updateVolcano(t, k)
     end
     if flows then
         local since = t - warn
+        local revealed = {}
         for _, segment in flows.segments do
             if segment.part.Parent then
+                if segment.embers then
+                    segment.embers.Rate = (since >= segment.revealAt and t < coolStart) and 2.5 or 0
+                end
                 if t >= coolStart then
                     local f = smooth(coolStart, coolStart + Config.CoolSeconds, t)
                     segment.part.Color = Color3.fromRGB(255, 120, 30):Lerp(Color3.fromRGB(110, 36, 26), math.min(1, f * 1.6))
@@ -848,9 +908,19 @@ local function updateVolcano(t, k)
                     local heat = math.clamp(1 - age / 6, 0, 1)
                     segment.part.Color = cooled:Lerp(Color3.fromRGB(255, 236, 160), heat * heat)
                     segment.part.Transparency = 1 - appear * (0.9 - 0.08 * math.sin(now * 3 + segment.revealAt * 5))
+                    revealed[#revealed + 1] = segment.part
                 end
             end
         end
+        -- lava embers drift off the flows
+        if #revealed > 0 and t < coolStart then
+            emberAccumulator += (9 + 61 * leakLevel) * math.clamp(os.clock() - lastEmberTick, 0, 0.25)
+            while emberAccumulator >= 1 do
+                emberAccumulator -= 1
+                spawnEmberSprite(revealed[math.random(1, #revealed)].Position, os.clock())
+            end
+        end
+        lastEmberTick = os.clock()
     end
 end
 
@@ -1168,8 +1238,7 @@ end
 local function dropFlames(entry)
     if entry.fire then
         entry.fire:Destroy()
-        entry.smoke:Destroy()
-        entry.fire, entry.smoke = nil, nil
+        entry.fire = nil
     end
 end
 
@@ -1204,14 +1273,8 @@ local function styleBridgePiece(entry, bv, burning, index)
             fire.Color = Color3.fromRGB(255, 150, 40)
             fire.SecondaryColor = Color3.fromRGB(200, 40, 10)
             fire.Parent = part
-            local smoke = Instance.new("Smoke")
-            smoke.Name = "VolcanoBridgeSmoke"
-            smoke.Size = 6
-            smoke.Opacity = (index % 3 == 0) and 0.35 or 0
-            smoke.RiseVelocity = 7
-            smoke.Color = Color3.fromRGB(60, 50, 48)
-            smoke.Parent = part
-            entry.fire, entry.smoke = fire, smoke
+            -- (no Smoke object: 44 of them beside a bridge fill the whole screen with a red fog)
+            entry.fire = fire
         end
     else
         dropFlames(entry)
@@ -1277,7 +1340,6 @@ local slow = 0
 RunService.RenderStepped:Connect(function(dt)
     local t = eventTime()
     updateBurnTint(dt)
-    updatePlug()
     if not t or Config.PhaseAt(t) == "Idle" then
         if running then
             reset()
@@ -1355,11 +1417,10 @@ workspace:GetAttributeChangedSignal("VolcanoStart"):Connect(function()
     end
 end)
 
--- keep the volcano located and its opening plugged even when no event runs
+-- keep the volcano located even when no event runs
 task.spawn(function()
     while true do
         locate()
-        ensurePlug()
         task.wait(3)
     end
 end)

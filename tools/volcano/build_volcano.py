@@ -25,7 +25,7 @@ from obj_to_glb import convert
 from voxel_kit import Mat, Model
 
 BLOCK = 10.0                 # studs per block (the far trees: F * SCALE = 2 * 5)
-BASE_R, RIM_H, CRATER_R, BOWL = 50, 64, 11.0, 7
+BASE_R, RIM_H, CRATER_R, BOWL = 47, 64, 11.0, 7   # a narrower foot than before: a steeper, taller cone
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets", "Volcano")
 NAME = "FarVolcano"
 rng = np.random.default_rng(2611)
@@ -33,18 +33,27 @@ rng = np.random.default_rng(2611)
 # ---- colours: banded, no per-block noise (like the far trees) ----
 # Aerial perspective is baked in: cooler, lighter, lower-contrast colours so it reads as a far mountain next to the near trees.
 MATS = {
+    # rev 10: warm basalt (no purple): dark brown-black low, red-brown mid, warm ash-grey at the top, two tones each
     "forest0": Mat((46, 92, 60), "forest"), "forest1": Mat((62, 116, 72), "forest"),
     "dirt0": Mat((104, 78, 62), "dirt"), "dirt1": Mat((126, 96, 78), "dirt"),
-    # warm basalt: dark brown-black low, red-brown mid, pale ash-grey at the top, each in two tones so the slopes are not flat
     "rock0": Mat((60, 48, 50), "rock"), "rock0b": Mat((46, 36, 40), "rock"),
     "rock1": Mat((92, 72, 66), "rock"), "rock1b": Mat((74, 58, 56), "rock"),
     "rock2": Mat((122, 100, 90), "rock"), "rock2b": Mat((100, 82, 76), "rock"),
     "ash": Mat((156, 143, 134), "ash"),
-    "crust": Mat((150, 56, 26), "crust"),           # unused unless BAKED_FLOWS
-    "inner": Mat((36, 28, 30), "inner"),            # caldera walls and the rock under the lake
-    "lava": Mat((48, 38, 40), "lava"),             # the crater floor: plain dark basalt. NO lava is baked into this mesh (the event draws all of it)
-
+    "vein": Mat((46, 28, 30), "vein"),      # dormant lava vein: a dark crack that glows with the event (emissive mask)
+    "spot": Mat((58, 32, 30), "spot"),      # dormant ember spot
+    "crust": Mat((150, 56, 26), "crust"),
+    "inner": Mat((36, 28, 30), "inner"),
+    "lava": Mat((48, 38, 40), "lava"),
 }
+
+# Dormant veins and spots look exactly like the rock around them (same colour, same group, so no outline either): they only show as the
+# event's emissive ramp fades them in, and fade out again when it is over. One lookalike material per rock band.
+BANDS = ("dirt0", "dirt1", "rock0", "rock0b", "rock1", "rock1b", "rock2", "rock2b", "ash")
+for _n in BANDS:
+    _m = MATS[_n]
+    for _k in ("vein_", "spot_"):
+        MATS[_k + _n] = Mat(tuple(_m.rgb * 255), _m.group)
 
 # ---- height field ----
 N = BASE_R * 2 + 3
@@ -55,9 +64,10 @@ def ridge(a):  # angular ridges and gullies on the cone
 H = np.zeros((N, N), int); BAND = [[None] * N for _ in range(N)]
 flows = [(rng.uniform(0, 6.28), rng.uniform(0, 6.28), rng.uniform(0.25, 0.45)) for _ in range(3)]  # direction, wobble phase, wobble pace
 # Glow strength per material (0..255) for the emissive mask: the lake blazes, the flows glow, everything else is dark.
-EMISSIVE = {}  # no glowing parts: all masks come out black
+EMISSIVE = {**{"vein_" + n: 255 for n in BANDS}, **{"spot_" + n: 235 for n in BANDS}}   # glow strength of the emissive masks (the client ramps it with the event; 0 when idle)
+VEINS = [(rng.uniform(0, 6.28), rng.uniform(0, 6.28), rng.uniform(0.3, 0.55)) for _ in range(9)]  # direction, wobble phase, wobble pace
 NOTCH_ANGLE = 0.0   # model-space direction of the opening (after import the model is turned so this faces the map)
-NOTCH_HALF = 2.6    # half-width of the opening in blocks (26 studs each side)
+NOTCH_HALF = -1     # no opening: the rim is solid (it was a notch for the cutscene camera; the camera now looks over the rim)
 FLOOR_H = RIM_H - 1 - BOWL            # lake floor height in blocks
 LIP_H = FLOOR_H + 3.5               # the opening's lip: lava rising past this spills out
 NOTCH_CELLS = set()
@@ -68,7 +78,7 @@ for i in range(N):
         if r > BASE_R: continue
         a = math.atan2(dz, dx)
         t = max(0.0, 1 - r / BASE_R)
-        cone = RIM_H * (t ** 1.85) / ((1 - CRATER_R / BASE_R) ** 1.85)     # = RIM_H at the caldera rim
+        cone = RIM_H * (t ** 1.22) / ((1 - CRATER_R / BASE_R) ** 1.22)     # = RIM_H at the caldera rim
         cone *= 1 + ridge(a) * min(1, r / 18)
         if r <= CRATER_R:
             u = r / CRATER_R
@@ -105,7 +115,7 @@ for i in range(N):
 best = max(((H[i, k], i, k) for i in range(N) for k in range(N) if BAND[i][k] and CRATER_R < BAND[i][k][0] < CRATER_R + 2.6), key=lambda x: x[0])
 H[best[1], best[2]] = RIM_H
 
-def mat_for(i, k, y, top):
+def mat_for(i, k, y, top, plain=False):
     r, a = BAND[i][k]
     if r <= CRATER_R + 0.2:
         return "lava" if y >= H[i, k] - 2 else "inner"
@@ -119,10 +129,20 @@ def mat_for(i, k, y, top):
         if d < width and r > CRATER_R + 1 and reach < 1 and y > 8: return "crust"
     j = ((i * 7 + k * 13 + y * 5) % 7 - 3) * 0.012                    # ragged band edges, still no per-block noise
     f = y / RIM_H + j
-    if f < .12: return "forest0" if (i + k) % 5 else "forest1"
-    if f < .26: return "forest1" if (i * 3 + k) % 4 else "forest0"
-    if f < .36: return "dirt0"
-    if f < .48: return "dirt1"
+    surface = y >= H[i, k] - 2                                          # the outer two blocks of a column
+    if surface and f > .14 and r > CRATER_R + 1.5 and not plain:                      # lava veins: narrow, wandering, running down from the rim
+        for vf, phase, pace in VEINS:
+            wobble = 0.06 * math.sin(r * pace + phase) + 0.03 * math.sin(r * pace * 2.1 + phase * 1.7)
+            d = abs(((a - vf - wobble + math.pi) % (2 * math.pi)) - math.pi) * r
+            reach = (r - CRATER_R) / (BASE_R * 0.85 - CRATER_R)
+            if reach < 1 and d < (0.55 + 0.55 * (1 - reach)) * (0.8 + 0.4 * math.sin(r * 0.8 + phase)):
+                return "vein_" + mat_for(i, k, y, top, True)
+        if (i * 13 + k * 7 + y * 3) % 47 == 0:
+            return "spot_" + mat_for(i, k, y, top, True)                                               # scattered embers
+    if f < .08: return "forest0" if (i + k) % 5 else "forest1"
+    if f < .14: return "forest1" if (i * 3 + k) % 4 else "forest0"
+    if f < .26: return "dirt0"
+    if f < .38: return "dirt1"
     alt = (i * 5 + k * 3 + y) % 4 == 0                                  # a second tone on one block in four
     if f < .66: return "rock0b" if alt else "rock0"
     if f < .84: return "rock1b" if alt else "rock1"

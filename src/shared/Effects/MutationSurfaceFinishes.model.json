@@ -1,0 +1,45 @@
+{
+  "ClassName": "Folder",
+  "Children": [
+    {
+      "Name": "Rainbow",
+      "ClassName": "SurfaceAppearance",
+      "Properties": {
+        "ColorMap": "rbxassetid://70614355485441",
+        "NormalMap": "",
+        "RoughnessMap": "rbxassetid://95277488348789",
+        "MetalnessMap": "rbxassetid://85958816211554"
+      }
+    },
+    {
+      "Name": "Diamond",
+      "ClassName": "SurfaceAppearance",
+      "Properties": {
+        "ColorMap": "rbxassetid://70482436642739",
+        "NormalMap": "rbxassetid://73307358846917",
+        "RoughnessMap": "rbxassetid://109719204075993",
+        "MetalnessMap": "rbxassetid://85958816211554"
+      }
+    },
+    {
+      "Name": "Gold",
+      "ClassName": "SurfaceAppearance",
+      "Properties": {
+        "ColorMap": "rbxassetid://110840054513785",
+        "NormalMap": "rbxassetid://84345945123232",
+        "RoughnessMap": "rbxassetid://114057544381844",
+        "MetalnessMap": "rbxassetid://103782747534661"
+      }
+    },
+    {
+      "Name": "Silver",
+      "ClassName": "SurfaceAppearance",
+      "Properties": {
+        "ColorMap": "rbxassetid://96228988315926",
+        "NormalMap": "rbxassetid://107568613733597",
+        "RoughnessMap": "rbxassetid://89145687560278",
+        "MetalnessMap": "rbxassetid://130282206805374"
+      }
+    }
+  ]
+}

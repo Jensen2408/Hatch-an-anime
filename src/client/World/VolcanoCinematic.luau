@@ -59,11 +59,11 @@ function Cinematic:_keyframes()
         -- a wide establishing shot of the whole mountain over the map's edge
         { t = 0, pos = at(n * 1700, lipY - 330), target = at(Vector3.zero, lipY - 60), fov = 52 },
         { t = 5, pos = at(n * 1250 + s * 240, lipY - 250), target = at(Vector3.zero, lipY - 20), fov = 54 },
-        -- in toward the opening: the lava can already be seen glowing inside
-        { t = 11, pos = at(n * 560 - s * 130, lipY + 70), target = at(n * 60, lipY - 25), fov = 60 },
-        -- right up to the lip, looking down into the rising lake
-        { t = 16, pos = at(n * 250, lipY + 45), target = at(Vector3.zero, floorY + 25), fov = 66 },
-        { t = 19, pos = at(n * 320 + s * 60, rimY + 90), target = at(Vector3.zero, lipY), fov = 68 },
+        -- in over the map side of the rim, the lava already glowing inside the crater
+        { t = 11, pos = at(n * 600 - s * 140, rimY + 95), target = at(Vector3.zero, lipY - 20), fov = 60 },
+        -- right up above the rim, looking down into the rising lake
+        { t = 16, pos = at(n * 250, rimY + 135), target = at(Vector3.zero, floorY + 25), fov = 66 },
+        { t = 19, pos = at(n * 330 + s * 70, rimY + 115), target = at(Vector3.zero, lipY), fov = 68 },
         -- the blast at t = 20: pull back and up, so the fountain rises past the lens
         { t = 23, pos = at(n * 760 + s * 300, rimY + 190), target = at(Vector3.zero, rimY + 150), fov = 62 },
         { t = 27, pos = at(n * 1250 + s * 90, 340), target = at(Vector3.zero, rimY + 230), fov = 56 },

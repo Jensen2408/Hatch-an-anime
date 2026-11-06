@@ -152,66 +152,6 @@ return function(conveyor, egg)
         if prompt then
             prompt.Enabled = (phase == "travel")
         end
-        -- Client-only splash: two expanding rings of 28 thin segments, once when the egg lands.
-        if game:GetService("RunService"):IsClient() and phase == "land" and lastPhase ~= "land" then
-            local river = workspace:FindFirstChild("WaterfallRiver")
-            if river then
-                local Debris = game:GetService("Debris")
-                local TweenService = game:GetService("TweenService")
-                local origin = Vector3.new(
-                    eggCFrame.Position.X,
-                    Path.SurfaceY + Waves.State(workspace:GetServerTimeNow()).level + 0.12,
-                    eggCFrame.Position.Z
-                )
-                local rippleFolder = Instance.new("Folder")
-                rippleFolder.Name = "LandingRipples"
-                rippleFolder.Parent = river
-                Debris:AddItem(rippleFolder, 1.7)
-                for layer = 1, 2 do
-                    for i = 1, 28 do
-                        local angle = i / 28 * math.pi * 2
-                        local segment = Instance.new("Part")
-                        segment.Name = "Ripple"
-                        segment.Anchored = true
-                        segment.CanCollide = false
-                        segment.CanTouch = false
-                        segment.CanQuery = false
-                        segment.CastShadow = false
-                        segment.Material = Enum.Material.SmoothPlastic
-                        segment.Color = Color3.fromRGB(210, 248, 250)
-                        segment.Transparency = 0.3
-                        local radius = 1.6 + layer * 0.25
-                        segment.Size = Vector3.new(radius * math.pi * 2 / 28 + 0.02, 0.012, 0.09)
-                        segment.CFrame = CFrame.new(
-                            origin
-                                + Vector3.new(math.cos(angle) * radius, layer * 0.005, math.sin(angle) * radius * 0.8)
-                        ) * CFrame.Angles(0, -angle - math.pi * 0.5, 0)
-                        segment.Parent = rippleFolder
-                        local finalRadius = 4 + layer * 0.55
-                        TweenService
-                            :Create(
-                                segment,
-                                TweenInfo.new(1.1 + layer * 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                                {
-                                    -- +1.4 on X: the ring drifts downstream while it expands
-                                    CFrame = CFrame.new(
-                                        origin
-                                            + Vector3.new(
-                                                1.4 + math.cos(angle) * finalRadius,
-                                                layer * 0.005,
-                                                math.sin(angle) * finalRadius * 0.8
-                                            )
-                                    )
-                                        * CFrame.Angles(0, -angle - math.pi * 0.5, 0),
-                                    Size = Vector3.new(finalRadius * math.pi * 2 / 28 + 0.02, 0.012, 0.025),
-                                    Transparency = 1,
-                                }
-                            )
-                            :Play()
-                    end
-                end
-            end
-        end
         lastPhase = phase
     end
     return update, pose

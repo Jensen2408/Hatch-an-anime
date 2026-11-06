@@ -31,6 +31,10 @@ Config.RimHeight = 640
 Config.LipRadius = 72 -- radius of the lava lake when it has risen to the lip
 
 -- The cutscene at the start of the event (VolcanoCinematic): the camera flies to the volcano and watches the lava rise and the blast.
+-- Particle textures (tools/volcano/smoke-textures.js): the cartoon cloud puffs (a 2 x 2 flipbook) and a pixel ember.
+Config.SmokeTexture = "rbxassetid://104103831638368"
+Config.EmberTexture = "rbxassetid://106090305799843"
+
 Config.Cinematic = true
 Config.CinematicSeconds = 33
 
