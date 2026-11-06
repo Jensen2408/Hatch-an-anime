@@ -79,6 +79,9 @@
         "CinematicHatch": {
           "$path": "src/client/Hatching/CinematicHatch.client.luau"
         },
+        "SummonHatch": {
+          "$path": "src/client/Hatching/SummonHatch"
+        },
         "MusicSettings": {
           "$path": "src/client/Audio/MusicSettings.client.luau"
         },
@@ -4002,6 +4005,9 @@
       },
       "HatchCameraGate": {
         "$path": "src/server/Hatching/HatchCameraGate.luau"
+      },
+      "SummonHatchServer": {
+        "$path": "src/server/Hatching/SummonHatchServer.luau"
       },
       "AdminRoles": {
         "$path": "src/server/Admin/AdminRoles.luau"

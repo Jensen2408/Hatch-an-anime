@@ -740,6 +740,10 @@ local function hookChamber(instance)
             return
         end
         local chamber = instance.Parent
+        -- The summon animation already showed Power, income and roll quality for this hatch.
+        if chamber and chamber:GetAttribute("SummonReveal") then
+            return
+        end
         local shown = chamber and chamber:FindFirstChild("HatchedCharacter")
         local id = type(rewardId) == "string" and Catalog.ById[rewardId] and rewardId
         local stats = shown and id and Economy.Read(shown, id)

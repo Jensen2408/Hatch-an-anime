@@ -3,7 +3,9 @@
 -- Reads player attributes set by PlayerDataService: OfflineEarnings (cash put on the stands), OfflineSeconds.
 -- 2× button buys ShopConfig.Products.Offline2x (hidden while that id is 0); ShopService pays the same amount again.
 -- Remote: ShopRemote:InvokeServer("Buy", "Offline2x") only opens the Robux prompt; the payout happens in ShopService's
--- ProcessReceipt, which sets the OfflineDoubled attribute that this window listens for. Display only; never grants cash.
+-- ProcessReceipt, which sets the OfflineDoubled attribute that this window listens for. Closing the window (COLLECT,
+-- 2x, X) asks the server to move the offline cash from the money stands into Cash (OfflineCollect) while coins fly
+-- into the money card; the server decides the amount.
 -- Shown once per session, after JoinArrivalFinished / LoadingScreenDone (or 20 s) + 1.2 s.
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -84,6 +86,123 @@ local function formatAwayTime(seconds)
         return hours .. "h " .. minutes .. "m"
     end
     return math.max(1, minutes) .. "m"
+end
+
+---------------------------------------------------------------- collect: coins fly into the money card
+-- ReplicatedStorage.OfflineCollect moves the offline cash from the money stands into Cash (server, once). It is called
+-- when the first coin lands, so the card's number climbs while the coins arrive; MoneyDisplay.CashPulse makes the
+-- card bump with each coin and flash when the last one is in.
+local GuiService = game:GetService("GuiService")
+local RunService = game:GetService("RunService")
+local collectRemote = ReplicatedStorage:WaitForChild("OfflineCollect", 30)
+
+-- centre of a GuiObject in screen pixels (the space of a ScreenGui with ScreenInsets None). AbsolutePosition is
+-- measured from below the top bar inset whatever the object's own ScreenGui does, so the inset is always added.
+local function screenCentre(object)
+    return object.AbsolutePosition + object.AbsoluteSize / 2 + GuiService:GetGuiInset()
+end
+
+local function collectOffline()
+    if collectRemote then
+        pcall(collectRemote.InvokeServer, collectRemote)
+    end
+end
+
+local function flyCoins(fromObject, amount)
+    local playerGui = player:WaitForChild("PlayerGui")
+    local moneyGui = playerGui:FindFirstChild("MoneyDisplay")
+    local cashCard = moneyGui and moneyGui:FindFirstChild("CashUI")
+    local coinIcon = cashCard and cashCard:FindFirstChild("CoinIcon", true)
+    local cashPulse = moneyGui and moneyGui:FindFirstChild("CashPulse")
+    if not coinIcon or not moneyGui.Enabled then
+        collectOffline()
+        return
+    end
+    local from = screenCentre(fromObject)
+    local to = screenCentre(coinIcon)
+    local layer = create("ScreenGui", {
+        Name = "OfflineCoinFly",
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        ScreenInsets = Enum.ScreenInsets.None,
+        DisplayOrder = 85,
+    }, playerGui)
+    local count = math.clamp(math.floor(8 + math.log10(math.max(amount, 1)) * 1.5), 10, 20)
+    local coinSize = math.clamp(coinIcon.AbsoluteSize.X * 1.1, 26, 56)
+    local coins, landed, startedAt = {}, 0, os.clock()
+    for i = 1, count do
+        local angle = math.random() * math.pi * 2
+        local spread = Vector2.new(math.cos(angle), math.sin(angle) * 0.7) * (50 + math.random() * 90)
+        local image = create("ImageLabel", {
+            BackgroundTransparency = 1,
+            Image = coinIcon.Image,
+            ScaleType = Enum.ScaleType.Fit,
+            ResampleMode = Enum.ResamplerMode.Pixelated,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromOffset(from.X, from.Y),
+            Size = UDim2.fromOffset(coinSize, coinSize),
+            Rotation = math.random(-30, 30),
+        }, layer)
+        -- out: a quick burst around the amount; in: a curve (bending up and away) into the card's coin icon
+        local burst = from + spread
+        local bend = (burst + to) / 2 + Vector2.new(spread.X * 0.6, -120 - math.random() * 80)
+        coins[i] = {
+            image = image,
+            burst = burst,
+            bend = bend,
+            outAt = (i - 1) * 0.015,
+            inAt = 0.32 + (i - 1) * 0.045,
+            flight = 0.42 + math.random() * 0.12,
+            spin = math.random(-360, 360),
+        }
+    end
+    local connection
+    connection = RunService.RenderStepped:Connect(function()
+        local t = os.clock() - startedAt
+        for i, coin in coins do
+            if coin.done then
+                continue
+            end
+            local position, size = nil, coinSize
+            if t < coin.inAt then
+                local u = math.clamp((t - coin.outAt) / 0.22, 0, 1)
+                u = 1 - (1 - u) ^ 3
+                position = from:Lerp(coin.burst, u)
+            else
+                local u = math.clamp((t - coin.inAt) / coin.flight, 0, 1)
+                local e = u * u
+                local a = coin.burst:Lerp(coin.bend, e)
+                local b = coin.bend:Lerp(to, e)
+                position = a:Lerp(b, e)
+                size = coinSize * (1 - 0.45 * e)
+                coin.image.Rotation += coin.spin * 0.016
+                if u >= 1 then
+                    coin.done = true
+                    coin.image:Destroy()
+                    landed += 1
+                    if landed == 1 then
+                        task.spawn(collectOffline)
+                    end
+                    if cashPulse then
+                        cashPulse:Fire(landed == count and "burst" or "coin")
+                    end
+                    if landed == count then
+                        UISound.Play("CoinChing", 1.0, 0.9)
+                    elseif i % 3 == 1 then
+                        UISound.PlayCoinPickup()
+                    end
+                    continue
+                end
+            end
+            coin.image.Position = UDim2.fromOffset(position.X, position.Y)
+            coin.image.Size = UDim2.fromOffset(size, size)
+        end
+        if landed >= count then
+            connection:Disconnect()
+            layer:Destroy()
+        end
+    end)
+    UISound.Play("CoinRustle")
 end
 
 local hasShown = false
@@ -231,7 +350,7 @@ local function showWindow()
     amountGlow.Parent = window
     makeLabel(
         window,
-        "earned while you were away · collect it from your money stands",
+        "earned while you were away",
         15,
         rgb(220, 215, 245),
         { Position = UDim2.fromOffset(0, 364), Size = UDim2.new(1, 0, 0, 20), ZIndex = 8 }
@@ -265,6 +384,15 @@ local function showWindow()
             screenGui:Destroy()
         end)
     end
+    -- every way out of the window collects: the cash flies from the amount into the money card, then it closes
+    local collected = false
+    local function collectAndClose(shownAmount)
+        if not collected then
+            collected = true
+            flyCoins(amountLabel, shownAmount or amount)
+        end
+        close()
+    end
     -- the drawn X closes too
     local closeButton = create("TextButton", {
         Text = "",
@@ -273,7 +401,9 @@ local function showWindow()
         Size = UDim2.fromOffset(62, 55),
         ZIndex = 20,
     }, window)
-    closeButton.Activated:Connect(close)
+    closeButton.Activated:Connect(function()
+        collectAndClose()
+    end)
     -- a button piece (OffGreen / OffGold) at rect with its title + subtitle and a press bounce
     local function makeButton(text, subtitle, pieceName, rect, onClick, pulse)
         local buttonHolder = create("Frame", {
@@ -328,7 +458,9 @@ local function showWindow()
         return buttonHolder
     end
     if canDouble then
-        makeButton("COLLECT", formatShortCash(amount), "OffGreen", { 39, 408, 240, 101 }, close)
+        makeButton("COLLECT", formatShortCash(amount), "OffGreen", { 39, 408, 240, 101 }, function()
+            collectAndClose()
+        end)
         local doubleButton = makeButton(
             "2× COLLECT",
             formatShortCash(amount * 2) .. "  ·  R$ " .. tostring(ShopConfig.Prices.Offline2x or 19),
@@ -368,10 +500,14 @@ local function showWindow()
             )
             addCorner(flash, 18)
             TweenService:Create(flash, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
-            task.delay(1.8, close)
+            task.delay(1.8, function()
+                collectAndClose(amount * 2)
+            end)
         end)
     else
-        makeButton("AWESOME!", nil, "OffGreen", { 130, 408, 300, 101 }, close)
+        makeButton("AWESOME!", nil, "OffGreen", { 130, 408, 300, 101 }, function()
+            collectAndClose()
+        end)
     end
     UISound.Play("Open")
 end
