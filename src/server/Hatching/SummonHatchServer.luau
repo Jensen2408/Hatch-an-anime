@@ -96,12 +96,15 @@ local function displayCopy(source, name)
     return copy
 end
 
--- Where the summon starts: on the walkway in front of the incubator (its front is the pivot's LookVector).
-local function stageOf(chamber)
+-- Where the summon starts: inside the incubator, where the egg sits in the tank (HatchGoo puts it at pivot * (0, 3.5, -1.5)).
+-- The camera looks in from the front (the pivot's LookVector).
+local function stageOf(chamber, egg)
     local pivot = chamber:GetPivot()
     local look = pivot.LookVector * Vector3.new(1, 0, 1)
     look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
-    return pivot.Position + look * 14 + Vector3.new(0, 4, 0), look
+    local home = egg and egg:GetAttribute("ChamberHome")
+    local origin = typeof(home) == "CFrame" and home.Position or (pivot * CFrame.new(0, 3.5, -1.5)).Position
+    return origin, look
 end
 
 function Service.Play(player, info)
@@ -138,7 +141,7 @@ function Service.Play(player, info)
             rank = index
         end
     end
-    local origin, face = stageOf(info.chamber)
+    local origin, face = stageOf(info.chamber, info.egg)
     cue:FireClient(player, "Play", {
         token = token,
         characterId = info.characterId,
@@ -157,6 +160,8 @@ function Service.Play(player, info)
         qualityColor = band and band.Color or Color3.new(1, 1, 1),
         origin = origin,
         face = face,
+        inChamber = true, -- the opening plays inside the incubator, not on the walkway
+        chamber = info.chamber,
     })
     return token
 end

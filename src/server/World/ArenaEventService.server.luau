@@ -69,6 +69,16 @@ local control = script:FindFirstChild("Control") or Instance.new("BindableFuncti
 control.Name = "Control"
 control.Parent = script
 
+-- Keep staff calls responsive while this release has Arena disabled.
+if not Config.Enabled then
+    workspace:SetAttribute("ArenaPhase", "Idle")
+    workspace:SetAttribute("ArenaNextAt", nil)
+    control.OnInvoke = function()
+        return false, "Arena Brawl is disabled for this update."
+    end
+    return
+end
+
 local function announce(payload)
     local announcement = ReplicatedStorage:FindFirstChild("OwnerPanel")
         and ReplicatedStorage.OwnerPanel:FindFirstChild("Announcement")
