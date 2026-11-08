@@ -47,8 +47,19 @@
 -- ===== 1. Services, palette and fonts =====
 local TweenService = game:GetService("TweenService")
 local StudPanel = {}
+-- Black and white panel (2026-11-08): every colour becomes a grey with a little extra contrast, so the plates go
+-- near-black and the buttons light grey / white. Set MONOCHROME = false for the old colours.
+local MONOCHROME = true
+local function mono(color)
+    if not MONOCHROME then
+        return color
+    end
+    local l = 0.299 * color.R + 0.587 * color.G + 0.114 * color.B
+    l = math.clamp((l - 0.5) * 1.4 + 0.5, 0, 1)
+    return Color3.new(l, l, l)
+end
 local function rgb(r, g, b)
-    return Color3.fromRGB(r, g, b)
+    return mono(Color3.fromRGB(r, g, b))
 end
 -- Near-black used for text outlines and the panel's drop plate.
 local INK = rgb(8, 8, 10)
@@ -490,7 +501,43 @@ local function formatNumber(value)
 end
 
 -- ===== 5. Panel builder =====
+-- Greys out any colour set straight on an instance (not through rgb()), as it is added to the panel. Colours that
+-- are already grey (from rgb()) are left as they are, so the contrast isn't applied twice.
+local function monoOnce(color)
+    if math.abs(color.R - color.G) < 0.004 and math.abs(color.G - color.B) < 0.004 then
+        return color
+    end
+    return mono(color)
+end
+local function monoSequence(sequence)
+    local keys = {}
+    for _, key in sequence.Keypoints do
+        table.insert(keys, ColorSequenceKeypoint.new(key.Time, monoOnce(key.Value)))
+    end
+    return ColorSequence.new(keys)
+end
+local function monoInstance(instance)
+    if instance:IsA("GuiObject") then
+        instance.BackgroundColor3 = monoOnce(instance.BackgroundColor3)
+        if instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox") then
+            instance.TextColor3 = monoOnce(instance.TextColor3)
+        end
+    elseif instance:IsA("UIStroke") then
+        instance.Color = monoOnce(instance.Color)
+    elseif instance:IsA("UIGradient") then
+        instance.Color = monoSequence(instance.Color)
+    end
+end
 function StudPanel.Build(gui, context)
+    if MONOCHROME then
+        for _, descendant in gui:GetDescendants() do
+            monoInstance(descendant)
+        end
+        gui.DescendantAdded:Connect(function(descendant)
+            -- after the builder has set its properties
+            task.defer(monoInstance, descendant)
+        end)
+    end
     -- ----- 5.1 State -----
     -- snapshot: last Snapshot reply. logRows: newest-first activity log (max 50). scope: "me" | "selected" | "lobby".
     local isOwner = context.role == "Owner"
