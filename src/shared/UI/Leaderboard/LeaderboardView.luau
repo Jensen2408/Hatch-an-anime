@@ -230,7 +230,7 @@ function View:_build(parent)
 	self.youLabel = label(d, "YouLabel", "YOUR RANK", 168, YY - 14, 360, 26, 22, H.hex("FFE600"), Enum.TextXAlignment.Left, 9)
 	local you = {}
 	you.badge = circle(card, "Badge", 46, YH / 2, 52, 6)
-	H.grad(you.badge, H.hex("FFE600"), H.hex("FF9D00"))
+	you.badgeGrad = H.grad(you.badge, H.hex("FFE600"), H.hex("FF9D00"))
 	you.rank = label(you.badge, "Rank", "—", 2, 8, 48, 34, 26, WHITE, nil, 7)
 	local av = circle(card, "AvatarRing", 112, YH / 2, 52, 6)
 	you.avatar = H.new("ImageLabel", { Name = "Avatar", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 7 }, av)
@@ -276,8 +276,10 @@ local function fillRow(row, entry, kind, isSelf, shownValue)
 	local medal = entry.r and MEDALS[entry.r]
 	if medal then
 		row.badgeGrad.Color = ColorSequence.new(medal[1], medal[2])
-	else
+	elseif row.frame then
 		row.badgeGrad.Color = ColorSequence.new(C.blue[1], C.blue[2])
+	else
+		row.badgeGrad.Color = ColorSequence.new(H.hex("FFE600"), H.hex("FF9D00")) -- YOUR RANK badge stays gold
 	end
 	row.rank.Text = entry.r and tostring(entry.r) or "—"
 	if row.frame then

@@ -6,9 +6,9 @@
 ]]
 return {
     -- timing (the journey is one continuous eased move; these mark where each beat lands)
-    SkyTime = 0.9, -- aerial view, barely moving
-    ApproachTime = 1.4, -- descent toward the plot
-    RevealTime = 1.0, -- settle behind the character
+    SkyTime = 1.4, -- Sky Drop: overhead hold, slowly turning
+    ApproachTime = 2.4, -- the drops down to your character
+    RevealTime = 1.6, -- swoop round behind the character
     HandoffTime = 0.5, -- blend into the normal Roblox camera + HUD fade
 
     -- sky framing, relative to the map's bounds (radius = half of the map's largest side)
@@ -16,7 +16,8 @@ return {
     SkyBackScale = 0.95, -- how far the shot starts from the plot, out over the map = radius * this
     SkyLookBias = 0.3, -- 0 = sky shot aims at the plot, 1 = at the map centre
     SkySideAngle = 28, -- degrees the start is swung to the side (adds a gentle turn on the way down)
-    StartFov = 58,
+    StartFov = 62,
+    DropHeights = { 320, 130, 45 }, -- Sky Drop (2026-11-08): overhead heights above your character, one per jump
 
     -- landing shot (should match the normal camera so the handoff is invisible)
     EndDistance = 12.5, -- Roblox's default zoom distance
