@@ -548,6 +548,7 @@ for _, g in ipairs(playerGui:GetChildren()) do watchEventGui(g) end
 playerGui.ChildAdded:Connect(watchEventGui)
 
 ---------------------------------------------------------------- backpack button
+local HIDE_BAG_BUTTON = true -- false brings back the lilac Bag button (GameHUD.USE_DEFAULT_BACKPACK = false too)
 local function skinBag(bag)
 	if bag:GetAttribute("Stud") then return end
 	bag:SetAttribute("Stud", true)
@@ -583,4 +584,12 @@ task.spawn(function()
 	end
 	task.wait(0.2)
 	skinBag(bag)
+	-- Roblox's default backpack (top bar icon + hotbar) replaces this button since 2026-11-08
+	if HIDE_BAG_BUTTON then
+		local slot = bag.Parent and bag.Parent.Name == "HotbarBagSlot" and bag.Parent or bag
+		slot.Visible = false
+		slot:GetPropertyChangedSignal("Visible"):Connect(function()
+			slot.Visible = false
+		end)
+	end
 end)

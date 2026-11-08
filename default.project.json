@@ -3428,6 +3428,7 @@
       "MutationStyle": {"$path": "src/shared/UI/MutationStyle.luau"},
       "UpcomingConfig": {"$path": "src/shared/Config/UpcomingConfig.luau"},
       "FolkStudUI": {"$path": "src/shared/UI/FolkStudUI.luau"},
+      "ItemIcons": {"$path": "src/shared/Inventory/ItemIcons.luau"},
       "MangaUI": {"$path": "src/shared/UI/MangaUI.luau"},
       "MutationSurfaceFinishes": {
         "$path": "src/shared/Effects/MutationSurfaceFinishes.model.json"

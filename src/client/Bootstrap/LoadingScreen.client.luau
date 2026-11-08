@@ -23,11 +23,11 @@ local RunService = game:GetService("RunService")
 local ContentProvider = game:GetService("ContentProvider")
 local GuiService = game:GetService("GuiService")
 local StarterGui = game:GetService("StarterGui")
--- Restore Roblox UI without enabling its hotbar; GameHUD owns inventory.
+-- Restore Roblox UI, its backpack included (the game uses Roblox's default backpack since 2026-11-08).
 local function restoreCoreGui()
     for _, coreType in Enum.CoreGuiType:GetEnumItems() do
         if coreType ~= Enum.CoreGuiType.All then
-            pcall(StarterGui.SetCoreGuiEnabled, StarterGui, coreType, coreType ~= Enum.CoreGuiType.Backpack)
+            pcall(StarterGui.SetCoreGuiEnabled, StarterGui, coreType, true)
         end
     end
 end

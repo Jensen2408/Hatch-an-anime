@@ -549,7 +549,7 @@ local function toggleEquip(tool)
         humanoid:EquipTool(tool)
     end
 end
-local USE_DEFAULT_BACKPACK = false -- false = this custom hotbar + the Inventory panel above it (Roblox's backpack stays hidden)
+local USE_DEFAULT_BACKPACK = true -- true (2026-11-08) = Roblox's own backpack + hotbar, with item pictures from ReplicatedStorage.ItemIcons; false = this custom hotbar
 local barGroups = {} -- [slot] = { tools = {...} } ; identical eggs stack into one slot ("x3"), like Roblox's hotbar
 local function stackKey(tool)
     if tool:GetAttribute("CharacterId") or tool:GetAttribute("BrainrotId") then
@@ -2357,7 +2357,7 @@ do
         setInventoryOpen(false)
     end)
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if not gameProcessed and input.KeyCode == Enum.KeyCode.Backquote then
+        if not gameProcessed and not USE_DEFAULT_BACKPACK and input.KeyCode == Enum.KeyCode.Backquote then
             setInventoryOpen(not inventoryFrame.Visible)
         end
     end)
