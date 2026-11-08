@@ -1,7 +1,7 @@
 --[[ ReplicatedStorage.MutationStyle (ModuleScript, client) - 2026-11-08
 One look for every mutation tag in the game (egg labels, character plates, hotbar, drop banner).
 Each tier has its own colours and they MOVE:
-  Silver / Gold / Diamond  their metal colour with a bright shine band sweeping across, over and over
+  Silver / Gold / Diamond / Molten  their metal (or lava) colour with a bright shine band sweeping across, over and over
   Rainbow                  every colour, slowly turning round
   MutationStyle.Paint(obj, tier)        adds a moving UIGradient to a Frame, TextLabel or UIStroke
   MutationStyle.Badge(parent, tier, p)  builds a ready tag: studded-looking pill, black outline, "✦ GOLD"
@@ -18,6 +18,7 @@ MS.Tiers = {
     Silver = { hex("E9EEF6"), hex("9AA6BA"), hex("FFFFFF") },
     Gold = { hex("FFD84A"), hex("F59A00"), hex("FFF6B8") },
     Diamond = { hex("8FEAFF"), hex("2AA8FF"), hex("F2FDFF") },
+    Molten = { hex("FF7832"), hex("782210"), hex("FFE178") }, -- glowing lava (2026-11-08)
 }
 MS.Rainbow = { hex("FF3B3B"), hex("FF9F1C"), hex("FFE53B"), hex("3BFF6E"), hex("3BC8FF"), hex("9B5BFF"), hex("FF3BD6") }
 MS.Order = { "Silver", "Gold", "Diamond", "Rainbow" }

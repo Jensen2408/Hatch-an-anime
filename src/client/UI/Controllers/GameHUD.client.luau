@@ -51,6 +51,7 @@ Init order (top level, in file order - WaitForChild calls yield):
 -- ===== 1. Services, modules, palette, UI primitives =====
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local GuiService = game:GetService("GuiService")
 local _StarterGui = game:GetService("StarterGui")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -310,7 +311,7 @@ end
 -- Fills `parent` with the tool's icon and returns it: catalog portrait for characters (with an animated aura
 -- for mutations), the tool's TextureId if set, else a ViewportFrame with a slowly turning copy of its parts.
 -- The spawned animation loops end on their own once the icon is unparented.
-local function buildPreview(tool, parent)
+local function buildPreviewRaw(tool, parent)
     -- characters: clean 2D portrait from the catalog (same art as the Index)
     local characterId = tool:GetAttribute("CharacterId") or tool:GetAttribute("BrainrotId")
     if characterId and CATALOG_IMAGES[characterId] then
@@ -323,17 +324,6 @@ local function buildPreview(tool, parent)
             ScaleType = Enum.ScaleType.Fit,
             ZIndex = parent.ZIndex,
         }, parent)
-        local mutation = tool:GetAttribute("Mutation")
-        if mutation == "Gold" then
-            portrait.ImageColor3 = Color3.fromRGB(255, 215, 110)
-        elseif mutation == "Diamond" then
-            portrait.ImageColor3 = Color3.fromRGB(150, 235, 255)
-        elseif mutation == "Silver" then
-            portrait.ImageColor3 = Color3.fromRGB(220, 225, 235)
-        end
-        if mutation then
-            addMutationAura(portrait, parent, mutation)
-        end
         -- disabled rainbow tint (dead code, kept as-is)
         if false then
             local rainbowGradient = create("UIGradient", {
@@ -396,6 +386,134 @@ local function buildPreview(tool, parent)
     -- light travels from the camera side into the model, slightly downward, so the face is lit
     viewport.LightDirection = (-front + Vector3.new(0.45, -0.7, 0)).Unit
     return viewport
+end
+-- Mutation look in the backpack (2026-11-08): a mutated item looks mutated and moves.
+--   the picture  gets a moving colour sheen (MutationStyle: metal shine sweeping across for Silver / Gold / Diamond /
+--                Molten, turning colours for Rainbow); the sheen multiplies the picture so it reads as that metal
+--   behind it   a soft glow in the mutation colour that breathes in and out
+--   around it   little sparkles that twinkle (embers rising for Molten)
+--   the item    floats gently up and down
+-- Every loop stops on its own once the picture leaves the screen; reduced motion keeps only the colours.
+local MutationStyle = require(ReplicatedStorage:WaitForChild("MutationStyle"))
+local ItemIcons = require(ReplicatedStorage:WaitForChild("ItemIcons"))
+local MUTATION_GLOW = {
+    Silver = Color3.fromRGB(225, 232, 245),
+    Gold = Color3.fromRGB(255, 200, 40),
+    Diamond = Color3.fromRGB(90, 215, 255),
+    Rainbow = Color3.fromRGB(255, 120, 230),
+    Molten = Color3.fromRGB(255, 96, 20),
+}
+local RAINBOW_STEPS = { Color3.fromRGB(255, 70, 90), Color3.fromRGB(255, 190, 40), Color3.fromRGB(90, 240, 120), Color3.fromRGB(70, 170, 255), Color3.fromRGB(200, 90, 255) }
+local function dressMutation(image, parent, mutation)
+    local glowColor = MUTATION_GLOW[mutation]
+    if not glowColor or not image or not image.Parent then
+        return
+    end
+    local baseZ = image.ZIndex
+    local calm = GuiService.ReducedMotionEnabled
+    -- glow behind the item
+    local glow = create("Frame", {
+        Name = "MutationGlow",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(0.8, 0.8),
+        BackgroundColor3 = glowColor,
+        BackgroundTransparency = 0.55,
+        BorderSizePixel = 0,
+        ZIndex = math.max(baseZ - 1, 1),
+    }, parent)
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }, glow)
+    create("UIGradient", {
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.5, 0.15),
+            NumberSequenceKeypoint.new(1, 1),
+        }),
+    }, glow)
+    -- the moving colour sheen on the picture itself: on the grey copy of the picture the tint reads as real gold /
+    -- silver / diamond / lava / rainbow (the colour picture would only be tinted)
+    if image:IsA("ImageLabel") and ItemIcons.Gray[image.Image] then
+        image.Image = ItemIcons.Gray[image.Image]
+    end
+    MutationStyle.Paint(image, mutation)
+    -- sparkles (embers for Molten)
+    local sparkles = {}
+    for i = 1, 3 do
+        local star = create("ImageLabel", {
+            Name = "MutationSparkle",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Size = UDim2.fromScale(0.22, 0.22),
+            Image = "rbxasset://textures/particles/sparkles_main.dds",
+            ImageColor3 = mutation == "Molten" and Color3.fromRGB(255, 170, 40) or glowColor:Lerp(Color3.new(1, 1, 1), 0.5),
+            ImageTransparency = 1,
+            ZIndex = baseZ + 2,
+        }, parent)
+        sparkles[i] = star
+    end
+    if calm then
+        glow.BackgroundTransparency = 0.45
+        return
+    end
+    local basePosition = image.Position
+    local seed = math.random() * 10
+    task.spawn(function()
+        local spots = {}
+        local function newSpot(i)
+            spots[i] = { x = 0.15 + math.random() * 0.7, y = 0.12 + math.random() * 0.6, born = os.clock(), life = 0.9 + math.random() * 0.6 }
+        end
+        for i = 1, #sparkles do
+            newSpot(i)
+            spots[i].born -= (i - 1) * 0.45
+        end
+        while image.Parent and parent.Parent do
+            local now = os.clock()
+            local t = now + seed
+            -- float and breathe
+            image.Position = basePosition + UDim2.fromScale(0, math.sin(t * 2.2) * 0.035)
+            local breath = (math.sin(t * 2.6) + 1) / 2
+            glow.Size = UDim2.fromScale(0.72 + breath * 0.2, 0.72 + breath * 0.2)
+            glow.BackgroundTransparency = 0.6 - breath * 0.25
+            if mutation == "Rainbow" then
+                local k = (t * 0.6) % #RAINBOW_STEPS
+                local a = RAINBOW_STEPS[math.floor(k) + 1]
+                local b = RAINBOW_STEPS[(math.floor(k) + 1) % #RAINBOW_STEPS + 1]
+                glow.BackgroundColor3 = a:Lerp(b, k % 1)
+            end
+            -- twinkle: each sparkle fades in, grows, fades out, then pops up somewhere else
+            for i, star in sparkles do
+                local spot = spots[i]
+                local age = (now - spot.born) / spot.life
+                if age >= 1 then
+                    newSpot(i)
+                    age = 0
+                    spot = spots[i]
+                end
+                local y = spot.y
+                if mutation == "Molten" then
+                    y -= age * 0.3 -- embers rise
+                end
+                star.Position = UDim2.fromScale(spot.x, y)
+                local pop = math.sin(math.clamp(age, 0, 1) * math.pi)
+                star.ImageTransparency = 1 - pop
+                star.Rotation = age * 90
+                local size = 0.16 + pop * 0.2
+                star.Size = UDim2.fromScale(size, size)
+                if mutation == "Rainbow" then
+                    star.ImageColor3 = RAINBOW_STEPS[(i + math.floor(t * 2)) % #RAINBOW_STEPS + 1]
+                end
+            end
+            task.wait()
+        end
+    end)
+end
+local function buildPreview(tool, parent)
+    local image = buildPreviewRaw(tool, parent)
+    local mutation = tool:GetAttribute("Mutation")
+    if mutation and image then
+        dressMutation(image, parent, mutation)
+    end
+    return image
 end
 -- "Characters" | "Eggs" | nil (any other tool is ignored by the bag and the Inventory panel)
 local function getCategory(tool)
