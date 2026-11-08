@@ -2140,6 +2140,136 @@ do
         sellModeButton.Text = sellMode and "SELLING: TAP x2" or "SELL ITEMS"
         sellArt.Visible = sellMode -- the red piece over the art's green SELL button
     end
+    -- ── Mutation look on backpack cards (2026-11-09) ──
+    -- A mutated item's card gets its mutation colour shading over it, a bright shine band sweeping across, and a
+    -- coloured border with a glint running round it. Rainbow cycles every colour. One Heartbeat loop drives every
+    -- card; cards that leave the screen drop out on their own. Reduced motion keeps the colours, stops the movement.
+    local MUTATION_SHADES = {
+        -- { light, dark, shine }
+        Silver = { Color3.fromRGB(235, 242, 255), Color3.fromRGB(120, 135, 160), Color3.fromRGB(255, 255, 255) },
+        Gold = { Color3.fromRGB(255, 226, 90), Color3.fromRGB(210, 120, 0), Color3.fromRGB(255, 250, 200) },
+        Diamond = { Color3.fromRGB(150, 240, 255), Color3.fromRGB(30, 130, 255), Color3.fromRGB(235, 255, 255) },
+        Rainbow = { Color3.fromRGB(255, 120, 220), Color3.fromRGB(120, 80, 255), Color3.fromRGB(255, 255, 255) },
+        Molten = { Color3.fromRGB(255, 150, 40), Color3.fromRGB(150, 20, 0), Color3.fromRGB(255, 230, 120) },
+    }
+    local mutationCards = setmetatable({}, { __mode = "k" }) -- [card Frame] = { base, sweep, bars, rainbow, seed }
+    local mutationLoop
+    local function startMutationLoop()
+        if mutationLoop then
+            return
+        end
+        mutationLoop = RunService.Heartbeat:Connect(function()
+            local calm = game:GetService("GuiService").ReducedMotionEnabled
+            local t = os.clock()
+            for card, info in mutationCards do
+                if not card.Parent then
+                    mutationCards[card] = nil
+                elseif not calm then
+                    local k = t + info.seed
+                    -- shine band: sweeps across in 1.1 s, then rests ~1.3 s
+                    local phase = (k % 2.4) / 1.1
+                    info.sweep.Offset = Vector2.new(phase <= 1 and (phase * 2.4 - 1.2) or 1.5, 0)
+                    -- border glint runs round the card
+                    local g = (k * 0.8) % 1
+                    for i, bar in info.bars do
+                        bar.Offset = Vector2.new(((g * 4 - (i - 1)) % 4) * 1 - 1, 0)
+                    end
+                    if info.rainbow then
+                        info.base.Rotation = (k * 60) % 360
+                    else
+                        -- the shading breathes a little
+                        local breath = (math.sin(k * 2.2) + 1) / 2
+                        info.base.Transparency = NumberSequence.new({
+                            NumberSequenceKeypoint.new(0, 0.82 - breath * 0.08),
+                            NumberSequenceKeypoint.new(1, 0.42 - breath * 0.12),
+                        })
+                    end
+                end
+            end
+        end)
+    end
+    local function rainbowSequence()
+        return ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 90)),
+            ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 170, 40)),
+            ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 240, 70)),
+            ColorSequenceKeypoint.new(0.6, Color3.fromRGB(70, 230, 120)),
+            ColorSequenceKeypoint.new(0.8, Color3.fromRGB(70, 150, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 90, 255)),
+        })
+    end
+    -- builds the shading layers on a card; z = the ZIndex just under the item picture
+    local function addMutationLook(card, mutation, z)
+        local shades = MUTATION_SHADES[mutation]
+        if not shades then
+            return
+        end
+        local light, dark, shine = shades[1], shades[2], shades[3]
+        local rainbow = mutation == "Rainbow"
+        local function layer(name, zIndex)
+            local frame = create("Frame", {
+                Name = name,
+                Position = UDim2.fromOffset(3, 3),
+                Size = UDim2.new(1, -6, 1, -6),
+                BackgroundColor3 = Color3.new(1, 1, 1),
+                BorderSizePixel = 0,
+                ZIndex = zIndex,
+            }, card)
+            create("UICorner", { CornerRadius = UDim.new(0, 6) }, frame)
+            return frame
+        end
+        -- 1. the mutation colour shading over the whole card (stronger at the bottom)
+        local base = create("UIGradient", {
+            Rotation = rainbow and 0 or 90,
+            Color = rainbow and rainbowSequence() or ColorSequence.new(light, dark),
+            Transparency = rainbow and NumberSequence.new(0.55) or NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.8),
+                NumberSequenceKeypoint.new(1, 0.4),
+            }),
+        }, layer("MutationShade", z))
+        -- 2. a bright band that sweeps across
+        local sweep = create("UIGradient", {
+            Rotation = 20,
+            Color = ColorSequence.new(shine),
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1),
+                NumberSequenceKeypoint.new(0.4, 1),
+                NumberSequenceKeypoint.new(0.5, 0.35),
+                NumberSequenceKeypoint.new(0.6, 1),
+                NumberSequenceKeypoint.new(1, 1),
+            }),
+            Offset = Vector2.new(-1.2, 0),
+        }, layer("MutationSweep", z))
+        -- 3. a coloured border (solid bars, so it always draws) with a glint running round it
+        local bars = {}
+        for i, spec in {
+            { UDim2.fromScale(0, 0), UDim2.new(1, 0, 0, 3), 0 },
+            { UDim2.new(1, -3, 0, 0), UDim2.new(0, 3, 1, 0), 90 },
+            { UDim2.new(0, 0, 1, -3), UDim2.new(1, 0, 0, 3), 180 },
+            { UDim2.fromScale(0, 0), UDim2.new(0, 3, 1, 0), 270 },
+        } do
+            local bar = create("Frame", {
+                Name = "MutationEdge",
+                Position = spec[1],
+                Size = spec[2],
+                BackgroundColor3 = Color3.new(1, 1, 1),
+                BorderSizePixel = 0,
+                ZIndex = 25,
+            }, card)
+            bars[i] = create("UIGradient", {
+                Rotation = spec[3],
+                Color = rainbow and rainbowSequence() or ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, light),
+                    ColorSequenceKeypoint.new(0.45, light),
+                    ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+                    ColorSequenceKeypoint.new(0.55, light),
+                    ColorSequenceKeypoint.new(1, light),
+                }),
+            }, bar)
+        end
+        mutationCards[card] = { base = base, sweep = sweep, bars = bars, rainbow = rainbow, seed = math.random() * 3 }
+        startMutationLoop()
+    end
     local render
     -- cells on screen: [tool] = { stroke, color, thickness, transparency } (the stroke's look when not held), and the
     -- tools in the order they were drawn, so equipping only re-highlights instead of rebuilding (2026-11-09)
@@ -2169,6 +2299,9 @@ do
             BorderSizePixel = 0,
             ZIndex = 24,
         }, cell)
+        if mutation then
+            addMutationLook(cell, mutation, 23)
+        end
         local iconFrame = create("Frame", {
             Position = UDim2.fromOffset(6, 4),
             Size = UDim2.new(1, -12, 0, 60),
@@ -2209,24 +2342,6 @@ do
             if mutation == "Rainbow" then
                 create("UIGradient", { Color = RAINBOW_GRADIENT }, mutationTag)
             end
-            cellStroke.Color = Color3.new(1, 1, 1)
-            cellStroke.Thickness = 3
-            cellStroke.Transparency = 0
-            local edgeGradient = create("UIGradient", {
-                Color = mutation == "Rainbow" and RAINBOW_GRADIENT
-                    or ColorSequence.new({
-                        ColorSequenceKeypoint.new(0, INVENTORY_MUTATION_COLORS[mutation] or Color3.new(1, 1, 1)),
-                        ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
-                        ColorSequenceKeypoint.new(1, INVENTORY_MUTATION_COLORS[mutation] or Color3.new(1, 1, 1)),
-                    }),
-            }, cellStroke)
-            task.spawn(function()
-                local startTime = os.clock()
-                while cell.Parent do
-                    edgeGradient.Rotation = ((os.clock() - startTime) * 120) % 360
-                    task.wait(0.03)
-                end
-            end)
         end
         -- held highlight: a plain bright gold ring just outside the cell (over the animated mutation edge)
         local heldRing = create("Frame", {
