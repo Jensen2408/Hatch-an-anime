@@ -2141,6 +2141,16 @@ do
         sellArt.Visible = sellMode -- the red piece over the art's green SELL button
     end
     local render
+    -- cells on screen: [tool] = { stroke, color, thickness, transparency } (the stroke's look when not held), and the
+    -- tools in the order they were drawn, so equipping only re-highlights instead of rebuilding (2026-11-09)
+    local cellInfo = {}
+    local drawnItems = {}
+    local function refreshHeld()
+        local held = getEquippedTool()
+        for tool, info in cellInfo do
+            info.ring.Visible = tool == held
+        end
+    end
     -- One inventory cell: rarity strip, icon, name, mutation tag + animated edge, held highlight, SELL-mode price
     -- and the input handlers (drag / tap to hold, or tap twice within 3 s to sell in SELL mode).
     local function buildCell(index, tool)
@@ -2218,11 +2228,32 @@ do
                 end
             end)
         end
-        if getEquippedTool() == tool then
-            cellStroke.Color = GOLD
-            cellStroke.Thickness = 4
-            cellStroke.Transparency = 0
+        -- held highlight: a plain bright gold ring just outside the cell (over the animated mutation edge)
+        local heldRing = create("Frame", {
+            Name = "HeldRing",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(1, 2, 1, 2),
+            BackgroundTransparency = 1,
+            Visible = getEquippedTool() == tool,
+            ZIndex = 29,
+        }, cell)
+        -- four solid gold bars (a UIStroke here did not always draw inside the scrolling grid)
+        for _, bar in {
+            { UDim2.fromScale(0, 0), UDim2.new(1, 0, 0, 4) },
+            { UDim2.new(0, 0, 1, -4), UDim2.new(1, 0, 0, 4) },
+            { UDim2.fromScale(0, 0), UDim2.new(0, 4, 1, 0) },
+            { UDim2.new(1, -4, 0, 0), UDim2.new(0, 4, 1, 0) },
+        } do
+            create("Frame", {
+                Position = bar[1],
+                Size = bar[2],
+                BackgroundColor3 = Color3.fromRGB(255, 214, 40),
+                BorderSizePixel = 0,
+                ZIndex = 29,
+            }, heldRing)
         end
+        cellInfo[tool] = { ring = heldRing }
         -- hotbar slot number (top-left), like the number on the hotbar itself
         local barSlot = barSlotOf(tool)
         if barSlot then
@@ -2262,12 +2293,6 @@ do
             { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 28 },
             cell
         )
-        cellButton.MouseEnter:Connect(function()
-            tween(cell, 0.08, { Rotation = -3 })
-        end)
-        cellButton.MouseLeave:Connect(function()
-            tween(cell, 0.08, { Rotation = 0 })
-        end)
         cellButton.InputBegan:Connect(function(input)
             if sellMode then
                 return
@@ -2282,13 +2307,19 @@ do
                 if not tool.Parent then
                     return
                 end
-                if not barSlotOf(tool) then
+                -- the old custom hotbar took the item into slot 1 (which also moved it to the top of the list);
+                -- with Roblox's backpack the item stays where it is and only gets a gold outline
+                if not USE_DEFAULT_BACKPACK and not barSlotOf(tool) then
                     placeInSlot(tool, 1)
                 end
                 toggleEquip(tool)
                 task.delay(0.1, function()
                     if inventoryFrame.Visible then
-                        render()
+                        if USE_DEFAULT_BACKPACK then
+                            refreshHeld()
+                        else
+                            render()
+                        end
                     end
                 end)
             end)
@@ -2370,6 +2401,8 @@ do
                 or "No characters yet — hatch an egg!")
             or activeTab == "Eggs" and "No eggs — grab some from the river!"
             or "Nothing here yet"
+        table.clear(cellInfo)
+        drawnItems = items
         for i, tool in items do
             buildCell(i, tool)
         end
@@ -2577,7 +2610,23 @@ do
         refreshPending = true
         task.delay(0.15, function()
             refreshPending = false
-            if inventoryFrame.Visible then
+            if not inventoryFrame.Visible then
+                return
+            end
+            local same = true
+            local index = 0
+            for _, tool in allTools() do
+                if matchesFilters(tool) then
+                    index += 1
+                    if drawnItems[index] ~= tool then
+                        same = false
+                        break
+                    end
+                end
+            end
+            if same and index == #drawnItems then
+                refreshHeld()
+            else
                 render()
             end
         end)
