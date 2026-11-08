@@ -198,7 +198,14 @@ end
 -- Probe the underlying image URIs. ContentProvider does not preload a SurfaceAppearance itself.
 local ContentProvider = game:GetService("ContentProvider")
 local mapChecks = {}
+-- 2026-11-08: the server cannot preload images (PreloadAsync never finishes there), so the 8 s timeout below marked
+-- every map as failed and turned every mutated character into a flat-coloured silhouette. The check only runs where
+-- images can actually be loaded; on the server the textures are kept.
+local CAN_PRELOAD = not game:GetService("RunService"):IsServer()
 local function checkMutationMaps(appearance, part, tint)
+    if not CAN_PRELOAD then
+        return
+    end
     local function useFallback()
         if appearance.Parent == part then
             appearance:Destroy()
