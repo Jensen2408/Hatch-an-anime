@@ -178,6 +178,8 @@ local RARITY_COLORS = {
     Rare = Color3.fromRGB(60, 130, 230),
     Epic = Color3.fromRGB(150, 80, 220),
     Legendary = Color3.fromRGB(235, 175, 30),
+    Mythic = Color3.fromRGB(235, 70, 155),
+    Cosmic = Color3.fromRGB(60, 215, 195),
 }
 
 local FX_IMAGES = {

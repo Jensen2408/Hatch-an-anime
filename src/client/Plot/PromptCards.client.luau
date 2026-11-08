@@ -51,7 +51,8 @@ local RARITY_COLORS = {
     Rare = Color3.fromRGB(70, 130, 220),
     Epic = Color3.fromRGB(150, 80, 210),
     Legendary = Color3.fromRGB(235, 160, 30),
-    Mythic = Color3.fromRGB(220, 60, 90),
+    Mythic = Color3.fromRGB(255, 80, 165),
+    Cosmic = Color3.fromRGB(90, 240, 215),
     Secret = Color3.fromRGB(30, 30, 30),
 }
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")

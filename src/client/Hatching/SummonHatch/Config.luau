@@ -1,6 +1,7 @@
 -- SummonHatch.Config: tiers, pages and tuning for the summon-room hatch animation (ported from the HatchDemo RollFx).
--- Tier = the egg's rarity rank (CharacterCatalog): Common 1 .. Legendary 5, Limited 6. Every character of an egg has
--- the egg's rarity, so the extra drama comes from the bonus rules below, not from the rarity.
+-- Tier = the egg's rarity rank (CharacterCatalog): Common 1 .. Legendary 5, Mythic 6, Cosmic 7, Limited 8. Every
+-- character of an egg has the egg's rarity, so the extra drama comes from the bonus rules below, not from the rarity.
+-- Kanji, reveal jingles and impact frames stop at 6 steps, so Cosmic and Limited reuse the top one.
 local Config = {}
 
 Config.Tiers = {
@@ -9,6 +10,8 @@ Config.Tiers = {
     { name = "RARE", logo = "rare", color = Color3.fromRGB(98, 172, 255) },
     { name = "EPIC", logo = "epic", color = Color3.fromRGB(197, 126, 255) },
     { name = "LEGENDARY", logo = "legendary", color = Color3.fromRGB(255, 207, 92) },
+    { name = "MYTHIC", logo = "mythic", color = Color3.fromRGB(255, 80, 165) },
+    { name = "COSMIC", logo = "cosmic", color = Color3.fromRGB(90, 240, 215) }, -- no rendered logo: text fallback
     { name = "LIMITED", logo = "limited", color = Color3.fromRGB(255, 60, 90) }, -- no rendered logo: text fallback
 }
 
@@ -44,7 +47,19 @@ Config.Pages = {
         word = Color3.fromRGB(226, 56, 28),
         floor = Color3.fromRGB(255, 246, 190),
     },
-    {
+    { -- Mythic: magenta
+        bg = Color3.fromRGB(150, 14, 92),
+        burst = Color3.fromRGB(104, 6, 62),
+        word = Color3.fromRGB(255, 92, 180),
+        floor = Color3.fromRGB(255, 170, 220),
+    },
+    { -- Cosmic: deep space with a teal glow
+        bg = Color3.fromRGB(8, 22, 40),
+        burst = Color3.fromRGB(10, 62, 76),
+        word = Color3.fromRGB(70, 230, 210),
+        floor = Color3.fromRGB(140, 255, 235),
+    },
+    { -- Limited
         bg = Color3.fromRGB(13, 10, 16),
         burst = Color3.fromRGB(70, 6, 26),
         word = Color3.fromRGB(226, 22, 60),

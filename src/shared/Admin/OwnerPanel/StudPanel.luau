@@ -80,6 +80,7 @@ local RARITY_COLORS = {
     Epic = PALETTE.Purple,
     Legendary = PALETTE.Yellow,
     Mythic = PALETTE.Pink,
+    Cosmic = rgb(90, 240, 215),
     Secret = PALETTE.Red,
 }
 -- Both fonts are FredokaOne; kept as two Font objects (title vs body text).

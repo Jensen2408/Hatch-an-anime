@@ -62,7 +62,8 @@ Config.RarityColors = {
     Rare = Color3.fromRGB(90, 180, 255),
     Epic = Color3.fromRGB(195, 115, 255),
     Legendary = Color3.fromRGB(255, 200, 75),
-    Mythic = Color3.fromRGB(255, 95, 150),
+    Mythic = Color3.fromRGB(255, 80, 165),
+    Cosmic = Color3.fromRGB(90, 240, 215),
 }
 function Config.RarityColor(rarity)
     return Config.RarityColors[rarity] or Config.RarityColors.Common

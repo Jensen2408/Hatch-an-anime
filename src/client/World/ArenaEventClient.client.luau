@@ -57,6 +57,8 @@ local RARITY_COLORS = {
     Rare = Color3.fromRGB(98, 184, 255),
     Epic = Color3.fromRGB(204, 132, 255),
     Legendary = Color3.fromRGB(255, 204, 84),
+    Mythic = Color3.fromRGB(255, 96, 172),
+    Cosmic = Color3.fromRGB(104, 240, 218),
     Limited = Color3.fromRGB(255, 88, 112),
 }
 

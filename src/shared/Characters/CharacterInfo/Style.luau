@@ -18,6 +18,8 @@ Style.Rarity = {
     Rare = { rgb(45, 111, 214), Color3.new(1, 1, 1) },
     Epic = { rgb(138, 63, 208), Color3.new(1, 1, 1) },
     Legendary = { rgb(255, 197, 61), rgb(29, 20, 32) },
+    Mythic = { rgb(232, 60, 150), Color3.new(1, 1, 1) },
+    Cosmic = { rgb(60, 215, 195), rgb(10, 40, 40) },
 }
 Style.Font = Font.new("rbxasset://fonts/families/FredokaOne.json")
 
@@ -102,6 +104,8 @@ Style.RarityText = {
     Rare = rgb(79, 163, 255),
     Epic = rgb(196, 107, 255),
     Legendary = rgb(255, 197, 61),
+    Mythic = rgb(255, 80, 165),
+    Cosmic = rgb(90, 240, 215),
 }
 -- Unused (superseded by the v3 plate in Style.Card); kept for reference.
 local function _outlined(parent, size, color, thickness, order)
@@ -133,7 +137,8 @@ Style.Plate = {
     Rare = { rgb(59, 120, 255), rgb(11, 42, 156) },
     Epic = { rgb(168, 102, 255), rgb(74, 21, 166) },
     Legendary = { rgb(255, 214, 72), rgb(214, 132, 0) },
-    Mythic = { rgb(255, 74, 74), rgb(150, 0, 20) },
+    Mythic = { rgb(255, 92, 175), rgb(150, 20, 90) },
+    Cosmic = { rgb(110, 245, 225), rgb(10, 120, 110) },
     Secret = { rgb(40, 40, 48), rgb(0, 0, 0) },
 }
 -- Mutation badge colours.

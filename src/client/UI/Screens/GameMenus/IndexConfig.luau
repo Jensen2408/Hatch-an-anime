@@ -93,6 +93,9 @@ IndexConfig.RarityPieces = {
     Rare = { Card = "CardRare", Badge = "BadgeBlue" },
     Epic = { Card = "CardEpic", Badge = "BadgePurple" },
     Legendary = { Card = "CardLegendary", Badge = "BadgeOrange" },
+    -- no card art of their own yet: Mythic / Cosmic borrow the Limited card
+    Mythic = { Card = "CardLimited", Badge = "BadgeOrange" },
+    Cosmic = { Card = "CardLimited", Badge = "BadgeBlue" },
     Limited = { Card = "CardLimited", Badge = "BadgeGold" },
     Locked = { Card = "CardLocked", Badge = "BadgeDark" },
 }

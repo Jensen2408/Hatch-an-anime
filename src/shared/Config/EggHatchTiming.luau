@@ -23,6 +23,8 @@ Timing.Base = {
     Mecha = 2700,
     God = 3600,
     Unknown = 600,
+    Hunter = 4800, -- NEW.csv says 4 h; scaled like the other eggs (God: 3 h in the sheet, 1 h here)
+    Alien = 7200, -- NEW.csv says 6 h
 }
 -- Every egg of a given type has the same base incubation time.
 -- Power rolls do not change the timer; Nighttime speeds up the countdown.
