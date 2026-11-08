@@ -43,6 +43,8 @@ local Config = {
         Rare = rgb(31, 139, 255),
         Epic = rgb(182, 61, 255),
         Legendary = rgb(255, 196, 0),
+        Mythic = rgb(255, 60, 160),
+        Cosmic = rgb(60, 255, 220),
     },
 }
 

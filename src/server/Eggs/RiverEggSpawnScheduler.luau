@@ -14,9 +14,9 @@ local Catalog = require(game.ReplicatedStorage.CharacterCatalog)
 
 local Scheduler = {}
 
-local RARITY_ORDER = { "Common", "Uncommon", "Rare", "Epic", "Legendary" }
-local RARITY_MIN_AGE = { Common = 0, Uncommon = 0, Rare = 24, Epic = 120, Legendary = 300 } -- seconds of server age
-local RARITY_COOLDOWN = { Epic = 90, Legendary = 240 } -- seconds between two spawns of this rarity
+local RARITY_ORDER = Catalog.RiverRarities -- Common .. Cosmic
+local RARITY_MIN_AGE = { Common = 0, Uncommon = 0, Rare = 24, Epic = 120, Legendary = 300, Mythic = 600, Cosmic = 900 } -- seconds of server age
+local RARITY_COOLDOWN = { Epic = 90, Legendary = 240, Mythic = 600, Cosmic = 900 } -- seconds between two spawns of this rarity
 local LEGENDARY_GUARANTEE = 720 -- a Legendary at the latest this many seconds after the last one
 
 local function legendaryBoost()

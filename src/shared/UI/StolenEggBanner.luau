@@ -382,7 +382,8 @@ local RARITY_HEX = {
     Rare = "#6FB2FF",
     Epic = "#C98BFF",
     Legendary = "#FFC94A",
-    Mythic = "#FF6F8E",
+    Mythic = "#FF50A5",
+    Cosmic = "#5AF0D7",
     Secret = "#FFFFFF",
 }
 -- 1 decimal with a unit suffix ("1.5K", "2M"); plain integer below 1000.

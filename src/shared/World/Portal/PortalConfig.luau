@@ -25,6 +25,8 @@ Config.RarityColor = {
     Rare = rgb(70, 150, 255),
     Epic = rgb(186, 110, 255),
     Legendary = rgb(255, 196, 64),
+    Mythic = rgb(255, 80, 165),
+    Cosmic = rgb(90, 240, 215),
 }
 
 Config.Opening = Vector2.new(8.4, 9.8) -- portal surface width x height (studs)

@@ -172,7 +172,17 @@ Config.CharacterBuffs = {
     MoonGoddess = { Title = "Lunar Gravity", Stats = { Steady = 22, Reach = 18, Recovery = 12 } },
     CosmicOracle = { Title = "Astral Overdrive", Stats = { SwingSpeed = 20, MoveSpeed = 16, Knockback = 14 } },
 
-    -- Tier 6: Limited (Unknown)
+    -- Tier 6: Mythic (Hunter)
+    Gon = { Title = "Jajanken Rock", Stats = { Knockback = 22, Steady = 16, Recovery = 12 } },
+    Killua = { Title = "Godspeed", Stats = { MoveSpeed = 22, SwingSpeed = 19, Recovery = 12 } },
+    Hisoka = { Title = "Bungee Gum", Stats = { Reach = 22, Steady = 18, SwingSpeed = 14 } },
+
+    -- Tier 7: Cosmic (Alien)
+    Okarun = { Title = "Turbo Dash", Stats = { MoveSpeed = 23, SwingSpeed = 20, Knockback = 14 } },
+    Momo = { Title = "Spirit Grip", Stats = { Reach = 23, Steady = 20, Recovery = 14 } },
+    TurboGranny = { Title = "Fortune Fury", Stats = { SwingSpeed = 23, Knockback = 21, MoveSpeed = 15 } },
+
+    -- Tier 8: Limited (Unknown)
     HinataHyuga = { Title = "Twin Lion Fists", Stats = { SwingSpeed = 22, Knockback = 20, Steady = 15 } },
 }
 
