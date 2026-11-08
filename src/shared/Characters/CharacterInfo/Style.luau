@@ -381,6 +381,14 @@ function Style.Apply(ui, data)
         rarityTag.BackgroundColor3 = (Style.Plate[data.rarity] or Style.Plate.Common)[2]
     end
     ui.mut.Visible = data.mutation ~= nil
+    -- 2026-11-09: the mutation's colour shading sweeps over the card (ReplicatedStorage.MutationShade)
+    if ui.card and ui.card:GetAttribute("ShadeMutation") ~= (data.mutation or "") then
+        ui.card:SetAttribute("ShadeMutation", data.mutation or "")
+        local ok, Shade = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("MutationShade", 5))
+        if ok and Shade then
+            Shade.Apply(ui.card, data.mutation, ui.card.ZIndex)
+        end
+    end
     if data.mutation then
         ui.mut.Text = "✦ " .. string.upper(data.mutation)
         ui.mut.BackgroundColor3 = Style.Mut[data.mutation] or Style.Mut.Gold

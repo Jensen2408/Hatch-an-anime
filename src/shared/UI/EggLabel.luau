@@ -429,6 +429,12 @@ local function build(self)
     -- 2026-11-08: mutated eggs get a moving mutation tag over the top edge of the plate (ReplicatedStorage.MutationStyle)
     local mutation = self.egg and self.egg:GetAttribute("Mutation")
     if mutation then
+        -- 2026-11-09: the mutation's colour shading sweeps over the plate (ReplicatedStorage.MutationShade)
+        local plateFrame = root:FindFirstChild("Plate")
+        local okShade, Shade = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("MutationShade", 5))
+        if okShade and Shade and plateFrame then
+            Shade.Apply(plateFrame, mutation, plateFrame.ZIndex)
+        end
         local okMS, MS = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("MutationStyle", 5))
         if okMS and MS then
             -- top-right corner of the plate (the label is a CanvasGroup, so it must stay inside its bounds)
