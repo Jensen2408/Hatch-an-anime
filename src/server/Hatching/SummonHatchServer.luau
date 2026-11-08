@@ -1,7 +1,7 @@
 --[[ SummonHatchServer  (ServerScriptService ModuleScript)
 Starts the summon-room hatch animation (StarterPlayerScripts.SummonHatch) on the hatching player's client and tracks
 when it has finished. It changes nothing about the reward: HatchGoo still rolls it, places the character in the
-incubator and hands it over on pickup.
+incubator and grants it to the player's backpack.
 
 API:
   Service.Play(player, info) -> token

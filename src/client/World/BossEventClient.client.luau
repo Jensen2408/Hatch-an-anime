@@ -402,6 +402,17 @@ local function spawnBoss()
     despawn()
     local model, rig = Builder.Build()
     model.Name = "VoxelOni_Local"
+    local pivot = make("Part", {
+        Name = "HumanoidRootPart",
+        Size = Vector3.one,
+        Anchored = true,
+        Transparency = 1,
+        CanCollide = false,
+        CanTouch = false,
+        CanQuery = false,
+        CastShadow = false,
+    }, model)
+    model.PrimaryPart = pivot
     model.Parent = workspace
     local parts, offsets, groupOf = {}, {}, {}
     for groupName, group in rig.Groups do
@@ -498,6 +509,7 @@ local function animate(phase, distance, slamTime, t)
 end
 
 local function placeBoss(root, pose)
+    boss.model.PrimaryPart.CFrame = root
     local groups = boss.rig.Groups
     local body = root * CFrame.new(groups.Body.Pivot + Vector3.new(0, pose.bob, 0)) * CFrame.Angles(pose.pitch, 0, pose.roll)
     local function fromBody(name)

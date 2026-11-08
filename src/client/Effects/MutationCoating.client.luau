@@ -1,8 +1,9 @@
 local Assets=game:GetService("AssetService")
 local Run=game:GetService("RunService")
-local textures={Silver="rbxassetid://96228988315926",Gold="rbxassetid://110840054513785",Diamond="rbxassetid://70482436642739",Rainbow="rbxassetid://70614355485441"}
-local opacity={Silver=.42,Gold=.62,Diamond=.58,Rainbow=.48}
+local textures={Silver="rbxassetid://96228988315926",Gold="rbxassetid://110840054513785",Diamond="rbxassetid://70482436642739",Rainbow="rbxassetid://70614355485441",Molten=true}
+local opacity={Silver=.42,Gold=.62,Diamond=.58,Rainbow=.48,Molten=.20}
 local active,pending={},{}
+local moltenSurface
 local templates=game.ReplicatedStorage:WaitForChild("ProjectedCoatingMeshes")
 local finishes=game.ReplicatedStorage:WaitForChild("MutationSurfaceFinishes")
 local image=Assets:CreateEditableImage({Size=Vector2.new(64,64)})
@@ -26,6 +27,13 @@ local function build(m)
  s.folder.Name="MutationCoating"
  local home=m:GetPivot() local _,size=m:GetBoundingBox() local tile=math.max(size.Y*.65,1)
  local ok,err=pcall(function()
+ local finish
+ if s.tier == "Molten" then
+     moltenSurface = moltenSurface or require(script.MoltenSurface)
+     finish = moltenSurface.Surface
+ else
+     finish = s.tier == "Rainbow" and rainbowSurface or finishes:WaitForChild(s.tier)
+ end
  for _,part in m:GetDescendants() do
  if not part:IsA("MeshPart") or part.Transparency>=1 then continue end
  local template=templates:FindFirstChild(part.Name)
@@ -33,11 +41,14 @@ local function build(m)
  local rec={source=part,bones={}} table.insert(s.parts,rec)
  local shell=part:Clone()
  for _,d in shell:GetDescendants() do if not d:IsA("Bone") and not d:FindFirstAncestorWhichIsA("Bone") then d:Destroy() end end
+ -- The projected mesh has a baked normal offset. Preserve that offset at the source mesh's scale.
+ -- An exact native-mesh clone shares the base surface's depth and flickers as the rig moves.
  shell:ApplyMesh(template)
- shell.Size=part.Size*(template.MeshSize/part.MeshSize) shell.CFrame=part.CFrame shell.Name="ProjectedCoating"
+ shell.Size=part.Size*(template.MeshSize/part.MeshSize)
+ shell.CFrame=part.CFrame shell.Name="ProjectedCoating"
  shell.Material=Enum.Material.SmoothPlastic shell.Reflectance=0 shell.Color=Color3.new(1,1,1)
  shell.TextureID=""
- local surface=(s.tier=="Rainbow" and rainbowSurface or finishes:WaitForChild(s.tier)):Clone()
+ local surface=finish:Clone()
  surface.Parent=shell
  shell.Anchored=true shell.CanCollide=false shell.CanQuery=false shell.CanTouch=false shell.CastShadow=false
  shell.Transparency=opacity[s.tier] rec.shell=shell
@@ -75,6 +86,14 @@ Run.RenderStepped:Connect(function()
  buffer.writeu8(pixels,p,math.floor(c.R*255)) buffer.writeu8(pixels,p+1,math.floor(c.G*255))
  buffer.writeu8(pixels,p+2,math.floor(c.B*255)) buffer.writeu8(pixels,p+3,255)
  end end image:WritePixelsBuffer(Vector2.zero,Vector2.new(64,64),pixels) end
+ local hasMolten = false
+ for _, state in active do
+     if state.tier == "Molten" and #state.parts > 0 then
+         hasMolten = true
+         break
+     end
+ end
+ if hasMolten and moltenSurface then moltenSurface.Update(now) end
  for m,s in active do
  if not m:IsDescendantOf(workspace) then remove(m) continue end
  for _,p in s.parts do if p.shell and p.source.Parent then

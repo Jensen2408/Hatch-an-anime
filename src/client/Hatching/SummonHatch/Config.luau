@@ -57,6 +57,7 @@ Config.Mutations = {
     Gold = { name = "GOLD", color = Color3.fromRGB(255, 205, 50) },
     Diamond = { name = "DIAMOND", color = Color3.fromRGB(110, 235, 255) },
     Rainbow = { name = "RAINBOW", color = Color3.fromRGB(255, 80, 200) },
+    Molten = { name = "MOLTEN", color = Color3.fromRGB(255, 105, 34) },
 }
 
 -- Bonus: one step more drama (fake-out at tier 4+, more impact frames, longer slow motion) when the hatched character

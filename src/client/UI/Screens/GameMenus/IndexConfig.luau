@@ -103,6 +103,7 @@ IndexConfig.Mutations = {
     Gold = { Card = "CardLimited", Badge = "BadgeGold", Color = Color3.fromRGB(255, 210, 60) },
     Diamond = { Card = "CardRare", Badge = "BadgeBlue", Color = Color3.fromRGB(120, 220, 255) },
     Rainbow = { Card = "CardEpic", Badge = "BadgePurple", Color = Color3.fromRGB(255, 120, 230) },
+    Molten = { Card = "CardEpic", Badge = "BadgePurple", Color = Color3.fromRGB(255, 105, 34) },
 }
 
 IndexConfig.Detail = {

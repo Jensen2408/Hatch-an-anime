@@ -142,6 +142,7 @@ Style.Mut = {
     Gold = rgb(255, 214, 72),
     Diamond = rgb(120, 230, 255),
     Rainbow = rgb(255, 120, 200),
+    Molten = rgb(255, 105, 34),
 }
 local function verticalGradient(target, topColor, bottomColor)
     return Style.make("UIGradient", { Rotation = 90, Color = ColorSequence.new(topColor, bottomColor) }, target)

@@ -51,25 +51,25 @@ local function add(model)
     puff.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(1, 1) })
     puff.Parent = revealRoot
     puff:Emit(12)
-    local highlight = Instance.new("Highlight")
-    highlight.Adornee = model
-    highlight.FillColor = Color3.fromRGB(255, 237, 167)
-    highlight.FillTransparency = 0.4
-    highlight.OutlineTransparency = 0.2
-    highlight.Parent = revealRoot
-    TweenService:Create(highlight, TweenInfo.new(0.5), { FillTransparency = 1, OutlineTransparency = 1 }):Play()
     Debris:AddItem(revealRoot, 1)
 
-    -- lasting glow (lives on the model, gone with it)
+    -- Single Highlight to prevent dual-outline stencil buffer z-fighting / violent flickering
     local aura = Instance.new("Highlight")
     aura.Name = "RewardAura"
     aura.Adornee = model
-    aura.FillColor = Color3.fromRGB(255, 226, 133)
-    aura.FillTransparency = 0.96
-    aura.OutlineColor = aura.FillColor
-    aura.OutlineTransparency = 0.65
+    aura.FillColor = Color3.fromRGB(255, 237, 167)
+    aura.FillTransparency = 0.35
+    aura.OutlineColor = Color3.fromRGB(255, 226, 133)
+    aura.OutlineTransparency = 0.15
     aura.DepthMode = Enum.HighlightDepthMode.Occluded
     aura.Parent = model
+
+    -- Smoothly transition from bright reveal burst to soft ambient glow
+    TweenService:Create(aura, TweenInfo.new(0.65, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        FillColor = Color3.fromRGB(255, 226, 133),
+        FillTransparency = 0.96,
+        OutlineTransparency = 0.65,
+    }):Play()
     local torso = model:FindFirstChild("Torso", true)
     if torso then
         local lamp = Instance.new("PointLight")

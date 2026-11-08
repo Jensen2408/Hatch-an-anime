@@ -2,11 +2,14 @@
 local RS=game:GetService("ReplicatedStorage")
 local Run=game:GetService("RunService")
 local Debris=game:GetService("Debris")
+local Players=game:GetService("Players")
+local player=Players.LocalPlayer
+local playerGui=player:WaitForChild("PlayerGui")
 local Tween=game:GetService("TweenService")
 local folder=RS:WaitForChild("MeteorEvent")
 local sites=workspace:WaitForChild("MeteorSites")
 local rng=Random.new()
-local fx=Instance.new("Folder"); fx.Name="MeteorFXLocal"; fx.Parent=workspace
+local fx=Instance.new("Folder"); fx.Name="MeteorFXLocal"
 local flights={}; local seen={}; local nextStreak=0
 local function rock(size)
  local p=Instance.new("Part"); p.Size=Vector3.one*size; p.Anchored=true; p.CanCollide=false; p.CanTouch=false; p.CanQuery=false
@@ -24,12 +27,13 @@ local function burst(pos)
  end
 end
 -- Screen-space impact feedback. One bounded procedural rubble burst in a UI viewport.
-local Players=game:GetService("Players")
 local SoundService=game:GetService("SoundService")
 local GuiService=game:GetService("GuiService")
 local ContentProvider=game:GetService("ContentProvider")
-local player=Players.LocalPlayer
 local impactRemote=folder:WaitForChild("Impact")
+if playerGui:FindFirstChild("MeteorImpactUI") then
+ return
+end
 local gui=Instance.new("ScreenGui")
 gui.Name="MeteorImpactUI"; gui.ResetOnSpawn=false; gui.IgnoreGuiInset=true; gui.DisplayOrder=45; gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 local viewport=Instance.new("ViewportFrame")
@@ -82,7 +86,8 @@ impactRemote.OnClientEvent:Connect(function(kind,pos)
  if kind=="Approach" then sound("Approach",0.45,0.75)
  elseif kind=="Impact" and typeof(pos)=="Vector3" then burst(pos+Vector3.new(0,2,0)); impactFeedback(pos) end
 end)
-gui.Parent=player:WaitForChild("PlayerGui")
+gui.Parent=playerGui
+fx.Parent=workspace
 -- Remove our previous offset before camera controllers run; apply fresh shake afterward.
 Run:BindToRenderStep("MeteorShakeRestore",Enum.RenderPriority.Camera.Value-1,function()
  if lastCamera and lastCamera==workspace.CurrentCamera then lastCamera.CFrame=lastCamera.CFrame*lastOffset:Inverse() end
