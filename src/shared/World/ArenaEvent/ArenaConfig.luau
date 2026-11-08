@@ -12,7 +12,7 @@ matter here.
 ]]
 local Config = {}
 
-Config.Enabled = false -- held for the next Arena update
+Config.Enabled = true
 
 -- ===== Schedule =====
 Config.CycleSeconds = 3600 -- one scheduled brawl per hour...
@@ -31,9 +31,9 @@ Config.PortalJoinRange = 18 -- the server accepts a join when the player is this
 Config.Center = Vector3.new(6000, 300, 6000) -- top surface of the platform; thousands of studs from the map (the map spans about +-1100)
 -- The volcano zone around it (ServerScriptService.ArenaZoneBuilder): a basalt cavern under a lava lake, over a lava pit.
 Config.CavernRadius = 100 -- inner radius of the basalt wall
-Config.LavaDepth = 50 -- the lava pit surface this far below the platform top
+Config.LavaDepth = 8 -- pool at Y=292, with room for crests below the fighting deck
 Config.CavernHeight = 95 -- the lava lake (ceiling) this far above the platform top
-Config.LavaRadius = 240 -- the animated lava sea (ArenaLava client script) reaches this far, under the walls
+Config.LavaRadius = 150 -- covers the colosseum with 25 animated lava chunks
 Config.ZoneRadius = 270 -- the client volcano lighting applies within this flat distance of Center
 Config.TileSize = 6 -- whole studs, so the stud material lines up
 Config.Grid = 16 -- 16 x 16 grid trimmed to a circular disc of diameter 96 studs

@@ -12,7 +12,7 @@
 --                height under the bands +3.1 and +2.8 studs, under the troughs -1.9)
 --   eruption ring rings of glowing stud cubes (studded plastic, snapped to the whole-stud grid, so it reads as pixels) ride the
 --                real lava height as the ring wave runs outward (20 studs/s, gone after 2.2 s, about 44 studs)
---   waves        five slow, steep, peaked trains (the biggest 3 studs high, 96 studs long) that swell and ease in sets
+--   waves        five slow, steep, peaked trains (the longest is 96 studs) that swell and ease in sets
 --   eruptions    every few seconds lava swells into a bubble, bursts into a plume and a spray of glowing voxel cubes,
 --                the cubes fall back with a splash and a ring wave runs across the lava. All of it comes from the
 --                server clock, so every player sees the same eruption at the same moment.
@@ -35,9 +35,10 @@ local player = Players.LocalPlayer
 local TAU = math.pi * 2
 local CENTER = Config.Center
 local LAVA_Y = CENTER.Y - Config.LavaDepth
-local RADIUS = Config.LavaRadius -- the sea reaches a little under the walls
+local RADIUS = Config.LavaRadius -- the sea reaches under the colosseum walls
 local CELL = 6 -- studs between vertices (the shortest wave is 22 studs long, so 3.7 cells: no aliasing)
 local CHUNK_CELLS = 10 -- cells per chunk edge (60 studs)
+local SURFACE_HEIGHT_SCALE = 0.10 -- keep travelling waves and eruption swells below the arena deck
 local FLOW_LIFT = 0.4
 local FLOW_TRANSPARENCY = 0.7
 local CREST_NEAR = 85 -- the crest bands only on chunks this close to the camera (the flow layer reaches NEAR)
@@ -73,7 +74,7 @@ for index, spec in waveSpecs do
         dz = math.sin(a),
         k = k,
         w = math.sqrt(GRAVITY * k),
-        a = spec.height,
+        a = spec.height * SURFACE_HEIGHT_SCALE,
         p = spec.phase,
         set = 0.11 + index * 0.017, -- how fast this train swells and eases
     }
@@ -134,7 +135,7 @@ local function eruptionHeight(x, z)
                 + 3.2 * math.sin(0.5 * front) * math.exp(-(front * front) / 196) * math.exp(-RING_DECAY * t)
         end
     end
-    return total
+    return total * SURFACE_HEIGHT_SCALE
 end
 
 -- Mesh chunks -----------------------------------------------------------------------------------------------------

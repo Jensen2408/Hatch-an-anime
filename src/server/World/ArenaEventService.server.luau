@@ -167,6 +167,12 @@ local function buildArena()
     if zoneTemplate then
         model = zoneTemplate:Clone()
         model.Name = "PvPArena"
+        -- Older Studio templates still have a sheet just below the fighting deck.
+        local colosseum = model:FindFirstChild("Colosseum")
+        local oldSurface = colosseum and colosseum:FindFirstChild("Neon_LavaSurface")
+        if oldSurface then
+            oldSurface:Destroy()
+        end
         model.Parent = workspace
     else
         model = Builder.Build(workspace)
