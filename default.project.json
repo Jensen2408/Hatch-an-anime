@@ -4,10 +4,11 @@
     "$className": "DataModel",
     "$ignoreUnknownInstances": true,
     "ReplicatedFirst": {
+      "SkyStart": {"$path": "src/client/Bootstrap/SkyStart.client.luau"},
       "$className": "ReplicatedFirst",
       "$ignoreUnknownInstances": true,
       "LoadingScreen": {
-        "$path": "src/client/Bootstrap/LoadingScreen.client.luau",
+        "$path": "src/client/Bootstrap/LoadingScreen.client.luau", "$properties": {"Disabled": true},
         "Config": {
           "$path": "src/client/Bootstrap/LoadingScreen/Config.luau"
         }
@@ -17,15 +18,19 @@
       },
       "StartupLoader": {
         "$path": "src/client/Bootstrap/StartupLoader.luau"
-      },
-      "SkyStart": {
-        "$path": "src/client/Bootstrap/SkyStart.client.luau"
       }
     },
     "StarterPlayer": {
       "$className": "StarterPlayer",
       "$ignoreUnknownInstances": true,
       "StarterPlayerScripts": {
+        "StudHUDSkin": {"$path": "src/client/UI/Controllers/StudHUDSkin.client.luau"},
+        "StudPolish": {"$path": "src/client/UI/Controllers/StudPolish.client.luau"},
+        "StudWorldSkin": {"$path": "src/client/UI/Controllers/StudWorldSkin.client.luau"},
+        "TutorialSpotlight": {"$path": "src/client/Tutorial/TutorialSpotlight.client.luau"},
+        "EventTimers": {"$path": "src/client/UI/Controllers/EventTimers.client.luau"},
+        "UpcomingTeaser": {"$path": "src/client/UI/Controllers/UpcomingTeaser.client.luau"},
+        "UpdateBoardClient": {"$path": "src/client/World/UpdateBoardClient.client.luau"},
         "$className": "StarterPlayerScripts",
         "$ignoreUnknownInstances": true,
         "TrailerCinematic": {
@@ -98,7 +103,7 @@
           "$path": "src/client/Plot/ConstructionClientStart.client.luau"
         },
         "EggStealClientStart": {
-          "$path": "src/client/Egg/EggStealClientStart.client.luau"
+          "$path": "src/client/Egg/EggStealClientStart.client.luau", "$properties": {"Disabled": true}
         },
         "VIPChatTag": {
           "$path": "src/client/Admin/VIPChatTag.client.luau"
@@ -252,9 +257,7 @@
         },
         "MutationCoating": {
           "$path": "src/client/Effects/MutationCoating.client.luau",
-          "MoltenSurface": {
-            "$path": "src/client/Effects/MutationCoating/MoltenSurface.luau"
-          }
+          "MoltenSurface": {"$path": "src/client/Effects/MoltenSurface.luau", "MoltenMapData": {"$path": "src/client/Effects/MoltenMapData.luau"}}
         },
         "RainbowMutationClient": {
           "$path": "src/client/Effects/RainbowMutationClient.client.luau"
@@ -264,27 +267,6 @@
         },
         "GalaxyPrototype": {
           "$path": "src/client/Effects/GalaxyPrototype.client.luau"
-        },
-        "EventTimers": {
-          "$path": "src/client/UI/Stud/EventTimers.client.luau"
-        },
-        "StudPolish": {
-          "$path": "src/client/UI/Stud/StudPolish.client.luau"
-        },
-        "StudHUDSkin": {
-          "$path": "src/client/UI/Stud/StudHUDSkin.client.luau"
-        },
-        "StudWorldSkin": {
-          "$path": "src/client/UI/Stud/StudWorldSkin.client.luau"
-        },
-        "TutorialSpotlight": {
-          "$path": "src/client/Tutorial/TutorialSpotlight.client.luau"
-        },
-        "UpcomingTeaser": {
-          "$path": "src/client/UI/Controllers/UpcomingTeaser.client.luau"
-        },
-        "UpdateBoardClient": {
-          "$path": "src/client/World/UpdateBoardClient.client.luau"
         }
       }
     },
@@ -355,6 +337,7 @@
       }
     },
     "ServerStorage": {
+      "V2MutationModels": {"$path": "assets/Studio/V2MutationModels.rbxm"},
       "$className": "ServerStorage",
       "$ignoreUnknownInstances": true,
       "_ARCHIVE": {
@@ -3422,6 +3405,7 @@
       }
     },
     "Workspace": {
+      "UpdateSigns": {"$path": "assets/Studio/UpdateSigns.rbxm"},
       "$className": "Workspace",
       "$ignoreUnknownInstances": true,
       "PirateEggConveyor": {
@@ -3440,6 +3424,11 @@
       }
     },
     "ReplicatedStorage": {
+      "ProjectedCoatingMeshes": {"$path": "assets/Studio/ProjectedCoatingMeshes.rbxm"},
+      "MutationStyle": {"$path": "src/shared/UI/MutationStyle.luau"},
+      "UpcomingConfig": {"$path": "src/shared/Config/UpcomingConfig.luau"},
+      "FolkStudUI": {"$path": "src/shared/UI/FolkStudUI.luau"},
+      "MangaUI": {"$path": "src/shared/UI/MangaUI.luau"},
       "MutationSurfaceFinishes": {
         "$path": "src/shared/Effects/MutationSurfaceFinishes.model.json"
       },
@@ -3929,18 +3918,6 @@
         "BodyProjection": {
           "$path": "src/shared/Effects/GalaxyPrototype/BodyProjection.model.json"
         }
-      },
-      "MangaUI": {
-        "$path": "src/shared/UI/MangaUI.luau"
-      },
-      "UpcomingConfig": {
-        "$path": "src/shared/Config/UpcomingConfig.luau"
-      },
-      "MutationStyle": {
-        "$path": "src/shared/UI/MutationStyle.luau"
-      },
-      "FolkStudUI": {
-        "$path": "src/shared/UI/FolkStudUI.luau"
       }
     },
     "ServerScriptService": {

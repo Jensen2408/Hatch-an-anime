@@ -633,6 +633,7 @@ local MUTATION_COLORS = {
     Gold = Color3.fromRGB(255, 196, 60),
     Diamond = Color3.fromRGB(90, 220, 255),
     Rainbow = Color3.fromRGB(255, 90, 200),
+    Molten = Color3.fromRGB(255, 105, 34),
 }
 local SLOT_SIZE = 62
 -- renderBar's cheap path: same slots, only re-highlight the one whose stack holds the equipped tool.
@@ -1329,6 +1330,7 @@ local function bagCount()
 end
 local sellQuotes = setmetatable({}, { __mode = "k" })
 local characterItems = {}
+local characterCapacity
 local characterLoaded = false
 local fetchingCharacters = false
 local onQuote
@@ -1338,6 +1340,7 @@ local function applySnapshot(snapshot)
         return
     end
     characterItems = {}
+    characterCapacity = snapshot.capacity
     for _, item in snapshot.items or {} do
         characterItems[item.id] = item
     end
@@ -1734,12 +1737,13 @@ end)
 -- SELL mode (tap twice to sell). Opens with the Backpack button or the ` key.
 do
     local RARITY_FILTERS = { "All", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Cosmic", "Limited" }
-    local MUTATION_FILTERS = { "Any", "Mutated", "Silver", "Gold", "Diamond", "Rainbow" }
+    local MUTATION_FILTERS = { "Any", "Mutated", "Silver", "Gold", "Diamond", "Rainbow", "Molten" }
     local INVENTORY_MUTATION_COLORS = {
         Silver = Color3.fromRGB(200, 210, 225),
         Gold = Color3.fromRGB(255, 196, 60),
         Diamond = Color3.fromRGB(90, 220, 255),
         Rainbow = Color3.fromRGB(255, 90, 200),
+        Molten = Color3.fromRGB(255, 105, 34),
     }
     local RAINBOW_GRADIENT = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80, 80)),
@@ -1874,6 +1878,23 @@ do
         ZIndex = 21,
     }, inventoryFrame)
     addStroke(emptyLabel, 2, BLACK).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+    local characterSummary = create("TextLabel", {
+        Name = "CharacterSummary",
+        Position = UDim2.fromOffset(24, 105),
+        Size = UDim2.fromOffset(438, 26),
+        BackgroundTransparency = 1,
+        FontFace = FONT,
+        TextSize = 17,
+        TextColor3 = CREAM,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 22,
+        Visible = false,
+    }, inventoryFrame)
+    addStroke(characterSummary, 2, BLACK)
+    local viewPlot = artButton({ 492, 103, 142, 31 }, 17)
+    viewPlot.Name = "ViewPlot"
+    viewPlot.Text = "VIEW PLOT"
+    viewPlot.Visible = false
     -- tab + rarity + mutation ("Mutated" = any) + case-insensitive plain-text search on "<mutation> <name>"
     local function matchesFilters(tool)
         local kind = getCategory(tool)
@@ -2127,8 +2148,24 @@ do
             end
         end
         countLabel.Text = tostring(#items)
+        local isCharacters = activeTab == "Characters"
+        local capacity = characterCapacity
+        local placed = capacity and capacity.placed or 0
+        local carried = isCharacters and #bagItems("Characters") or 0
+        characterSummary.Visible = isCharacters
+        if isCharacters then
+            local plotCount = capacity and capacity.hasPlot and ("%d / %d"):format(placed, capacity.unlocked) or "—"
+            characterSummary.Text = ("Backpack: %d   |   Placed on Plot: %s"):format(carried, plotCount)
+        end
+        viewPlot.Visible = isCharacters and capacity ~= nil and capacity.hasPlot
+        local inset = isCharacters and 25 or 0
+        itemGrid.Position = UDim2.fromOffset(ART.Grid[1], ART.Grid[2] + inset)
+        itemGrid.Size = UDim2.fromOffset(ART.Grid[3], ART.Grid[4] - inset)
         emptyLabel.Visible = #items == 0
-        emptyLabel.Text = activeTab == "Characters" and "No characters — hatch an egg!"
+        emptyLabel.Text = isCharacters and (carried > 0 and "No characters match these filters"
+                or not characterLoaded and "Loading characters…"
+                or placed > 0 and "Your characters are on your plot"
+                or "No characters yet — hatch an egg!")
             or activeTab == "Eggs" and "No eggs — grab some from the river!"
             or "Nothing here yet"
         for i, tool in items do
@@ -2192,6 +2229,44 @@ do
             inventoryFrame.Visible = false
         end
     end
+    viewPlot.Activated:Connect(function()
+        local plots = workspace:FindFirstChild("Plots")
+        if not plots then
+            return
+        end
+        for _, plot in plots:GetChildren() do
+            if plot:GetAttribute("OwnerUserId") ~= player.UserId then
+                continue
+            end
+            local podiums = plot:FindFirstChild("PlacedItems")
+            local display = podiums and podiums:FindFirstChildWhichIsA("Model")
+            local spawn = plot:FindFirstChild("PlotSpawn")
+            local camera = workspace.CurrentCamera
+            local target = display and display:GetPivot().Position or spawn and spawn.Position
+            if not camera or not target or camera.CameraType ~= Enum.CameraType.Custom then
+                return
+            end
+            setInventoryOpen(false)
+            local originalFocus = camera.Focus
+            camera.CameraType = Enum.CameraType.Scriptable
+            local focus = CFrame.new(target)
+            local shot = CFrame.lookAt(target + Vector3.new(16, 12, 20), target)
+            local guiService = game:GetService("GuiService")
+            if guiService.ReducedMotionEnabled then
+                camera.CFrame = shot
+                camera.Focus = focus
+            else
+                tween(camera, 0.45, { CFrame = shot, Focus = focus }, Enum.EasingStyle.Quad)
+            end
+            task.delay(2, function()
+                if workspace.CurrentCamera == camera and camera.CameraType == Enum.CameraType.Scriptable then
+                    camera.Focus = originalFocus
+                    camera.CameraType = Enum.CameraType.Custom
+                end
+            end)
+            return
+        end
+    end)
     inventoryPanel.setOpen = setInventoryOpen
     inventoryPanel.render = render
     inventoryPanel.frame = inventoryFrame -- drop target for hotbar slots (section 4)

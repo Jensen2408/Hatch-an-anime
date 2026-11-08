@@ -257,12 +257,15 @@ local function buildEggTool(record)
     -- saved mutation eggs come back as their mutated model (same size as the plain egg) with the aura VFX
     local mutatedModel
     if attributes.Mutation and template and not attributes.UnknownEgg then
-        local mutationPack = ServerStorage:FindFirstChild("UpdatePack_Mutations_Halloween")
-        local mutationEggs = mutationPack and mutationPack:FindFirstChild("Update_Eggs_Halloween", true)
+        local isHalloween = workspace:GetAttribute("HalloweenSeason") == true
+        local packName = isHalloween and "UpdatePack_Mutations_Halloween" or "UpdatePack_Mutations"
+        local mutationPack = ServerStorage:FindFirstChild(packName)
+        local mutationEggs = mutationPack and (mutationPack:FindFirstChild("Update_Eggs_Halloween", true) or mutationPack:FindFirstChild("Update_Eggs", true))
         mutatedModel = mutationEggs
             and (
-                mutationEggs:FindFirstChild(eggType .. "_Halloween_" .. attributes.Mutation .. "_Egg")
+                (isHalloween and mutationEggs:FindFirstChild(eggType .. "_Halloween_" .. attributes.Mutation .. "_Egg"))
                 or mutationEggs:FindFirstChild(eggType .. "_" .. attributes.Mutation .. "_Egg")
+                or mutationEggs:FindFirstChild(eggType .. "_Halloween_" .. attributes.Mutation .. "_Egg")
             )
     end
     if template then

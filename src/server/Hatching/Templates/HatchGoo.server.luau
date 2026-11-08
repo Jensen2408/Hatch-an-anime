@@ -5,8 +5,7 @@ chamber runs its own copy and everything below uses `script.Parent` (the chamber
 
 Hatch cycle (one at a time per chamber, guarded by `busy`):
   insert egg -> incubate (countdown, liquid drains) -> "READY • PRESS HATCH" -> owner presses again
-  -> summon reveal for the owner (SummonHatchServer) + HatchFX opening for everyone -> reward character waits on
-  the platform -> owner collects it.
+  -> summon reveal for the owner (SummonHatchServer) + HatchFX opening for everyone -> reward character goes to the owner's backpack.
 
 Inputs:   HatchButton.ClickDetector, HatchButton.ProximityPrompt, chamber.RequestHatch (BindableEvent),
           chamber.ResumeEgg (BindableFunction, created here; PlayerDataService puts a saved egg back).
@@ -94,8 +93,8 @@ local function canUseChamber(player, range)
         and (rootPart.Position - hatchButton.Position).Magnitude < (range or 20)
 end
 
--- An egg belongs to this chamber until collected. Walking away or respawning
--- does not cancel incubation; distance is checked only for button/pickup actions.
+-- An egg belongs to this chamber until the reward is granted. Walking away or respawning
+-- does not cancel incubation; distance is checked only for button actions.
 local function ownsChamber(player)
     if not player then
         return true
@@ -191,7 +190,7 @@ local function runCycle(player, resumeTool, resumeLeft)
     waitingOwner = player
     startRequested = false
     -- Instances created inside the xpcall body; the cleanup below destroys whatever exists.
-    local visual, pickupAnchor, eggTimer, timerAnchor
+    local visual, eggTimer, timerAnchor
     local toolWasEnabled = tool and tool.Enabled
     -- The egg's mutation carries over to the egg in the tank, the reveal and the character.
     local mutation = tool and tool:GetAttribute("Mutation")
@@ -506,76 +505,34 @@ local function runCycle(player, resumeTool, resumeLeft)
         Economy.Label(character, rewardId, rewardStats)
         chamber:SetAttribute("RewardId", rewardId)
         CollectionService:AddTag(character, "HatchRewardDisplay")
-        cycleCompleted:Fire(player, tool, rewardId)
-
-        ---------------------------------------------------------------- pickup
+        ---------------------------------------------------------------- grant
         chamber:SetAttribute("Venting", true)
         glassController:Open(0.45)
-        say(
-            "AwaitingPickup",
-            "POWER "
-                .. Economy.Format(rewardStats.Power)
-                .. " • $"
-                .. Economy.Format(rewardStats.IncomePerSecond)
-                .. "/sec"
-        )
-        pickupAnchor = Instance.new("Part")
-        pickupAnchor.Name = "EggPickupAnchor"
-        pickupAnchor.Size = Vector3.one
-        pickupAnchor.Transparency = 1
-        pickupAnchor.Anchored = true
-        pickupAnchor.CanCollide = false
-        pickupAnchor.CanTouch = false
-        pickupAnchor.CanQuery = false
-        pickupAnchor.Position = chamberPivot:PointToWorldSpace(Vector3.new(0, 3.5, -1.5))
-        pickupAnchor.Parent = chamber
-        local pickup = Instance.new("ProximityPrompt")
-        pickup.Name = "PickUpCharacter"
-        pickup.ActionText = "Collect character"
-        pickup.ObjectText = Catalog.ById[rewardId].Name .. " • Power " .. Economy.Format(rewardStats.Power)
-        pickup.RequiresLineOfSight = false
-        pickup.MaxActivationDistance = 12
-        pickup.HoldDuration = 0.2
-        pickup.Parent = pickupAnchor
-        local collected = false
-        -- Fired by the pickup prompt or the RequestPickup bindable (HatchVideoService).
-        local function collect(who)
-            if collected or (player and who ~= player) then
+        -- Wait for both reveals, including the owner's client-side summon animation.
+        while player and SummonHatch.IsBusy(player) do
+            if not ownsChamber(player) or not chamber:IsDescendantOf(workspace) then
                 return
             end
-            local rootPart = who and who.Character and who.Character:FindFirstChild("HumanoidRootPart")
-            local backpack = who and who:FindFirstChildOfClass("Backpack")
-            if not rootPart or not backpack or (rootPart.Position - pickupAnchor.Position).Magnitude > 14 then
-                return
-            end
-            collected = true
-            pickup.Enabled = false
-            local rewardTool = Rewards.Tool(rewardTemplate, rewardId, rewardStats, mutation or nil)
-            rewardTool.Parent = backpack
-            local humanoid = who.Character:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                humanoid:EquipTool(rewardTool)
-            end
-            collected = true
-            pickup.Enabled = false
-            -- The egg is consumed only once the reward exists; until then it can be returned.
-            if tool and tool.Parent then
-                tool:Destroy()
-                tool = nil
-            end
+            task.wait(0.05)
         end
-        pickup.Triggered:Connect(collect)
-        local pickupRequest = Instance.new("BindableEvent")
-        pickupRequest.Name = "RequestPickup"
-        pickupRequest.Parent = pickupAnchor
-        pickupRequest.Event:Connect(collect)
-        task.delay(2, function()
-            if chamber.Parent then
-                chamber:SetAttribute("Venting", false)
-            end
-        end)
-        while not collected and (not player or player.Parent == Players) and chamber:IsDescendantOf(workspace) do
-            task.wait(0.1)
+        if not player then
+            task.wait(2) -- leave the reveal visible for server-side previews
+            return
+        end
+        if not ownsChamber(player) or not chamber:IsDescendantOf(workspace) then
+            return
+        end
+        local backpack = player:FindFirstChildOfClass("Backpack")
+        if not backpack then
+            return
+        end
+        local rewardTool = Rewards.Tool(rewardTemplate, rewardId, rewardStats, mutation or nil)
+        rewardTool.Parent = backpack
+        cycleCompleted:Fire(player, tool, rewardId)
+        -- The egg is consumed only once the reward exists; until then it can be returned.
+        if tool and tool.Parent then
+            tool:Destroy()
+            tool = nil
         end
     end, debug.traceback)
 
@@ -593,9 +550,6 @@ local function runCycle(player, resumeTool, resumeLeft)
     if timerAnchor then
         timerAnchor:Destroy()
     end
-    if pickupAnchor then
-        pickupAnchor:Destroy()
-    end
     if visual then
         visual:Destroy()
     end
@@ -612,7 +566,7 @@ local function runCycle(player, resumeTool, resumeLeft)
         tween(hatchButton, 0.2, { CFrame = buttonRest })
     end
     if chamber.Parent then
-        glassController:Close(0.45)
+        glassController:Open(0.45)
     end
     if tankLiquid.Parent then
         tween(tankLiquid, 1.25, { Size = liquidFullSize, CFrame = liquidFullCFrame }).Completed:Wait()
@@ -623,7 +577,7 @@ local function runCycle(player, resumeTool, resumeLeft)
     prompt.ActionText = "Insert egg"
     prompt.ObjectText = "Hatching chamber"
     prompt.Enabled = true
-    say("Ready", "HOLD AN EGG • INSERT")
+    say("Ready", "READY FOR EGG")
     if not ok then
         warn("Hatch cycle recovered: " .. tostring(err))
     end

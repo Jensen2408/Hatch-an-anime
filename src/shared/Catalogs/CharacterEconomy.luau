@@ -101,7 +101,7 @@ function Economy.Roll(id, rng)
     return { Power = power, IncomePerSecond = Economy.Income(id, power), RollQuality = chosen.Name }
 end
 
-Economy.MutationMult = { Silver = 1.5, Gold = 2, Diamond = 3, Rainbow = 5 }
+Economy.MutationMult = { Silver = 1.5, Gold = 2, Diamond = 3, Rainbow = 5, Molten = 7 }
 local function mutationMultiplier(object)
     local mutation = object and object:GetAttribute("Mutation")
     return (mutation and Economy.MutationMult[mutation]) or 1

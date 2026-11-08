@@ -122,7 +122,7 @@ end
 local panel = make("Frame", {
     Name = "Panel",
     AnchorPoint = Vector2.new(0.5, 0),
-    Position = UDim2.new(0.5, 0, 0, 6),
+    Position = UDim2.new(0.5, 0, 0, 70),
     Size = UDim2.new(0.92, 0, 0, 78),
     BackgroundColor3 = THEME.lacquer,
     Visible = false,
@@ -1271,10 +1271,7 @@ local function refresh()
             detail = nil
         else
             info = "Walk into the glowing portal outside your plot to join! " .. joined .. " joined"
-            detail = "Knockout pay: $"
-                .. formatCash(Config.KnockoutCash)
-                .. " each - winner $"
-                .. formatCash(Config.WinnerCash)
+            detail = "At least $20M per knockout and $100M for the winner"
         end
         setPanel(detail and 78 or 58, "ARENA BRAWL - PORTAL OPEN!", formatTime(endsAt - now), info, detail)
     elseif phase == "Countdown" then

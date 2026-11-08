@@ -2,7 +2,10 @@
 -- Runs on the server, so the Motor6D C0 writes replicate to every client each Heartbeat.
 -- Idle loop for the Pumpkin Gentleman: breathing, look around, cane tap, hat tip, flickering face.
 local model = script.Parent
-local rigRoot = model.Root
+local rigRoot = model:FindFirstChild("Root")
+if not rigRoot then
+    return
+end
 local function findMotor(motorName)
     return rigRoot:FindFirstChild(motorName, true) or model:FindFirstChild(motorName, true)
 end

@@ -1,5 +1,5 @@
 --[[ ServerScriptService.Mutations (ModuleScript, server only)
-Rolled on every hatch. A mutation is a tier name ("Silver" | "Gold" | "Diamond" | "Rainbow") or nil (no mutation).
+Rolled on every hatch. A mutation is a tier name ("Silver" | "Gold" | "Diamond" | "Rainbow" | "Molten") or nil (no mutation).
 
 Mutation model:
   * Roll(luck)            -> tier | nil. Each tier is an independent "1 in Odds[tier] / luck" check, rarest first,
@@ -24,14 +24,15 @@ Public fields (consumed by PlayerDataService, HatchGoo, InventoryService, EggCha
 local ServerStorage = game:GetService("ServerStorage")
 
 local Mutations = {}
-Mutations.Order = { "Silver", "Gold", "Diamond", "Rainbow" } -- common -> rarest
-Mutations.Odds = { Silver = 100, Gold = 500, Diamond = 2000, Rainbow = 5000 } -- 1 in N
+Mutations.Order = { "Silver", "Gold", "Diamond", "Rainbow", "Molten" } -- common -> rarest
+Mutations.Odds = { Silver = 100, Gold = 500, Diamond = 2000, Rainbow = 5000, Molten = 10000 } -- 1 in N
 -- Texture tint for characters without a pack model (SurfaceAppearance.Color multiplies the colour map)
 Mutations.Tint = {
     Silver = Color3.fromRGB(205, 215, 235),
     Gold = Color3.fromRGB(255, 196, 60),
     Diamond = Color3.fromRGB(140, 225, 255),
     Rainbow = Color3.fromRGB(255, 150, 230),
+    Molten = Color3.fromRGB(87, 61, 55),
 }
 
 -- Recoloured colour maps per v2 character (key = the model's V2Move attribute), made from each character's own
@@ -90,12 +91,17 @@ Mutations.Textures = {
 Mutations.RainbowTag = "RainbowMutation"
 
 local rng = Random.new()
+local MOLTEN_VOLCANO_ODDS = 1000
 
 function Mutations.Roll(luck)
     luck = math.max(1, luck or 1)
     for i = #Mutations.Order, 1, -1 do -- rarest first
         local tier = Mutations.Order[i]
-        if rng:NextNumber() < luck / Mutations.Odds[tier] then
+        local odds = Mutations.Odds[tier]
+        if tier == "Molten" and typeof(workspace:GetAttribute("VolcanoStart")) == "number" then
+            odds = MOLTEN_VOLCANO_ODDS
+        end
+        if rng:NextNumber() < luck / odds then
             return tier
         end
     end
@@ -189,6 +195,65 @@ function Mutations.BuildModels()
     return count
 end
 
+-- Probe the underlying image URIs. ContentProvider does not preload a SurfaceAppearance itself.
+local ContentProvider = game:GetService("ContentProvider")
+local mapChecks = {}
+local function checkMutationMaps(appearance, part, tint)
+    local function useFallback()
+        if appearance.Parent == part then
+            appearance:Destroy()
+            part.TextureID = ""
+            part.Material = Enum.Material.SmoothPlastic
+            part.MaterialVariant = ""
+            part.Color = tint
+        end
+    end
+    for _, content in {
+        appearance.ColorMapContent,
+        appearance.NormalMapContent,
+        appearance.RoughnessMapContent,
+        appearance.MetalnessMapContent,
+    } do
+        local uri = content.Uri
+        if not uri or uri == "" then
+            continue
+        end
+        local check = mapChecks[uri]
+        if check ~= true then
+            if not check then
+                check = setmetatable({}, { __mode = "k" })
+                mapChecks[uri] = check
+                local function finish(success)
+                    if mapChecks[uri] ~= check then
+                        return
+                    end
+                    -- Retry transient failures for subsequent models.
+                    mapChecks[uri] = success or nil
+                    if not success then
+                        for _, fallback in check do
+                            fallback()
+                        end
+                    end
+                end
+                task.delay(8, finish, false)
+                task.defer(function()
+                    local probe = Instance.new("Decal")
+                    probe.ColorMapContent = Content.fromUri(uri)
+                    local loaded = false
+                    local ok = pcall(function()
+                        ContentProvider:PreloadAsync({ probe }, function(_, status)
+                            loaded = status == Enum.AssetFetchStatus.Success
+                        end)
+                    end)
+                    probe:Destroy()
+                    finish(ok and loaded)
+                end)
+            end
+            check[appearance] = useFallback
+        end
+    end
+end
+
 -- returns a fresh clone ready to use, or nil (caller keeps base)
 function Mutations.Model(id, tier, base)
     if not tier then
@@ -234,8 +299,69 @@ function Mutations.Model(id, tier, base)
     end
     if clone then
         clone:SetAttribute("Mutation", tier)
+        local tint = Mutations.Tint[tier]
+        if tint then
+            for _, appearance in clone:GetDescendants() do
+                local part = appearance.Parent
+                if appearance:IsA("SurfaceAppearance") and part:IsA("MeshPart") then
+                    checkMutationMaps(appearance, part, tint)
+                end
+            end
+        end
     end
     return clone
+end
+
+local function createMoltenAura(size)
+    local aura = Instance.new("Part")
+    aura.Size = Vector3.new(math.max(size.X * .66, .2), math.max(size.Y * .7, .2), math.max(size.Z * .66, .2))
+    local flames = Instance.new("ParticleEmitter")
+    flames.Name = "MoltenFlames"
+    flames.Texture = "rbxasset://textures/particles/fire_main.dds"
+    flames.Color = ColorSequence.new(Color3.fromRGB(255, 215, 92), Color3.fromRGB(244, 53, 10))
+    flames.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, .45),
+        NumberSequenceKeypoint.new(.3, .9),
+        NumberSequenceKeypoint.new(1, .15),
+    })
+    flames.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, .3),
+        NumberSequenceKeypoint.new(.55, .42),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    flames.Lifetime = NumberRange.new(.4, .8)
+    flames.Speed = NumberRange.new(1.3, 3.5)
+    flames.Acceleration = Vector3.new(0, 5, 0)
+    flames.SpreadAngle = Vector2.new(22, 22)
+    flames.LightEmission = .75
+    flames.Rate = 14
+    flames.LightInfluence = 0
+    flames.ZOffset = .2
+
+    local embers = flames:Clone()
+    embers.Name = "MoltenEmbers"
+    embers.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    embers.Size = NumberSequence.new(.24, .05)
+    embers.Lifetime = NumberRange.new(.6, 1.4)
+    embers.Speed = NumberRange.new(2, 5)
+    embers.Rate = 11
+    for _, side in { -1, 1 } do
+        local vent = Instance.new("Attachment")
+        vent.Name = "MoltenVent"
+        vent.Position = Vector3.new(size.X * .48 * side, -size.Y * .08, 0)
+        vent.Parent = aura
+        flames:Clone().Parent = vent
+        embers:Clone().Parent = vent
+    end
+    flames:Destroy()
+    embers:Destroy()
+
+    local light = Instance.new("PointLight")
+    light.Color = Color3.fromRGB(255, 104, 29)
+    light.Brightness = .65
+    light.Range = 8
+    light.Parent = aura
+    return aura
 end
 
 -- aura welded to the model's centre (works on anchored displays and on held tools)
@@ -245,15 +371,15 @@ function Mutations.AddAura(model, tier)
     end
     local auraTemplate = ServerStorage:FindFirstChild("MutationAuras")
         and ServerStorage.MutationAuras:FindFirstChild(tier)
-    if not auraTemplate then
+    if not auraTemplate and tier ~= "Molten" then
         return
     end
     local oldAura = model:FindFirstChild("RarityAura")
     if oldAura then
         oldAura:Destroy()
     end
-    local boundsCFrame = model:GetBoundingBox()
-    local aura = auraTemplate:Clone()
+    local boundsCFrame, boundsSize = model:GetBoundingBox()
+    local aura = auraTemplate and auraTemplate:Clone() or createMoltenAura(boundsSize)
     aura.Name = "RarityAura"
     aura.CanCollide = false
     aura.CanQuery = false

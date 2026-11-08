@@ -6,7 +6,7 @@
 --   client -> server: ("Start", optionalIdList) | ("Stop")
 --   server -> client: ("Begin", chamber) | ("Egg", index, count, id) | ("Error", message) | ("Done")
 -- Drives the chamber through its own HatchGoo interface: ResumeEgg (insert with 0.6 s left),
--- RequestHatch (press hatch) and EggPickupAnchor.RequestPickup (collect), polling the Status attribute.
+-- RequestHatch (press hatch), polling the Status attribute through automatic reward delivery.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
@@ -140,16 +140,9 @@ local function run(player, chain)
         task.wait(0.8)
         park()
         chamber.RequestHatch:Fire(player)
-        if not waitStatus(chamber, "AwaitingPickup", 40) then
+        if not waitStatus(chamber, "Ready", 60) then
             break
         end
-        task.wait(i == #chain and 5 or 1.6) -- hold longer on the final reveal
-        local anchor = chamber:FindFirstChild("EggPickupAnchor", true)
-        park()
-        if anchor and anchor:FindFirstChild("RequestPickup") then
-            anchor.RequestPickup:Fire(player)
-        end
-        waitStatus(chamber, "Ready", 15)
         task.wait(0.4)
     end
     if backpackRewardConnection then

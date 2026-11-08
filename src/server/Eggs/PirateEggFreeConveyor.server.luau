@@ -51,12 +51,15 @@ local MUTATION_TIERS = { Silver = true, Gold = true, Diamond = true, Rainbow = t
 local ownerQueue -- { { template, tier }, ... }; each entry takes the next normal river slot
 -- Builds a river-ready mutated copy of `template` from the Halloween update pack, or nil if the pack lacks it.
 local function mutatedTemplate(template, tier)
-    local pack = game.ServerStorage:FindFirstChild("UpdatePack_Mutations_Halloween")
-    local eggs = pack and pack:FindFirstChild("Update_Eggs_Halloween", true)
+    local isHalloween = workspace:GetAttribute("HalloweenSeason") == true
+    local packName = isHalloween and "UpdatePack_Mutations_Halloween" or "UpdatePack_Mutations"
+    local pack = game.ServerStorage:FindFirstChild(packName)
+    local eggs = pack and (pack:FindFirstChild("Update_Eggs_Halloween", true) or pack:FindFirstChild("Update_Eggs", true))
     local sourceEgg = eggs
         and (
-            eggs:FindFirstChild(template.Name .. "_Halloween_" .. tier .. "_Egg")
+            (isHalloween and eggs:FindFirstChild(template.Name .. "_Halloween_" .. tier .. "_Egg"))
             or eggs:FindFirstChild(template.Name .. "_" .. tier .. "_Egg")
+            or eggs:FindFirstChild(template.Name .. "_Halloween_" .. tier .. "_Egg")
         )
     if not sourceEgg then
         return nil

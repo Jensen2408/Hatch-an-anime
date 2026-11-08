@@ -61,7 +61,7 @@ end
 local joinEvent = remote("RemoteEvent", "Join")
 local equipEvent = remote("RemoteEvent", "EquipLoadout")
 local fxEvent = remote("RemoteEvent", "Fx")
-local oldLeave = folder:FindFirstChild("Leave") -- the HUD JOIN / LEAVE buttons are gone
+local oldLeave = folder:FindFirstChild("Leave") -- retire the legacy leave remote
 if oldLeave then
     oldLeave:Destroy()
 end
@@ -608,6 +608,20 @@ local function eliminate(player, reason)
     setAttr("ArenaFighters", #aliveList())
 end
 
+local function placedIncome(player)
+    local plot = findOwnedPlot(player)
+    local placedItems = plot and plot:FindFirstChild("PlacedItems")
+    local income = 0
+    if placedItems then
+        for _, display in placedItems:GetChildren() do
+            if display:IsA("Model") then
+                income += math.max(0, tonumber(display:GetAttribute("IncomePerSecond")) or 0)
+            end
+        end
+    end
+    return income
+end
+
 local function givePayout(player, cash)
     local stats = player:FindFirstChild("leaderstats")
     local cashValue = stats and stats:FindFirstChild("Cash")
@@ -868,11 +882,16 @@ local function runRound(starter, byAdmin)
         end
     end
     local payouts = state.total >= 2
+    local winnerAward = payouts and winner and math.max(100_000_000, math.floor(1800 * placedIncome(winner))) or 0
     for player, info in state.fighters do
         local won = player == winner
         local cash = 0
         if payouts then
-            cash = Config.ParticipationCash + info.kos * Config.KnockoutCash + (won and Config.WinnerCash or 0)
+            local knockoutAward = 0
+            if info.kos > 0 then
+                knockoutAward = math.max(20_000_000, math.floor(300 * placedIncome(player)))
+            end
+            cash = Config.ParticipationCash + info.kos * knockoutAward + (won and winnerAward or 0)
             givePayout(player, cash)
         end
         if player.Parent then
@@ -895,7 +914,7 @@ local function runRound(starter, byAdmin)
                 .. " with "
                 .. kos
                 .. (kos == 1 and " knockout" or " knockouts")
-                .. (payouts and (" and takes $" .. formatCash(Config.WinnerCash) .. "!") or "!"),
+                .. (payouts and (" and takes $" .. formatCash(winnerAward) .. "!") or "!"),
             color = "gold",
         })
     else
@@ -953,7 +972,7 @@ equipEvent.OnServerEvent:Connect(function(player, requestedUids)
     syncPlayerLoadout(player, info, false)
 end)
 
-joinEvent.OnServerEvent:Connect(function(player)
+joinEvent.OnServerEvent:Connect(function(player, action)
     if state.phase ~= "Lobby" or state.fighters[player] or state.locked[player] then
         return
     end
@@ -970,7 +989,7 @@ joinEvent.OnServerEvent:Connect(function(player)
     if typeof(portal) ~= "CFrame" or not root then
         return
     end
-    if (root.Position - portal.Position).Magnitude > Config.PortalJoinRange then
+    if action ~= "GoToPortal" and (root.Position - portal.Position).Magnitude > Config.PortalJoinRange then
         return -- not actually at their portal
     end
     if count() >= Config.MaxPlayers then
@@ -980,6 +999,11 @@ joinEvent.OnServerEvent:Connect(function(player)
     if player:GetAttribute("RiverEggCarryId") then
         fxEvent:FireClient(player, "Notice", { text = "Secure your egg at home before you join!" })
         return
+    end
+    if action == "GoToPortal" then
+        root.CFrame = portal * CFrame.new(0, 4, 0)
+        root.AssemblyLinearVelocity = Vector3.zero
+        return -- the existing portal detection submits the join when the player is inside
     end
     state.joinCounter += 1
     local _, _, joinHumanoid = charParts(player)
