@@ -4,10 +4,11 @@
     "$className": "DataModel",
     "$ignoreUnknownInstances": true,
     "ReplicatedFirst": {
+      "SkyStart": {"$path": "src/client/Bootstrap/SkyStart.client.luau"},
       "$className": "ReplicatedFirst",
       "$ignoreUnknownInstances": true,
       "LoadingScreen": {
-        "$path": "src/client/Bootstrap/LoadingScreen.client.luau",
+        "$path": "src/client/Bootstrap/LoadingScreen.client.luau", "$properties": {"Disabled": true},
         "Config": {
           "$path": "src/client/Bootstrap/LoadingScreen/Config.luau"
         }
@@ -23,6 +24,13 @@
       "$className": "StarterPlayer",
       "$ignoreUnknownInstances": true,
       "StarterPlayerScripts": {
+        "StudHUDSkin": {"$path": "src/client/UI/Controllers/StudHUDSkin.client.luau"},
+        "StudPolish": {"$path": "src/client/UI/Controllers/StudPolish.client.luau"},
+        "StudWorldSkin": {"$path": "src/client/UI/Controllers/StudWorldSkin.client.luau"},
+        "TutorialSpotlight": {"$path": "src/client/Tutorial/TutorialSpotlight.client.luau"},
+        "EventTimers": {"$path": "src/client/UI/Controllers/EventTimers.client.luau"},
+        "UpcomingTeaser": {"$path": "src/client/UI/Controllers/UpcomingTeaser.client.luau"},
+        "UpdateBoardClient": {"$path": "src/client/World/UpdateBoardClient.client.luau"},
         "$className": "StarterPlayerScripts",
         "$ignoreUnknownInstances": true,
         "TrailerCinematic": {
@@ -95,7 +103,7 @@
           "$path": "src/client/Plot/ConstructionClientStart.client.luau"
         },
         "EggStealClientStart": {
-          "$path": "src/client/Egg/EggStealClientStart.client.luau"
+          "$path": "src/client/Egg/EggStealClientStart.client.luau", "$properties": {"Disabled": true}
         },
         "VIPChatTag": {
           "$path": "src/client/Admin/VIPChatTag.client.luau"
@@ -329,6 +337,7 @@
       }
     },
     "ServerStorage": {
+      "V2MutationModels": {"$path": "assets/Studio/V2MutationModels.rbxm"},
       "$className": "ServerStorage",
       "$ignoreUnknownInstances": true,
       "_ARCHIVE": {
@@ -3396,6 +3405,7 @@
       }
     },
     "Workspace": {
+      "UpdateSigns": {"$path": "assets/Studio/UpdateSigns.rbxm"},
       "$className": "Workspace",
       "$ignoreUnknownInstances": true,
       "PirateEggConveyor": {
@@ -3414,6 +3424,11 @@
       }
     },
     "ReplicatedStorage": {
+      "ProjectedCoatingMeshes": {"$path": "assets/Studio/ProjectedCoatingMeshes.rbxm"},
+      "MutationStyle": {"$path": "src/shared/UI/MutationStyle.luau"},
+      "UpcomingConfig": {"$path": "src/shared/Config/UpcomingConfig.luau"},
+      "FolkStudUI": {"$path": "src/shared/UI/FolkStudUI.luau"},
+      "MangaUI": {"$path": "src/shared/UI/MangaUI.luau"},
       "MutationSurfaceFinishes": {
         "$path": "src/shared/Effects/MutationSurfaceFinishes.model.json"
       },
