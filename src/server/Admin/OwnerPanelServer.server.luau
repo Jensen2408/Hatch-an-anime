@@ -191,8 +191,15 @@ handlers.Snapshot = function(player, _args, role)
             charAvailable = item.CharacterAvailable,
             noRiver = item.NoRiver == true,
             price = item.Price,
+            kind = item.Kind,
+            egg = item.Egg,
+            order = item.Order,
+            chance = item.Chance,
+            income = item.Income,
+            characters = item.Characters,
         }
-        if role == "Owner" or (item.EggAvailable and not item.NoRiver) then
+        -- 2026-11-08: admins see the whole catalog too (owner-only items like the Golden Pirate stay owner-only)
+        if role == "Owner" or not item.NoRiver then
             table.insert(catalog, entry)
         end
     end

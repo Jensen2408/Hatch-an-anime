@@ -25,7 +25,8 @@
                  StopEvent {}, StartNight {seconds = 60}
         Players  Bring {}, GoTo {}, SendHome {}, Respawn {}*, Kick {userId}*, Ban {userId}*,
                  SetAdmin {userId, on}, Unban {userId = typed id}*
-        Eggs     GiveEgg {itemId} / GiveCharacter {itemId} (* when scope is lobby), SpawnEgg {itemId, mutation?}
+        Spawn    GiveEgg / GiveCharacter {itemId, mutation?, amount} (* when scope is lobby),
+                 SpawnEgg {itemId, mutation?, amount} (river; every egg takes the next river slot)
         Money    GiveCash {amount} (* when lobby), SetCash {amount}*, GiveCash {amount, scope = "lobby"}*
         Temples  UpgradeTemple {}, UnlockSlot {}, AddIncubator {}, UpgradeIncubator {index},
                  ClearInventory {}*, ClearPlaced {}*, ResetSlots {}*
@@ -1087,123 +1088,327 @@ function StudPanel.Build(gui, context)
             end
         end
     end
+    -- ----- Spawn page (2026-11-08) -----
+    -- One place for every egg and character: pick EGGS or CHARACTERS, a rarity category (or search), click an item,
+    -- choose a mutation, where it goes (in hand / river) and how many, then SPAWN. The choices are remembered while
+    -- the panel is open. Who gets it is the top bar target (Me / Selected / Lobby).
+    local RARITY_ORDER = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Cosmic", "Limited" }
+    local MUTATION_OPTIONS = {
+        { "None", PALETTE.Purple },
+        { "Silver", rgb(170, 180, 200) },
+        { "Gold", PALETTE.Yellow },
+        { "Diamond", PALETTE.Teal },
+        { "Rainbow", PALETTE.Pink },
+        { "Molten", PALETTE.Orange },
+    }
+    local spawnState = { kind = "Egg", rarity = "All", search = "", mutation = "None", where = "Hand", amount = 1 }
+    local function rarityColor(rarity)
+        return RARITY_COLORS[rarity] or (rarity == "Limited" and PALETTE.Red) or PALETTE.Grey
+    end
+    local function shortMoney(value)
+        value = tonumber(value) or 0
+        for _, unit in ipairs({ { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }) do
+            if value >= unit[1] then
+                local scaled = value / unit[1]
+                return "$" .. (scaled >= 10 and string.format("%d", scaled) or string.format("%.1f", scaled):gsub("%.0$", "")) .. unit[2]
+            end
+        end
+        return value == 0 and "FREE" or ("$" .. math.floor(value))
+    end
+    -- a row of chip buttons; only the picked one is highlighted. Returns the buttons by value.
+    local function chipRow(parent, options, current, onPick, cellW)
+        local grid = makeGrid(parent, cellW or 128, 44)
+        local buttons = {}
+        for i, option in ipairs(options) do
+            local value, text, color, enabled = option[1], option[2] or option[1], option[3] or PALETTE.Purple, option[4]
+            buttons[value] = makeButton(grid, text, color, function()
+                if enabled == false then
+                    return
+                end
+                onPick(value)
+                for otherValue, otherButton in pairs(buttons) do
+                    otherButton.select(otherValue == value)
+                end
+            end, { h = 40, depth = 4, studs = 1, order = i, textSize = 15 })
+            buttons[value].select(value == current)
+            if enabled == false then
+                buttons[value].set(false)
+            end
+        end
+        return buttons
+    end
+    local function sectionLabel(parent, text)
+        makeLabel(parent, text, 14, PALETTE.Muted, FONT, { LayoutOrder = nextLayoutOrder() })
+    end
+
     pages.eggs = function()
-        addPageHeader(
-            isOwner and "Eggs & Characters" or "River Eggs",
-            isOwner and "Give items or drop eggs in the river" or "Drop any egg into the river for everyone"
-        )
-        local chosenItem
-        local selectedCard = makeCard(content, "Selected", PALETTE.Purple)
-        local chosenText = makeTitle(selectedCard, "Pick an item below", 22, { LayoutOrder = nextLayoutOrder() })
-        local actionGrid = makeGrid(selectedCard, 250, 62)
-        local giveEggButton, giveCharacterButton
-        if isOwner then
-            giveEggButton = makeButton(actionGrid, "Give egg", PALETTE.Green, function(buttonApi)
-                if chosenItem then
-                    local function giveChosen()
-                        sendAction("GiveEgg", { itemId = chosenItem.id }, "Give " .. chosenItem.name, buttonApi)
-                    end
-                    if scope == "lobby" then
-                        showConfirm("Give egg to everyone?", chosenItem.name, giveChosen)
-                    else
-                        giveChosen()
-                    end
-                end
-            end)
-            giveCharacterButton = makeButton(actionGrid, "Give character", PALETTE.Yellow, function(buttonApi)
-                if chosenItem then
-                    local function giveChosen()
-                        sendAction("GiveCharacter", { itemId = chosenItem.id }, "Give " .. chosenItem.name, buttonApi)
-                    end
-                    if scope == "lobby" then
-                        showConfirm("Give character to everyone?", chosenItem.name, giveChosen)
-                    else
-                        giveChosen()
-                    end
-                end
-            end)
-            giveEggButton.set(false)
-            giveCharacterButton.set(false)
-        end
-        local riverDropButton = makeButton(actionGrid, "Drop in river", PALETTE.Teal, function(buttonApi)
-            if chosenItem then
-                sendAction(
-                    "SpawnEgg",
-                    { itemId = chosenItem.id, mutation = riverMutation ~= "None" and riverMutation or nil },
-                    "River " .. (riverMutation ~= "None" and riverMutation .. " " or "") .. chosenItem.name,
-                    buttonApi
-                )
-            end
-        end)
-        riverDropButton.set(false)
-        if isOwner then
-            makeLabel(
-                selectedCard,
-                "River egg mutation (Halloween eggs)",
-                15,
-                PALETTE.Muted,
-                FONT_BODY,
-                { LayoutOrder = nextLayoutOrder() }
-            )
-            local mutationGrid = makeGrid(selectedCard, 130, 50)
-            local mutationButtons = {}
-            for _, mutation in ipairs({
-                { "None", PALETTE.Purple },
-                { "Silver", PALETTE.Grey },
-                { "Gold", PALETTE.Yellow },
-                { "Diamond", PALETTE.Teal },
-                { "Rainbow", PALETTE.Pink },
-            }) do
-                mutationButtons[mutation[1]] = makeButton(mutationGrid, mutation[1]:upper(), mutation[2], function()
-                    riverMutation = mutation[1]
-                    for mutationName, mutationButton in pairs(mutationButtons) do
-                        mutationButton.select(mutationName == riverMutation)
-                    end
-                end, { h = 40, studs = 1, textSize = 16 })
-            end
-            for mutationName, mutationButton in pairs(mutationButtons) do
-                mutationButton.select(mutationName == riverMutation)
-            end
-        end
-        if isOwner then
-            addHalloweenDropCard()
-        end
-        local catalogCard = makeCard(content, "Catalog", PALETTE.Blue, #snapshot.catalog .. " items")
-        local catalogGrid = makeGrid(catalogCard, 190, 84)
+        local S = spawnState
+        addPageHeader("Spawn", "Eggs and characters, in a hand or in the river")
+        -- items of the chosen kind (the Golden Pirate is both an egg and a character)
+        local all = {}
         for _, item in ipairs(snapshot.catalog) do
-            local rarityColor = RARITY_COLORS[item.rarity] or PALETTE.Grey
-            local _holder, face = makeBrick(catalogGrid, PALETTE.Inset, UDim2.fromOffset(190, 84), 5)
+            local kind = item.kind or (item.charAvailable and not item.eggAvailable and "Character" or "Egg")
+            if item.id == "Golden Pirate" or kind == S.kind then
+                table.insert(all, item)
+            end
+        end
+        if S.pick and not table.find(all, S.pick) then
+            S.pick = nil
+        end
+        local counts = {}
+        for _, item in ipairs(all) do
+            counts[item.rarity or "Common"] = (counts[item.rarity or "Common"] or 0) + 1
+        end
+
+        -- 1. WHAT: kind, category, search
+        local whatCard = makeCard(content, "1 · What", PALETTE.Blue, #all .. " " .. (S.kind == "Egg" and "eggs" or "characters"))
+        chipRow(whatCard, { { "Egg", "EGGS", PALETTE.Purple }, { "Character", "CHARACTERS", PALETTE.Yellow } }, S.kind, function(value)
+            S.kind = value
+            S.rarity = "All"
+            if value == "Character" then
+                S.where = "Hand"
+            end
+            render()
+        end, 220)
+        sectionLabel(whatCard, "CATEGORY")
+        local rarityOptions = { { "All", "ALL " .. #all, PALETTE.Purple } }
+        for _, rarity in ipairs(RARITY_ORDER) do
+            if counts[rarity] then
+                table.insert(rarityOptions, { rarity, rarity:upper() .. " " .. counts[rarity], rarityColor(rarity) })
+            end
+        end
+        chipRow(whatCard, rarityOptions, S.rarity, function(value)
+            S.rarity = value
+            render()
+        end, 138)
+        local searchBox = makeInput(whatCard, "🔍  Search by name (egg or character)...")
+        searchBox.Text = S.search
+
+        -- 2. HOW + WHERE + HOW MANY, and the SPAWN button
+        local howCard = makeCard(content, "2 · How and where", PALETTE.Purple)
+        sectionLabel(howCard, "MUTATION")
+        local summary, spawnButton
+        local function canRiver(item)
+            return S.kind == "Egg" and item and item.eggAvailable and not item.noRiver
+        end
+        local function updateSummary()
+            local item = S.pick
+            local whoText = scope == "lobby" and "everyone's hands"
+                or scope == "me" and "your hand"
+                or ((getSelectedPlayer() and getSelectedPlayer().name or "the selected player") .. "'s hand")
+            if not item then
+                summary.Text = "Click an item below"
+                spawnButton.set(false, "SPAWN")
+                return
+            end
+            local text = (S.amount > 1 and (S.amount .. "x ") or "")
+                .. (S.mutation ~= "None" and (S.mutation .. " ") or "")
+                .. item.name
+            summary.Text = text .. "  →  " .. (S.where == "River" and "the river (next egg down)" or whoText)
+            local ok = (S.where == "River" and canRiver(item))
+                or (S.where == "Hand" and (S.kind == "Egg" and item.eggAvailable or item.charAvailable))
+            spawnButton.set(ok and true or false, "SPAWN")
+        end
+        local mutationRows = {}
+        for _, m in ipairs(MUTATION_OPTIONS) do
+            table.insert(mutationRows, { m[1], m[1]:upper(), m[2] })
+        end
+        chipRow(howCard, mutationRows, S.mutation, function(value)
+            S.mutation = value
+            updateSummary()
+        end, 128)
+        sectionLabel(howCard, "WHERE")
+        local whereButtons
+        whereButtons = chipRow(howCard, {
+            { "Hand", "IN HAND", PALETTE.Green },
+            { "River", "RIVER", PALETTE.Teal, S.kind == "Egg" },
+        }, S.where, function(value)
+            S.where = value
+            updateSummary()
+        end, 200)
+        sectionLabel(howCard, "HOW MANY")
+        chipRow(howCard, { { 1, "1" }, { 3, "3" }, { 5, "5" }, { 10, "10" } }, S.amount, function(value)
+            S.amount = value
+            updateSummary()
+        end, 90)
+        local spawnRow = make("Frame", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 66),
+            LayoutOrder = nextLayoutOrder(),
+        }, howCard)
+        summary = makeTitle(spawnRow, "", 20, {
+            AnchorPoint = Vector2.new(0, 0.5),
+            Position = UDim2.new(0, 0, 0.5, 0),
+            AutomaticSize = Enum.AutomaticSize.None,
+            Size = UDim2.new(1, -250, 1, 0),
+            TextWrapped = true,
+        })
+        local spawnHolder = make("Frame", {
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, 0, 0, 0),
+            Size = UDim2.fromOffset(230, 66),
+        }, spawnRow)
+        spawnButton = makeButton(spawnHolder, "SPAWN", PALETTE.Green, function(buttonApi)
+            local item = S.pick
+            if not item then
+                return
+            end
+            local mutation = S.mutation ~= "None" and S.mutation or nil
+            local label = (S.amount > 1 and (S.amount .. "x ") or "") .. (mutation and (mutation .. " ") or "") .. item.name
+            if S.where == "River" then
+                sendAction("SpawnEgg", { itemId = item.id, mutation = mutation, amount = S.amount }, "River " .. label, buttonApi)
+            else
+                local action = S.kind == "Egg" and "GiveEgg" or "GiveCharacter"
+                local function give()
+                    sendAction(action, { itemId = item.id, mutation = mutation, amount = S.amount }, "Give " .. label, buttonApi)
+                end
+                if scope == "lobby" then
+                    showConfirm("Give to everyone?", label .. " for every player in this server.", give)
+                else
+                    give()
+                end
+            end
+        end, { h = 58, depth = 6, textSize = 26, size = UDim2.fromScale(1, 1) })
+
+        -- 3. the catalog, in categories: eggs by rarity, characters by the egg they hatch from
+        local cells = {}
+        local sections = {}
+        local function addSection(title, color, subtitle)
+            local card = makeCard(content, title, color, subtitle)
+            local grid = makeGrid(card, 208, 96)
+            local section = { card = card.Parent.Parent, grid = grid, cells = {} }
+            table.insert(sections, section)
+            return section
+        end
+        local function addCell(section, item)
+            local color = rarityColor(item.rarity)
+            local brickHolder, face = makeBrick(section.grid, PALETTE.Inset, UDim2.fromOffset(208, 96), 5)
             make("Frame", {
-                BackgroundColor3 = rarityColor,
+                BackgroundColor3 = color,
                 BorderSizePixel = 0,
                 Size = UDim2.new(0, 8, 1, -16),
                 Position = UDim2.fromOffset(8, 8),
             }, face)
-            makeTitle(face, item.name, 17, {
-                Position = UDim2.fromOffset(24, 12),
+            -- characters: the real name big (Gon), the in-game title (Green Hunter) on the last line
+            local title = item.name
+            if S.kind == "Character" and item.id and item.id ~= "Golden Pirate" then
+                title = item.id:gsub("(%l)(%u)", "%1 %2")
+            end
+            makeTitle(face, title, 17, {
+                Position = UDim2.fromOffset(24, 8),
                 AutomaticSize = Enum.AutomaticSize.None,
                 Size = UDim2.new(1, -30, 0, 24),
                 TextTruncate = Enum.TextTruncate.AtEnd,
             })
-            makeLabel(face, (item.rarity or ""):upper(), 14, rarityColor, FONT, { Position = UDim2.fromOffset(24, 42) })
-            local hitbox =
-                make("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, face)
+            local line2, line3
+            if S.kind == "Egg" then
+                line2 = (item.rarity or ""):upper() .. "  ·  " .. shortMoney(item.price)
+                line3 = item.characters and table.concat(item.characters, " · ") or ""
+            else
+                line2 = (item.rarity or ""):upper() .. "  ·  " .. (item.chance and (item.chance .. "%") or "")
+                line3 = (item.income and (shortMoney(item.income) .. "/s  ·  ") or "") .. (item.name or "")
+            end
+            makeLabel(face, line2, 14, color, FONT, { Position = UDim2.fromOffset(24, 36) })
+            makeLabel(face, line3, 13, PALETTE.Muted, FONT_BODY, {
+                Position = UDim2.fromOffset(24, 60),
+                AutomaticSize = Enum.AutomaticSize.None,
+                Size = UDim2.new(1, -30, 0, 20),
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            })
+            local stroke = face:FindFirstChildOfClass("UIStroke")
+            local hitbox = make("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, face)
+            local cell = { item = item, holder = brickHolder, stroke = stroke, section = section }
+            table.insert(cells, cell)
+            table.insert(section.cells, cell)
+            local function paint()
+                stroke.Color = (S.pick == item) and PALETTE.Yellow or INK
+                stroke.Thickness = (S.pick == item) and 5 or 3
+            end
+            cell.paint = paint
+            paint()
             hitbox.Activated:Connect(function()
-                chosenItem = item
-                chosenText.Text = item.name .. "  •  " .. (item.rarity or "")
-                if giveEggButton then
-                    giveEggButton.set(item.eggAvailable)
-                    giveCharacterButton.set(item.charAvailable)
-                end
-                riverDropButton.set(item.eggAvailable and not item.noRiver)
-                for _, cell in ipairs(catalogGrid:GetChildren()) do
-                    local cellFace = cell:FindFirstChild("Face")
-                    if cellFace then
-                        cellFace:FindFirstChildOfClass("UIStroke").Color = INK
+                S.pick = item
+                if S.where == "River" and not canRiver(item) then
+                    S.where = "Hand"
+                    for value, button in pairs(whereButtons) do
+                        button.select(value == "Hand")
                     end
                 end
-                face:FindFirstChildOfClass("UIStroke").Color = PALETTE.White
+                for _, other in ipairs(cells) do
+                    other.paint()
+                end
+                updateSummary()
             end)
+        end
+        local function wanted(item)
+            return S.rarity == "All" or item.rarity == S.rarity
+        end
+        if S.kind == "Egg" then
+            for _, rarity in ipairs(RARITY_ORDER) do
+                local list = {}
+                for _, item in ipairs(all) do
+                    if item.rarity == rarity and wanted(item) then
+                        table.insert(list, item)
+                    end
+                end
+                if #list > 0 then
+                    table.sort(list, function(a, b)
+                        return (a.order or 0) < (b.order or 0)
+                    end)
+                    local section = addSection(rarity .. " eggs", rarityColor(rarity), #list .. " eggs")
+                    for _, item in ipairs(list) do
+                        addCell(section, item)
+                    end
+                end
+            end
+        else
+            local byEgg, eggOrder = {}, {}
+            for _, item in ipairs(all) do
+                if wanted(item) then
+                    local eggId = item.egg or item.name
+                    if not byEgg[eggId] then
+                        byEgg[eggId] = { rarity = item.rarity, order = item.order or 0, items = {} }
+                        table.insert(eggOrder, eggId)
+                    end
+                    table.insert(byEgg[eggId].items, item)
+                end
+            end
+            table.sort(eggOrder, function(a, b)
+                return byEgg[a].order < byEgg[b].order
+            end)
+            for _, eggId in ipairs(eggOrder) do
+                local group = byEgg[eggId]
+                local section = addSection(eggId .. " Egg", rarityColor(group.rarity), (group.rarity or ""):upper())
+                for _, item in ipairs(group.items) do
+                    addCell(section, item)
+                end
+            end
+        end
+        -- search filters the cells in place (no rebuild, so the text box keeps its focus)
+        local function applySearch()
+            local query = string.lower(S.search)
+            for _, section in ipairs(sections) do
+                local any = false
+                for _, cell in ipairs(section.cells) do
+                    local item = cell.item
+                    local hay = string.lower((item.name or "") .. " " .. (item.id or "") .. " " .. (item.egg or "") .. " "
+                        .. (item.characters and table.concat(item.characters, " ") or ""))
+                    local show = query == "" or string.find(hay, query, 1, true) ~= nil
+                    cell.holder.Visible = show
+                    any = any or show
+                end
+                section.card.Visible = any
+            end
+        end
+        searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+            S.search = searchBox.Text
+            applySearch()
+        end)
+        applySearch()
+        updateSummary()
+        if isOwner then
+            addHalloweenDropCard()
         end
     end
     pages.money = function()
@@ -1726,7 +1931,7 @@ function StudPanel.Build(gui, context)
             and {
                 { "home", "Home", PALETTE.Red },
                 { "players", "Players", PALETTE.Blue },
-                { "eggs", "Eggs", PALETTE.Purple },
+                { "eggs", "Spawn", PALETTE.Purple },
                 { "money", "Money", PALETTE.Green },
                 { "temple", "Temples", PALETTE.Orange },
                 { "events", "Events", PALETTE.Yellow },
@@ -1738,7 +1943,7 @@ function StudPanel.Build(gui, context)
         or {
             { "home", "Home", PALETTE.Blue },
             { "players", "Players", PALETTE.Purple },
-            { "eggs", "River Eggs", PALETTE.Teal },
+            { "eggs", "Spawn", PALETTE.Teal },
             { "events", "Events", PALETTE.Yellow },
             { "log", "Activity", PALETTE.Grey },
         }

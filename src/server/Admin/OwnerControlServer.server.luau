@@ -25,10 +25,44 @@ local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
 local EggCharacterRewards = require(script.Parent:WaitForChild("EggCharacterRewards"))
 local OwnerGameActions = require(script.Parent:WaitForChild("OwnerGameActions"))
 local AdminRoles = require(script.Parent:WaitForChild("AdminRoles"))
+-- Mutation tiers the panel may ask for (river, hand eggs, characters).
+local MUTATION_TIERS = { Silver = true, Gold = true, Diamond = true, Rainbow = true, Molten = true }
+-- A held egg in a mutation: the update pack's egg model when it exists, else the normal egg tinted + its aura.
+local function mutatedEggVisual(template, eggId, tier)
+    local pack = game.ServerStorage:FindFirstChild("UpdatePack_Mutations")
+    local eggs = pack and pack:FindFirstChild("Update_Eggs", true)
+    local packEgg = eggs and eggs:FindFirstChild(eggId .. "_" .. tier .. "_Egg")
+    local visual
+    if packEgg then
+        visual = packEgg:Clone()
+        local _, templateSize = template:GetBoundingBox()
+        local _, packSize = visual:GetBoundingBox()
+        visual:ScaleTo(visual:GetScale() * templateSize.Y / math.max(packSize.Y, 0.01))
+    else
+        local Mutations = require(script.Parent:WaitForChild("Mutations"))
+        local tint = Mutations.Tint[tier]
+        visual = template:Clone()
+        for _, descendant in visual:GetDescendants() do
+            if descendant:IsA("SurfaceAppearance") then
+                pcall(function()
+                    descendant.Color = tint
+                end)
+            elseif descendant:IsA("BasePart") then
+                descendant.Color = descendant.Color:Lerp(tint, 0.7)
+            end
+        end
+        if tier == "Rainbow" and Mutations.RainbowTag then
+            visual:AddTag(Mutations.RainbowTag)
+        end
+    end
+    return visual
+end
 -- Dispatch actions an Admin may run through the Dispatch bindable (everything else is owner-only).
 local ADMIN_BRIDGE = {
     Info = true,
     SpawnRiverEgg = true,
+    SpawnEgg = true, -- 2026-11-08: admins can put eggs / characters in a hand too (lobby-wide stays owner-only)
+    SpawnCharacter = true,
     StartEvent = true,
     StopEvent = true,
     SetSpawnInterval = true,
@@ -128,11 +162,26 @@ local dispatch = function(player, action, payload)
         -- Catalog + roster snapshot for the panel.
         elseif action == "Info" then
             local items = {}
-            for _, list in { Catalog.Eggs, Catalog.Characters } do
+            for listIndex, list in { Catalog.Eggs, Catalog.Characters } do
                 for _, catalogEntry in ipairs(list) do
+                    -- 2026-11-08 spawn page: kind, egg, chance, income and the egg's characters for the categories
+                    local eggEntry = Catalog.EggById[catalogEntry.Egg or catalogEntry.Id]
+                    local income, names = nil, {}
+                    for _, character in (eggEntry and eggEntry.Characters or {}) do
+                        table.insert(names, character.Id)
+                        if character.Id == catalogEntry.Id then
+                            income = character.BaseIncome
+                        end
+                    end
                     table.insert(items, {
                         Id = catalogEntry.Id,
                         Name = catalogEntry.Name,
+                        Kind = listIndex == 1 and "Egg" or "Character",
+                        Egg = catalogEntry.Egg,
+                        Order = catalogEntry.Order,
+                        Chance = catalogEntry.Chance,
+                        Income = income,
+                        Characters = listIndex == 1 and names or nil,
                         Rarity = catalogEntry.Rarity,
                         Price = catalogEntry.Price,
                         CharacterAvailable = game.ServerStorage.BrainrotModels:FindFirstChild(catalogEntry.Id) ~= nil,
@@ -163,19 +212,23 @@ local dispatch = function(player, action, payload)
             assert(payload.Id ~= "Golden Pirate", "Golden items are owner gifts only; river spawning is disabled.")
             local entry = type(payload.Id) == "string" and Catalog.ById[payload.Id]
             assert(entry, "Choose an egg.")
-            local isMutation = ({ Silver = 1, Gold = 1, Diamond = 1, Rainbow = 1 })[payload.Mutation]
+            local isMutation = MUTATION_TIERS[payload.Mutation]
             local template = game.ServerStorage.AuxEggTemplates:FindFirstChild(entry.Id)
             assert(isMutation or (template and template:GetAttribute("ReleaseEnabled") ~= false), "Egg unavailable.")
             local request = workspace.PirateEggConveyor:FindFirstChild("RequestOwnerRiverEgg")
             assert(request, "River is not ready.")
-            local mutation = ({ Silver = 1, Gold = 1, Diamond = 1, Rainbow = 1 })[payload.Mutation] and payload.Mutation
+            local mutation = MUTATION_TIERS[payload.Mutation] and payload.Mutation
                 or nil
-            request:Fire(player, entry.Id, mutation)
+            local count = math.clamp(math.floor(tonumber(payload.Amount) or 1), 1, 10)
+            for _ = 1, count do
+                request:Fire(player, entry.Id, mutation)
+            end
             return {
                 Ok = true,
-                Message = mutation
-                        and (mutation .. " " .. entry.Id .. " egg queued: it's the next egg down the river.")
-                    or (entry.Id .. " egg spawned at the waterfall."),
+                Message = (count > 1 and (count .. "x ") or "")
+                    .. (mutation and (mutation .. " ") or "")
+                    .. entry.Id
+                    .. " egg queued: next down the river.",
             }
         elseif action == "SpawnEgg" or action == "SpawnCharacter" then
             local entry = payload.Id == "Golden Pirate" and GOLD_ENTRY
@@ -189,14 +242,17 @@ local dispatch = function(player, action, payload)
             for _, recipient in ipairs(recipients) do
                 assert(recipient:FindFirstChildOfClass("Backpack"), "A player backpack is not ready. Try again.")
             end
+            local count = math.clamp(math.floor(tonumber(payload.Amount) or 1), 1, 10)
+            local mutation = MUTATION_TIERS[payload.Mutation] and payload.Mutation or nil
             for _, recipient in ipairs(recipients) do
+              for _ = 1, count do
                 local bag = recipient:FindFirstChildOfClass("Backpack")
                 assert(bag, "Your backpack is not ready.")
                 if action == "SpawnCharacter" then
                     local template = entry.OwnerGold and goldTemplate("Characters")
                         or game.ServerStorage.BrainrotModels:FindFirstChild(entry.Id)
                     assert(template, "Character unavailable.")
-                    local gift = EggCharacterRewards.Tool(template, entry.CharacterId or entry.Id)
+                    local gift = EggCharacterRewards.Tool(template, entry.CharacterId or entry.Id, nil, mutation or false)
                     if entry.OwnerGold then
                         gift:SetAttribute("GoldVariant", true)
                         gift:SetAttribute("Golden", true)
@@ -225,9 +281,13 @@ local dispatch = function(player, action, payload)
                         tool:SetAttribute("GoldVariant", true)
                         tool:SetAttribute("Golden", true)
                     end
-                    local visual = template:Clone()
+                    local visual = (mutation and mutatedEggVisual(template, entry.Id, mutation)) or template:Clone()
+                    if mutation then
+                        tool:SetAttribute("Mutation", mutation)
+                        tool.Name = mutation .. " " .. tool.Name
+                    end
                     visual.Name = "Egg"
-                    visual:ScaleTo(template:GetScale() * 0.5)
+                    visual:ScaleTo(visual:GetScale() * 0.5)
                     visual:PivotTo(CFrame.new())
                     visual.Parent = tool
                     local handle = Instance.new("Part")
@@ -253,8 +313,17 @@ local dispatch = function(player, action, payload)
                     end
                     tool.Parent = bag
                 end
+              end
             end
-            return { Ok = true, Message = entry.Name .. " given to " .. #recipients .. " player(s)." }
+            return {
+                Ok = true,
+                Message = (count > 1 and (count .. "x ") or "")
+                    .. (mutation and (mutation .. " ") or "")
+                    .. entry.Name
+                    .. " given to "
+                    .. #recipients
+                    .. " player(s).",
+            }
         -- Unreachable: OwnerGameActions.Handles.GiveCash is checked first (kept as-is).
         elseif action == "GiveCash" then
             local amount = tonumber(payload.Amount)
