@@ -354,7 +354,8 @@ local function buildPreview(tool, parent)
         end
         return portrait
     end
-    if tool.TextureId ~= "" and not tool:GetAttribute("EggType") then
+    -- the item picture (ServerScriptService.ToolIcons) when it has one; the mutation shows in the badge above it
+    if tool.TextureId ~= "" then
         return create("ImageLabel", {
             Size = UDim2.fromScale(1, 1),
             BackgroundTransparency = 1,
@@ -2351,6 +2352,94 @@ do
         end
     end)
     inventoryPanel.setOpen = setInventoryOpen
+    -- Top bar backpack button (2026-11-08): a round dark button next to Roblox's own top bar (like other games),
+    -- with an "Inventory · Backquote" tooltip. Roblox's top bar only offers its backpack inside the menu on PC,
+    -- and games can't open Roblox's backpack from a script, so this opens the game's inventory panel.
+    if USE_DEFAULT_BACKPACK then
+        local GuiService = game:GetService("GuiService")
+        local topGui = create("ScreenGui", {
+            Name = "TopbarBackpack",
+            ResetOnSpawn = false,
+            IgnoreGuiInset = true,
+            DisplayOrder = 50,
+            ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        }, playerGui)
+        local button = create("ImageButton", {
+            Name = "Backpack",
+            AutoButtonColor = false,
+            BackgroundColor3 = Color3.fromRGB(18, 18, 21),
+            BackgroundTransparency = 0.08,
+            Size = UDim2.fromOffset(44, 44),
+            AnchorPoint = Vector2.new(0, 0.5),
+            Image = "",
+        }, topGui)
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }, button)
+        local icon = create("ImageLabel", {
+            Name = "Icon",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(28, 28),
+            Image = "rbxasset://textures/ui/TopBar/inventoryOff.png",
+            ScaleType = Enum.ScaleType.Fit,
+        }, button)
+        -- Roblox-style tooltip under the button
+        local tip = create("Frame", {
+            Name = "Tooltip",
+            BackgroundColor3 = Color3.fromRGB(18, 18, 21),
+            BackgroundTransparency = 0.08,
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 1, 12),
+            Size = UDim2.fromOffset(120, 82),
+            Visible = false,
+        }, button)
+        create("UICorner", { CornerRadius = UDim.new(0, 8) }, tip)
+        create("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(12, 10),
+            Size = UDim2.new(1, -24, 0, 22),
+            Font = Enum.Font.BuilderSans,
+            Text = "Inventory",
+            TextColor3 = Color3.new(1, 1, 1),
+            TextSize = 17,
+            TextXAlignment = Enum.TextXAlignment.Left,
+        }, tip)
+        local key = create("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(12, 40),
+            Size = UDim2.fromOffset(96, 30),
+            Font = Enum.Font.BuilderSans,
+            Text = "Backquote",
+            TextColor3 = Color3.fromRGB(200, 200, 205),
+            TextSize = 17,
+        }, tip)
+        create("UICorner", { CornerRadius = UDim.new(0, 6) }, key)
+        create("UIStroke", { Color = Color3.fromRGB(120, 120, 128), Thickness = 1.5 }, key)
+        local function place()
+            local inset = GuiService.TopbarInset
+            button.Position = UDim2.fromOffset(inset.Min.X + 12, inset.Min.Y + inset.Height / 2)
+        end
+        place()
+        GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(place)
+        local function refresh()
+            local open = inventoryFrame.Visible
+            icon.Image = open and "rbxasset://textures/ui/TopBar/inventoryOn.png" or "rbxasset://textures/ui/TopBar/inventoryOff.png"
+            button.BackgroundColor3 = open and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(18, 18, 21)
+            button.BackgroundTransparency = open and 0.85 or 0.08
+        end
+        inventoryFrame:GetPropertyChangedSignal("Visible"):Connect(refresh)
+        button.MouseEnter:Connect(function()
+            tip.Visible = true
+        end)
+        button.MouseLeave:Connect(function()
+            tip.Visible = false
+        end)
+        button.Activated:Connect(function()
+            tip.Visible = false
+            setInventoryOpen(not inventoryFrame.Visible)
+        end)
+        refresh()
+    end
     inventoryPanel.render = render
     inventoryPanel.frame = inventoryFrame -- drop target for hotbar slots (section 4)
     closeButton.Activated:Connect(function()
