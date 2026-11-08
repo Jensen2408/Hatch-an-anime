@@ -1509,90 +1509,229 @@ function StudPanel.Build(gui, context)
             end)
         end)
     end
-    -- Event length in seconds picked on the Events page (5 / 10 / 30 min).
+    -- ===== Events page (2026-11-08): every event starts and stops on its own, so they stack =====
+    -- "Running now" lists what is on (time left + STOP each, STOP EVERYTHING); one tile per event with START / STOP;
+    -- the Boost builder starts any multiplier for cash / luck / hatch speed / mutation chance / river speed.
     local eventDuration = 300
+    local boostState = { targets = { Cash = true }, x = 2, seconds = 600 }
+    local EVENT_DEFS = {
+        { id = "rush", name = "EGG RUSH", blurb = "Eggs spawn 2x faster", color = PALETTE.Orange, start = "StartEvent", stop = "StopEvent", timed = true },
+        { id = "cash", name = "DOUBLE CASH", blurb = "All income x2", color = PALETTE.Green, start = "StartEvent", stop = "StopEvent", timed = true },
+        { id = "gold", name = "GOLDEN HOUR", blurb = "Golden sunset sky", color = PALETTE.Yellow, start = "StartEvent", stop = "StopEvent", timed = true },
+        { id = "night", name = "NIGHTTIME", blurb = "3x cash, 5x hatch, 3x luck", color = PALETTE.Purple, start = "StartNight", stop = "StopNight", timed = true, max = 600 },
+        { id = "rapids", name = "RAPIDS", blurb = "Huge waves, eggs every second", color = PALETTE.Teal, start = "StartHighTide", stop = "StopHighTide", timed = true, max = 600 },
+        { id = "boss", name = "RIVER BOSS", blurb = "Beat it for a mutated egg", color = PALETTE.Red, start = "StartBoss", stop = "StopBoss" },
+        { id = "arena", name = "ARENA BRAWL", blurb = "PvP round, last one wins", color = PALETTE.Orange, start = "StartArena", stop = "StopArena" },
+        { id = "volcano", name = "VOLCANO", blurb = "Eruption, Molten 10x likelier", color = PALETTE.Red, start = "StartVolcano", stop = "StopVolcano" },
+        { id = "meteor", name = "METEOR SHOWER", blurb = "Rare eggs in meteor debris", color = PALETTE.Pink, start = "StartMeteor", stop = "StopMeteor" },
+    }
+    local BOOST_TARGETS = {
+        { "Cash", "CASH", PALETTE.Green },
+        { "Luck", "LUCK", PALETTE.Yellow },
+        { "Hatch", "HATCH SPEED", PALETTE.Purple },
+        { "Mutation", "MUTATION", PALETTE.Pink },
+        { "RiverSpeed", "RIVER SPEED", PALETTE.Teal },
+    }
+    local function clockText(seconds)
+        seconds = math.max(0, math.floor(seconds))
+        if seconds >= 3600 then
+            return string.format("%d:%02d:%02d", seconds // 3600, (seconds % 3600) // 60, seconds % 60)
+        end
+        return string.format("%d:%02d", seconds // 60, seconds % 60)
+    end
+    -- re-render without jumping back to the top of the page
+    local function rerenderEvents()
+        local keep = content.CanvasPosition
+        refreshSnapshot()
+        render()
+        task.defer(function()
+            content.CanvasPosition = keep
+        end)
+    end
+    -- a label that counts down to a server time while it is on screen
+    local function liveTimer(label, prefix, ends)
+        if not ends then
+            return
+        end
+        task.spawn(function()
+            while label.Parent do
+                local left = ends - workspace:GetServerTimeNow()
+                label.Text = left > 0 and (prefix .. clockText(left)) or (prefix == "Next in " and "Starting..." or "ENDING")
+                task.wait(0.5)
+            end
+        end)
+    end
     pages.events = function()
-        addPageHeader("Events", "Start server events for everyone")
-        local durationCard = makeCard(content, "How long?", PALETTE.Purple)
-        local durationGrid = makeGrid(durationCard, 150, 58)
-        for _, option in ipairs({ { "5 min", 300 }, { "10 min", 600 }, { "30 min", 1800 } }) do
-            local durationButton = makeButton(durationGrid, option[1], PALETTE.Purple, function()
-                eventDuration = option[2]
-                render()
-            end, { h = 46, studs = 1 })
-            durationButton.select(eventDuration == option[2])
+        addPageHeader("Events", "Start, stop and stack events in this server")
+        local live = snapshot.liveEvents or {}
+        local boosts = live.boosts or {}
+        -- ── Running now ──
+        local runningRows = {}
+        for _, def in ipairs(EVENT_DEFS) do
+            local state = live[def.id]
+            if state and state.on then
+                table.insert(runningRows, { name = def.name, color = def.color, ends = state.ends, stop = function(button)
+                    sendAction(def.stop, def.stop == "StopEvent" and { eventId = def.id } or {}, "Stop " .. def.name, button)
+                    rerenderEvents()
+                end })
+            end
         end
-        local eventCard = makeCard(
-            content,
-            "Events",
-            PALETTE.Orange,
-            (snapshot.event and snapshot.event ~= "None") and ("Running: " .. snapshot.event) or "Nothing running"
-        )
-        local eventGrid = makeGrid(eventCard, 250, 110)
-        for _, eventDef in ipairs({
-            { "rush", "EGG RUSH", "Eggs spawn 2x faster", PALETTE.Orange },
-            { "cash", "DOUBLE CASH", "All income doubled", PALETTE.Green },
-            { "gold", "GOLDEN HOUR", "Golden sunset", PALETTE.Yellow },
-        }) do
-            local eventHolder =
-                make("Frame", { BackgroundTransparency = 1, LayoutOrder = nextLayoutOrder() }, eventGrid)
-            addVerticalList(eventHolder, 4)
-            makeButton(eventHolder, eventDef[2], eventDef[4], function(buttonApi)
-                sendAction(
-                    "StartEvent",
-                    { eventId = eventDef[1], seconds = eventDuration },
-                    "Start " .. eventDef[2],
-                    buttonApi
-                )
-                refreshSnapshot()
-            end, { h = 56 })
-            makeLabel(
-                eventHolder,
-                eventDef[3] .. "  •  " .. math.floor(eventDuration / 60) .. " min",
-                14,
-                PALETTE.Muted,
-                FONT_BODY,
-                { LayoutOrder = nextLayoutOrder() }
-            )
+        for _, target in ipairs(BOOST_TARGETS) do
+            local boost = boosts[target[1]]
+            if boost then
+                table.insert(runningRows, { name = tostring(boost.x) .. "x " .. target[2] .. " BOOST", color = target[3], ends = boost.ends, stop = function(button)
+                    sendAction("StopBoost", { target = target[1] }, "Stop " .. target[2] .. " boost", button)
+                    rerenderEvents()
+                end })
+            end
         end
-        local extraGrid = makeGrid(eventCard, 250, 62)
-        makeButton(extraGrid, "EGG SHOWER", PALETTE.Teal, function(buttonApi)
-            sendAction("EggShower", { amount = 8 }, "Egg Shower", buttonApi)
+        local runningCard = makeCard(content, "Running now", PALETTE.Green, #runningRows == 0 and "Nothing running" or (#runningRows .. " running"))
+        if #runningRows == 0 then
+            makeLabel(runningCard, "Nothing is running. Start an event or a boost below; you can run as many as you want at once.", 16, PALETTE.Muted, FONT_BODY, { LayoutOrder = nextLayoutOrder(), TextWrapped = true, Size = UDim2.new(1, 0, 0, 40), AutomaticSize = Enum.AutomaticSize.None })
+        end
+        for _, row in ipairs(runningRows) do
+            local line = make("Frame", { BackgroundColor3 = PALETTE.Inset, BackgroundTransparency = 0.4, Size = UDim2.new(1, 0, 0, 58), LayoutOrder = nextLayoutOrder() }, runningCard)
+            addCorner(line, 6)
+            local pip = make("Frame", { Position = UDim2.fromOffset(14, 21), Size = UDim2.fromOffset(16, 16) }, line)
+            addCorner(pip, 8)
+            applyGradient(pip, row.color)
+            addStroke(pip, 2, INK)
+            makeTitle(line, row.name, 20, { Position = UDim2.fromOffset(42, 16) })
+            local timeLabel = makeLabel(line, "", 18, PALETTE.Yellow, FONT, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -150, 0, 18) })
+            liveTimer(timeLabel, "", row.ends)
+            local stopSlot = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(120, 44) }, line)
+            makeButton(stopSlot, "STOP", PALETTE.Red, function(button)
+                row.stop(button)
+            end, { h = 40, depth = 4, studs = 1, textSize = 16 })
+        end
+        if #runningRows > 0 then
+            makeButton(runningCard, "STOP EVERYTHING", PALETTE.Red, function(button)
+                showConfirm("Stop every event?", "Stops all events and boosts in this server. The normal schedules keep running.", function()
+                    sendAction("StopAllEvents", {}, "Stop everything", button)
+                    rerenderEvents()
+                end)
+            end, { h = 48 })
+        end
+        -- ── How long ──
+        local lengthCard = makeCard(content, "How long?", PALETTE.Purple, "For Egg Rush, Double Cash, Golden Hour, Night, Rapids")
+        chipRow(lengthCard, {
+            { 60, "1 MIN" }, { 300, "5 MIN" }, { 600, "10 MIN" }, { 1800, "30 MIN" }, { 3600, "1 HOUR" },
+        }, eventDuration, function(value)
+            eventDuration = value
+        end, 128)
+        -- ── Event tiles ──
+        local tilesCard = makeCard(content, "Events", PALETTE.Orange, "Tap START. Running ones show STOP")
+        local tiles = makeGrid(tilesCard, 236, 168)
+        for _, def in ipairs(EVENT_DEFS) do
+            local state = live[def.id] or {}
+            local tile = make("Frame", { LayoutOrder = nextLayoutOrder() }, tiles)
+            addCorner(tile, 8)
+            addStroke(tile, state.on and 4 or 3, state.on and PALETTE.Yellow or INK)
+            applyGradient(tile, state.on and darken(def.color, 0.35) or PALETTE.Plate2, 0.35)
+            local strip = make("Frame", { Size = UDim2.new(1, 0, 0, 8), BorderSizePixel = 0 }, tile)
+            addCorner(strip, 4)
+            applyGradient(strip, def.color)
+            makeTitle(tile, def.name, 20, { Position = UDim2.fromOffset(14, 16) })
+            makeLabel(tile, def.blurb, 14, PALETTE.Muted, FONT_BODY, { Position = UDim2.fromOffset(14, 44), Size = UDim2.new(1, -28, 0, 34), AutomaticSize = Enum.AutomaticSize.None, TextWrapped = true })
+            local status = makeLabel(tile, "", 15, state.on and PALETTE.Yellow or PALETTE.Muted, FONT, { Position = UDim2.fromOffset(14, 80) })
+            if state.on then
+                if state.ends then
+                    liveTimer(status, "RUNNING  ", state.ends)
+                else
+                    status.Text = "RUNNING"
+                end
+            elseif state.next then
+                liveTimer(status, "Next in ", state.next)
+            else
+                status.Text = def.timed and ("Lasts " .. math.floor(math.min(eventDuration, def.max or 7200) / 60) .. " min") or "Ready"
+            end
+            local buttonHolder = make("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 12, 1, -62), Size = UDim2.new(1, -24, 0, 52) }, tile)
+            if state.on then
+                makeButton(buttonHolder, "STOP", PALETTE.Red, function(button)
+                    sendAction(def.stop, def.stop == "StopEvent" and { eventId = def.id } or {}, "Stop " .. def.name, button)
+                    rerenderEvents()
+                end, { h = 44, depth = 4, studs = 1, textSize = 18 })
+            else
+                makeButton(buttonHolder, "START", def.color, function(button)
+                    local secs = math.min(eventDuration, def.max or 7200)
+                    sendAction(def.start, { eventId = def.id, seconds = secs }, "Start " .. def.name, button)
+                    rerenderEvents()
+                end, { h = 44, depth = 4, studs = 1, textSize = 18 })
+            end
+        end
+        local showerGrid = makeGrid(tilesCard, 236, 58)
+        makeButton(showerGrid, "EGG SHOWER (8 EGGS)", PALETTE.Teal, function(button)
+            sendAction("EggShower", { amount = 8 }, "Egg Shower", button)
+        end, { h = 46, studs = 1, textSize = 16 })
+        -- ── Boost builder ──
+        local boostCard = makeCard(content, "Boost event", PALETTE.Yellow, "Your own multiplier, stacks with everything")
+        sectionLabel(boostCard, "1. WHAT TO BOOST (pick one or more)")
+        local targetGrid = makeGrid(boostCard, 150, 44)
+        local summary
+        local function summaryText()
+            local names = {}
+            for _, target in ipairs(BOOST_TARGETS) do
+                if boostState.targets[target[1]] then
+                    table.insert(names, target[2])
+                end
+            end
+            if #names == 0 then
+                return "Pick what to boost"
+            end
+            return tostring(boostState.x) .. "x " .. table.concat(names, " + ") .. "  ·  " .. clockText(boostState.seconds)
+        end
+        for i, target in ipairs(BOOST_TARGETS) do
+            local button
+            button = makeButton(targetGrid, target[2], target[3], function()
+                boostState.targets[target[1]] = not boostState.targets[target[1]] or nil
+                button.select(boostState.targets[target[1]] == true)
+                summary.Text = summaryText()
+            end, { h = 40, depth = 4, studs = 1, order = i, textSize = 15 })
+            button.select(boostState.targets[target[1]] == true)
+        end
+        sectionLabel(boostCard, "2. HOW STRONG")
+        local xButtons
+        local customBox
+        xButtons = chipRow(boostCard, {
+            { 2, "2x" }, { 3, "3x" }, { 4, "4x" }, { 5, "5x" }, { 10, "10x" }, { 25, "25x" }, { 50, "50x" },
+        }, boostState.x, function(value)
+            boostState.x = value
+            customBox.Text = ""
+            summary.Text = summaryText()
+        end, 96)
+        customBox = makeInput(boostCard, "Or type your own, like 7 or 1.5 (up to 100)", false)
+        customBox:GetPropertyChangedSignal("Text"):Connect(function()
+            local value = tonumber(customBox.Text)
+            if value and value >= 1.1 and value <= 100 then
+                boostState.x = math.floor(value * 10 + 0.5) / 10
+                for _, button in pairs(xButtons) do
+                    button.select(false)
+                end
+                summary.Text = summaryText()
+            end
         end)
-        makeButton(extraGrid, "Stop event", PALETTE.Red, function(buttonApi)
-            sendAction("StopEvent", {}, "Stop event", buttonApi)
-            refreshSnapshot()
-        end)
-        makeButton(extraGrid, "SPAWN RIVER BOSS", PALETTE.Red, function(buttonApi)
-            sendAction("StartBoss", {}, "Spawn River Boss", buttonApi)
-        end)
-        makeButton(extraGrid, "End River Boss", PALETTE.Grey, function(buttonApi)
-            sendAction("StopBoss", {}, "End River Boss", buttonApi)
-        end)
-        makeButton(extraGrid, "START ARENA BRAWL", PALETTE.Orange, function(buttonApi)
-            sendAction("StartArena", {}, "Start Arena Brawl", buttonApi)
-        end)
-        makeButton(extraGrid, "End Arena Brawl", PALETTE.Grey, function(buttonApi)
-            sendAction("StopArena", {}, "End Arena Brawl", buttonApi)
-        end)
-        makeButton(extraGrid, "ERUPT VOLCANO", PALETTE.Red, function(buttonApi)
-            sendAction("StartVolcano", {}, "Erupt Volcano", buttonApi)
-        end)
-        makeButton(extraGrid, "End Eruption", PALETTE.Grey, function(buttonApi)
-            sendAction("StopVolcano", {}, "End Eruption", buttonApi)
-        end)
-        makeButton(extraGrid, "START NIGHTTIME", PALETTE.Purple, function(buttonApi)
-            sendAction("StartNight", { seconds = eventDuration }, "Start Nighttime", buttonApi)
-        end)
-        makeButton(extraGrid, "End Nighttime", PALETTE.Grey, function(buttonApi)
-            sendAction("StopNight", {}, "End Nighttime", buttonApi)
-        end)
-        makeButton(extraGrid, "START RAPIDS", PALETTE.Teal, function(buttonApi)
-            sendAction("StartHighTide", { seconds = 50 }, "Start Rapids", buttonApi)
-        end)
-        makeButton(extraGrid, "End Rapids", PALETTE.Grey, function(buttonApi)
-            sendAction("StopHighTide", {}, "End Rapids", buttonApi)
-        end)
+        sectionLabel(boostCard, "3. HOW LONG")
+        chipRow(boostCard, {
+            { 300, "5 MIN" }, { 600, "10 MIN" }, { 1800, "30 MIN" }, { 3600, "1 HOUR" }, { 7200, "2 HOURS" },
+        }, boostState.seconds, function(value)
+            boostState.seconds = value
+            summary.Text = summaryText()
+        end, 128)
+        summary = makeTitle(boostCard, summaryText(), 22, { LayoutOrder = nextLayoutOrder(), TextColor3 = PALETTE.Yellow })
+        makeButton(boostCard, "START BOOST", PALETTE.Yellow, function(button)
+            local targets = {}
+            for _, target in ipairs(BOOST_TARGETS) do
+                if boostState.targets[target[1]] then
+                    table.insert(targets, target[1])
+                end
+            end
+            if #targets == 0 then
+                showToast(false, "Pick what to boost first")
+                return
+            end
+            sendAction("StartBoost", { targets = targets, multiplier = boostState.x, seconds = boostState.seconds }, "Start boost", button)
+            rerenderEvents()
+        end, { h = 56, textSize = 22 })
         local announceCard = makeCard(content, "Announcement", PALETTE.Pink, "Shows a banner to players")
         local messageBox = makeInput(announceCard, "Write a message (optional for update)...", false)
         local announceGrid = makeGrid(announceCard, 250, 62)

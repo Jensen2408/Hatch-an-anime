@@ -196,7 +196,7 @@ local function setupPlot(plot)
                                         "NightCashMultiplier"
                                     ) or 1) * (workspace:GetAttribute(
                                         "AbuseCashMultiplier"
-                                    ) or 1) * (player:GetAttribute("CashMultiplier") or 1))
+                                    ) or 1) * (workspace:GetAttribute("BoostCashMultiplier") or 1) * (player:GetAttribute("CashMultiplier") or 1))
                         )
                     end
                 end

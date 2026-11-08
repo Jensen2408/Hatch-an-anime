@@ -75,10 +75,11 @@ local ADMIN_BRIDGE = {
 
 -- ===== 2. State =====
 local ownerControlRemote = ReplicatedStorage:WaitForChild("OwnerControl")
--- lastRequestAt / busy: per-player rate limit. activeEvent: the one running live event in this server.
+-- lastRequestAt / busy: per-player rate limit. activeEvents: the live events running in this server, by Kind.
+-- Since 2026-11-08 they stack: EggRush, DoubleCash and GoldenHour can all run at once (each has its own timer).
 local lastRequestAt = {}
 local busy = {}
-local activeEvent = nil
+local activeEvents = {} -- [Kind] = { Kind, Ends, Before, Conveyor? }
 -- Owner-only gift entry (Golden Pirate). Its templates live in ServerStorage.FutureUpdateContent.<kind>.
 local GOLD_ENTRY = {
     Id = "Pirate",
@@ -117,22 +118,44 @@ local function resolveTarget(raw)
         return result, Players:GetPlayerByUserId(result)
     end
 end
--- Restores whatever the active event changed and clears the replicated event attributes.
-local function stopEvent()
-    if not activeEvent then
-        return
+-- Publishes the running live events for clients: OwnerEvent_<Kind>Ends per event, plus OwnerEventName ("EggRush,
+-- DoubleCash") and OwnerEventEnds (the latest end) for older readers.
+local function publishEvents()
+    local names, latest = {}, nil
+    for _, kind in { "EggRush", "DoubleCash", "GoldenHour" } do
+        local event = activeEvents[kind]
+        workspace:SetAttribute("OwnerEvent_" .. kind .. "Ends", event and event.Ends or nil)
+        if event then
+            table.insert(names, kind)
+            latest = math.max(latest or 0, event.Ends)
+        end
     end
-    local event = activeEvent
-    activeEvent = nil
-    if event.Kind == "EggRush" and event.Conveyor.Parent then
-        event.Conveyor:SetAttribute("SpawnInterval", event.Before)
-    elseif event.Kind == "DoubleCash" then
-        workspace:SetAttribute("OwnerIncomeMultiplier", event.Before)
-    elseif event.Kind == "GoldenHour" then
-        Lighting.ClockTime = event.Before
+    workspace:SetAttribute("OwnerEventName", #names > 0 and table.concat(names, ",") or nil)
+    workspace:SetAttribute("OwnerEventEnds", latest)
+end
+local function eventList()
+    local names = {}
+    for kind in activeEvents do
+        table.insert(names, kind)
     end
-    workspace:SetAttribute("OwnerEventName", nil)
-    workspace:SetAttribute("OwnerEventEnds", nil)
+    table.sort(names)
+    return #names > 0 and table.concat(names, ", ") or "None"
+end
+-- Restores what one live event changed (kind), or every running one (kind = nil).
+local function stopEvent(kind)
+    for eventKind, event in activeEvents do
+        if kind == nil or eventKind == kind then
+            activeEvents[eventKind] = nil
+            if eventKind == "EggRush" and event.Conveyor.Parent then
+                event.Conveyor:SetAttribute("SpawnInterval", event.Before)
+            elseif eventKind == "DoubleCash" then
+                workspace:SetAttribute("OwnerIncomeMultiplier", event.Before)
+            elseif eventKind == "GoldenHour" then
+                Lighting.ClockTime = event.Before
+            end
+        end
+    end
+    publishEvents()
 end
 
 -- ===== 4. Dispatcher (permission check, validation, rate limit, actions) =====
@@ -207,7 +230,7 @@ local dispatch = function(player, action, payload)
                     { Id = rosterPlayer.UserId, Name = rosterPlayer.Name, Display = rosterPlayer.DisplayName }
                 )
             end
-            return { Ok = true, Items = items, Players = roster, Event = activeEvent and activeEvent.Kind or "None" }
+            return { Ok = true, Items = items, Players = roster, Event = eventList() }
         elseif action == "SpawnRiverEgg" then
             assert(payload.Id ~= "Golden Pirate", "Golden items are owner gifts only; river spawning is disabled.")
             local entry = type(payload.Id) == "string" and Catalog.ById[payload.Id]
@@ -341,33 +364,40 @@ local dispatch = function(player, action, payload)
                 "Unknown event."
             )
             local duration = tonumber(payload.Duration) or 120
-            assert(duration == duration and duration >= 15 and duration <= 1800, "Duration must be 15–1800 seconds.")
-            assert(not activeEvent, "Stop the active event before starting another.")
-            local event = { Kind = payload.Kind }
-            if event.Kind == "EggRush" then
-                event.Conveyor = workspace:FindFirstChild("PirateEggConveyor")
-                assert(event.Conveyor, "River unavailable.")
-                event.Before = event.Conveyor:GetAttribute("SpawnInterval") or 4
-                event.Conveyor:SetAttribute("SpawnInterval", math.max(1.5, event.Before * 0.5))
-            elseif event.Kind == "DoubleCash" then
-                event.Before = workspace:GetAttribute("OwnerIncomeMultiplier") or 1
-                workspace:SetAttribute("OwnerIncomeMultiplier", 2)
+            assert(duration == duration and duration >= 15 and duration <= 7200, "Duration must be 15 s to 2 hours.")
+            local ends = workspace:GetServerTimeNow() + duration
+            local event = activeEvents[payload.Kind]
+            if event then
+                -- already running: start its timer again with the new length
+                event.Ends = ends
             else
-                event.Before = Lighting.ClockTime
-                Lighting.ClockTime = 17.4
+                event = { Kind = payload.Kind, Ends = ends }
+                if event.Kind == "EggRush" then
+                    event.Conveyor = workspace:FindFirstChild("PirateEggConveyor")
+                    assert(event.Conveyor, "River unavailable.")
+                    event.Before = event.Conveyor:GetAttribute("SpawnInterval") or 4
+                    event.Conveyor:SetAttribute("SpawnInterval", math.max(1.5, event.Before * 0.5))
+                elseif event.Kind == "DoubleCash" then
+                    event.Before = workspace:GetAttribute("OwnerIncomeMultiplier") or 1
+                    workspace:SetAttribute("OwnerIncomeMultiplier", 2)
+                else
+                    event.Before = Lighting.ClockTime
+                    Lighting.ClockTime = 17.4
+                end
+                activeEvents[event.Kind] = event
             end
-            activeEvent = event
-            workspace:SetAttribute("OwnerEventName", event.Kind)
-            workspace:SetAttribute("OwnerEventEnds", workspace:GetServerTimeNow() + duration)
+            publishEvents()
             task.delay(duration, function()
-                if activeEvent == event then
-                    stopEvent()
+                if activeEvents[event.Kind] == event and workspace:GetServerTimeNow() >= event.Ends - 0.5 then
+                    stopEvent(event.Kind)
                 end
             end)
-            return { Ok = true, Message = event.Kind .. " started in this server for " .. duration .. " seconds." }
+            return { Ok = true, Message = event.Kind .. " running in this server for " .. math.floor(duration) .. " seconds." }
         elseif action == "StopEvent" then
-            stopEvent()
-            return { Ok = true, Message = "Event stopped; original settings restored." }
+            local kind = payload.Kind
+            assert(kind == nil or activeEvents[kind], "That event is not running.")
+            stopEvent(kind)
+            return { Ok = true, Message = (kind or "Every live event") .. " stopped; original settings restored." }
         -- Moderation. Note: dispatch-level Kick is owner-only; admin kicks are handled in OwnerPanelServer.
         elseif action == "Kick" or action == "Ban24h" or action == "Unban" then
             assert(payload.Confirmed == true, "Confirm this moderation action first.")

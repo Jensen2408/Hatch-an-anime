@@ -29,6 +29,7 @@
         "StudWorldSkin": {"$path": "src/client/UI/Controllers/StudWorldSkin.client.luau"},
         "TutorialSpotlight": {"$path": "src/client/Tutorial/TutorialSpotlight.client.luau"},
         "EventTimers": {"$path": "src/client/UI/Controllers/EventTimers.client.luau"},
+        "LiveEventsBar": {"$path": "src/client/UI/Controllers/LiveEventsBar.client.luau"},
         "UpcomingTeaser": {"$path": "src/client/UI/Controllers/UpcomingTeaser.client.luau"},
         "UpdateBoardClient": {"$path": "src/client/World/UpdateBoardClient.client.luau"},
         "$className": "StarterPlayerScripts",
@@ -3924,6 +3925,7 @@
     "ServerScriptService": {
       "$className": "ServerScriptService",
       "$ignoreUnknownInstances": true,
+      "BoostService": {"$path": "src/server/Events/BoostService.luau"},
       "TempleOccupancy": {
         "$path": "src/server/Temple/TempleOccupancy.luau"
       },

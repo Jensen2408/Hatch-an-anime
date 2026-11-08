@@ -40,6 +40,7 @@ local CrossServerService = require(script.Parent:WaitForChild("CrossServerServic
 local AdminAbuseService = require(script.Parent:WaitForChild("AdminAbuseService"))
 local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
 local HighTideService = require(script.Parent:WaitForChild("HighTideService"))
+local BoostService = require(script.Parent:WaitForChild("BoostService"))
 local RiverWaves = require(ReplicatedStorage:WaitForChild("WaterfallRiver"):WaitForChild("RiverWaves"))
 local bridge = game.ServerScriptService:WaitForChild("OwnerControlServer"):WaitForChild("Dispatch")
 local lastRequestAt, busy = {}, {}
@@ -176,6 +177,38 @@ handlers.WipePlayer = function(player, args, role)
     end
     return true, PlayerPunish.Wipe(player, args.who)
 end
+local liveEventStates
+-- Every event's live state for the panel's Events page (2026-11-08): { [id] = { on = bool, ends = serverTime? } }
+-- plus boosts = { [target] = { x, ends } }. Events run on their own, so several can be on at once.
+liveEventStates = function()
+    local now = workspace:GetServerTimeNow()
+    local function attr(name)
+        return workspace:GetAttribute(name)
+    end
+    local states = {}
+    for id, kind in { rush = "EggRush", cash = "DoubleCash", gold = "GoldenHour" } do
+        local ends = attr("OwnerEvent_" .. kind .. "Ends")
+        states[id] = { on = ends ~= nil and ends > now, ends = ends }
+    end
+    states.boss = { on = attr("BossActive") == true, ends = attr("BossEndsAt"), next = attr("BossNextAt") }
+    local arenaPhase = attr("ArenaPhase")
+    states.arena = { on = arenaPhase ~= nil and arenaPhase ~= "Idle" and arenaPhase ~= "Ended", ends = attr("ArenaEndsAt"), phase = arenaPhase, next = attr("ArenaNextAt") }
+    local volcanoStart = attr("VolcanoStart")
+    states.volcano = { on = volcanoStart ~= nil, ends = volcanoStart and volcanoStart + 150 or nil, next = attr("VolcanoNextAt") }
+    states.night = { on = attr("NighttimeActive") == true, ends = attr("NighttimeEndsAt"), next = attr("NighttimeNextAt"), forced = (attr("NightForcedUntil") or 0) > now }
+    states.rapids = { on = attr("HighTideActive") == true, ends = attr("HighTideEndsAt"), next = attr("HighTideNextAt") }
+    local meteor = ReplicatedStorage:FindFirstChild("MeteorEvent")
+    local meteorEnds = meteor and meteor:GetAttribute("EndsAt") or 0
+    states.meteor = { on = meteorEnds > now, ends = meteorEnds > now and meteorEnds or nil }
+    states.boosts = {}
+    for _, target in BoostService.Targets do
+        local x = attr("Boost" .. target .. "Multiplier")
+        if x then
+            states.boosts[target] = { x = x, ends = attr("Boost" .. target .. "EndsAt") }
+        end
+    end
+    return states
+end
 handlers.Snapshot = function(player, _args, role)
     local info = bridge:Invoke(player, "Info", {})
     if not info.Ok then
@@ -222,6 +255,8 @@ handlers.Snapshot = function(player, _args, role)
             admins = role == "Owner" and AdminRoles.List() or nil,
             eventEnds = workspace:GetAttribute("OwnerEventEnds"),
             isStaffServer = workspace:GetAttribute("IsStaffServer") == true,
+            liveEvents = liveEventStates(),
+            serverTime = workspace:GetServerTimeNow(),
         }
 end
 handlers.EggShower = function(player, args)
@@ -320,6 +355,81 @@ end
 handlers.StopHighTide = function(_player, _args)
     HighTideService.Stop(workspace:GetServerTimeNow(), RiverWaves.TideFallTime)
     return true, "Forced rapids are receding (the regular 7-minute cycle still runs)."
+end
+-- Meteor Shower (MeteorEventService.Control). It needs night, so the panel brings night first when it is day.
+handlers.StartMeteor = function(_player, _args)
+    local service = script.Parent:FindFirstChild("MeteorEventService")
+    local meteorBridge = service and service:FindFirstChild("Control")
+    assert(meteorBridge, "The meteor event is not running.")
+    local now = workspace:GetServerTimeNow()
+    if workspace:GetAttribute("NighttimeActive") ~= true or (workspace:GetAttribute("NighttimeEndsAt") or 0) - now < 20 then
+        workspace:SetAttribute("NightForcedUntil", now + 30)
+        task.wait(0.4) -- NighttimeClock publishes the forced night within 0.1 s
+    end
+    local ok, result = meteorBridge:Invoke("Start")
+    if not ok then
+        return false, tostring(result)
+    end
+    return true, "Meteor Shower started (" .. tostring(result) .. " impact sites)."
+end
+handlers.StopMeteor = function(_player, _args)
+    local service = script.Parent:FindFirstChild("MeteorEventService")
+    local meteorBridge = service and service:FindFirstChild("Control")
+    assert(meteorBridge, "The meteor event is not running.")
+    meteorBridge:Invoke("Stop")
+    return true, "Meteor Shower stopped."
+end
+-- Boost event (BoostService): any multiplier for any target, stacks with every other event.
+local BOOST_TITLES = { Cash = "CASH", Luck = "LUCK", Hatch = "HATCH SPEED", Mutation = "MUTATION", RiverSpeed = "RIVER SPEED" }
+handlers.StartBoost = function(player, args)
+    local targets = type(args.targets) == "table" and args.targets or { args.target }
+    assert(#targets > 0 and #targets <= #BoostService.Targets, "Pick what to boost.")
+    local x = tonumber(args.multiplier)
+    local secs = tonumber(args.seconds) or 300
+    local started = {}
+    for _, target in targets do
+        local ok, message = BoostService.Start(target, x, secs)
+        assert(ok, message)
+        table.insert(started, BOOST_TITLES[target])
+    end
+    local shown = math.floor(x * 10 + 0.5) / 10
+    announceEvent:FireAllClients({
+        title = shown .. "x " .. table.concat(started, " + ") .. "!",
+        text = "Boost event for " .. math.floor(secs / 60 + 0.5) .. " min — go go go!",
+        color = "gold",
+        by = player.DisplayName,
+    })
+    return true, shown .. "x " .. table.concat(started, " + ") .. " for " .. math.floor(secs / 60 + 0.5) .. " min."
+end
+handlers.StopBoost = function(_player, args)
+    local target = type(args.target) == "string" and args.target or nil
+    BoostService.Stop(target)
+    return true, target and (BOOST_TITLES[target] or target) .. " boost stopped." or "All boosts stopped."
+end
+-- Stop everything that is running in this server (live events, boosts, forced night / rapids, boss, arena,
+-- volcano, meteor). The regular schedules keep running.
+handlers.StopAllEvents = function(player, _args)
+    local stopped = {}
+    pcall(function()
+        local result = bridge:Invoke(player, "StopEvent", {})
+        if result.Ok then
+            table.insert(stopped, "live events")
+        end
+    end)
+    BoostService.Stop()
+    table.insert(stopped, "boosts")
+    workspace:SetAttribute("NightForcedUntil", nil)
+    pcall(HighTideService.Stop, workspace:GetServerTimeNow(), RiverWaves.TideFallTime)
+    for _, name in { "BossEventService", "ArenaEventService", "VolcanoEventService", "MeteorEventService" } do
+        local service = script.Parent:FindFirstChild(name)
+        local control = service and service:FindFirstChild("Control")
+        if control then
+            pcall(function()
+                control:Invoke("Stop", player)
+            end)
+        end
+    end
+    return true, "Stopped every event in this server."
 end
 handlers.Announce = function(player, args)
     local message = type(args.text) == "string" and args.text:sub(1, 120) or ""

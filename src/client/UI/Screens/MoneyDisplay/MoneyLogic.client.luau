@@ -149,6 +149,7 @@ local function getIncomePerSecond()
     return total
         * (workspace:GetAttribute("OwnerIncomeMultiplier") or 1)
         * (workspace:GetAttribute("AbuseCashMultiplier") or 1)
+        * (workspace:GetAttribute("BoostCashMultiplier") or 1)
 end
 task.spawn(function()
     while true do

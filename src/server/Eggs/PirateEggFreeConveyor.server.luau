@@ -318,7 +318,8 @@ while true do
             -- natural mutation eggs: Silver 1/100, Gold 1/500, Diamond 1/2000, Rainbow 1/5000 (night river luck multiplies the odds)
             local ok, tier = pcall(function()
                 return require(game.ServerScriptService.Mutations).Roll(
-                    workspace:GetAttribute("NightRiverLuckMultiplier") or 1
+                    (workspace:GetAttribute("NightRiverLuckMultiplier") or 1)
+                        * (workspace:GetAttribute("BoostMutationMultiplier") or 1)
                 )
             end)
             tier = ok and tier or nil
@@ -341,6 +342,8 @@ while true do
         local TIDE_SPAWN_INTERVAL = 1
         local interval = workspace:GetAttribute("HighTideActive") and TIDE_SPAWN_INTERVAL
             or math.clamp(tonumber(conveyor:GetAttribute("SpawnInterval")) or 4, 1.5, 30)
+                / (workspace:GetAttribute("BoostRiverSpeedMultiplier") or 1)
+        interval = math.max(interval, 0.35) -- a big River Speed boost still leaves room between eggs
         nextSpawn = nextSpawn + interval
         if nextSpawn <= os.clock() then
             nextSpawn = os.clock() + interval
