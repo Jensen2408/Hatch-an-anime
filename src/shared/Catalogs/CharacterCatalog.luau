@@ -20,18 +20,26 @@ function Catalog.DisplayName(name)
     return (tostring(name):gsub("(%l)(%u)", "%1 %2"):gsub("(%u)(%u%l)", "%1 %2"))
 end
 
-local RARITY_RANKS = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Limited = 6 }
+-- Mythic / Cosmic were added with the Hunter / Alien eggs; Limited (the Unknown egg) stays the top rank.
+local RARITY_RANKS =
+    { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6, Cosmic = 7, Limited = 8 }
 local RARITY_COLORS = {
     Common = Color3.fromRGB(190, 195, 205),
     Uncommon = Color3.fromRGB(109, 225, 132),
     Rare = Color3.fromRGB(98, 172, 255),
     Epic = Color3.fromRGB(197, 126, 255),
     Legendary = Color3.fromRGB(255, 207, 92),
+    Mythic = Color3.fromRGB(255, 80, 165),
+    Cosmic = Color3.fromRGB(90, 240, 215),
     Limited = Color3.fromRGB(255, 60, 90),
 }
+-- Rarities the river can spawn, lowest first (Limited eggs are never in the river).
+Catalog.RiverRarities = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Cosmic" }
 
 -- Percent chance per rarity, shared by all eggs within that rarity.
-Catalog.SpawnChances = { Common = 70, Uncommon = 22, Rare = 6.5, Epic = 1.3, Legendary = 0.5 }
+-- Mythic / Cosmic: NEW.csv's day rates (0.04 / 0.008) scaled x2.5 like Legendary (0.2 in the sheet, 0.5 here).
+Catalog.SpawnChances =
+    { Common = 70, Uncommon = 22, Rare = 6.5, Epic = 1.3, Legendary = 0.5, Mythic = 0.1, Cosmic = 0.02 }
 
 -- Builds the river spawn roll from egg templates. Two-step roll: pick a rarity bucket by its
 -- SpawnChances weight (only rarities with at least one released template take part), then a uniformly
@@ -49,7 +57,7 @@ function Catalog.BuildSpawnPool(templates)
     end
     local pool = {}
     local totalWeight = 0
-    for _, rarity in ipairs({ "Common", "Uncommon", "Rare", "Epic", "Legendary" }) do
+    for _, rarity in ipairs(Catalog.RiverRarities) do
         local bucket = buckets[rarity]
         local weight = Catalog.SpawnChances[rarity] or 0
         if bucket and #bucket > 0 and weight > 0 then

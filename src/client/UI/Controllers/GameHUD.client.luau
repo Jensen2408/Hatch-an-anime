@@ -70,6 +70,8 @@ local RARITY_COLORS = {
     Rare = Color3.fromRGB(98, 172, 255),
     Epic = Color3.fromRGB(197, 126, 255),
     Legendary = Color3.fromRGB(255, 207, 92),
+    Mythic = Color3.fromRGB(255, 80, 165),
+    Cosmic = Color3.fromRGB(90, 240, 215),
     Limited = Color3.fromRGB(255, 60, 90),
 }
 -- Instance builder: sets every prop, then parents last (property writes happen before it enters the tree).
@@ -1731,7 +1733,7 @@ end)
 -- Tabs (All / Eggs / Characters), rarity + mutation filters, search, drag items onto the hotbar, tap to hold,
 -- SELL mode (tap twice to sell). Opens with the Backpack button or the ` key.
 do
-    local RARITY_FILTERS = { "All", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Limited" }
+    local RARITY_FILTERS = { "All", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Cosmic", "Limited" }
     local MUTATION_FILTERS = { "Any", "Mutated", "Silver", "Gold", "Diamond", "Rainbow" }
     local INVENTORY_MUTATION_COLORS = {
         Silver = Color3.fromRGB(200, 210, 225),

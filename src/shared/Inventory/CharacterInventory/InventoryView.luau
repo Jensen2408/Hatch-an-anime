@@ -483,7 +483,8 @@ function View:_build()
         return button
     end
     -- labels: compact = first letter, Dense = these short names, otherwise the full name
-    local SHORT_RARITY_LABELS = { Common = "COM", Uncommon = "UNC", Rare = "RARE", Epic = "EPIC", Legendary = "LEG" }
+    local SHORT_RARITY_LABELS =
+        { Common = "COM", Uncommon = "UNC", Rare = "RARE", Epic = "EPIC", Legendary = "LEG", Mythic = "MYTH", Cosmic = "COSM" }
     rarityButton(nil, "ALL", nil, 0)
     for i, rarity in Config.Rarities do
         local label = compact and rarity:sub(1, 1)

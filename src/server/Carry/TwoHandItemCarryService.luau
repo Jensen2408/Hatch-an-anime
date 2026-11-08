@@ -260,6 +260,8 @@ function Service.Attach(player, tool)
             Rare = Color3.fromRGB(31, 139, 255),
             Epic = Color3.fromRGB(182, 61, 255),
             Legendary = Color3.fromRGB(255, 196, 0),
+            Mythic = Color3.fromRGB(255, 60, 160),
+            Cosmic = Color3.fromRGB(60, 255, 220),
         }
         local rarity = tool:GetAttribute("Rarity")
         local eggType = tool:GetAttribute("EggType")
@@ -402,6 +404,8 @@ function Service.DropTool(player, tool)
         Rare = Color3.fromRGB(60, 160, 255),
         Epic = Color3.fromRGB(190, 90, 255),
         Legendary = Color3.fromRGB(255, 200, 40),
+        Mythic = Color3.fromRGB(255, 80, 165),
+        Cosmic = Color3.fromRGB(90, 240, 215),
         Limited = Color3.fromRGB(255, 60, 90),
     }
     local MUTATION_COLORS = {

@@ -18,6 +18,8 @@ Config.RarityColor = {
     Rare = rgb(70, 150, 255),
     Epic = rgb(186, 110, 255),
     Legendary = rgb(255, 196, 64),
+    Mythic = rgb(255, 80, 165),
+    Cosmic = rgb(90, 240, 215),
 }
 -- intensity comes from POWER-ROLL QUALITY only (server attribute "HatchRoll"). Unknown/missing = Ordinary.
 Config.RollLevel = { Ordinary = 1, Strong = 2, Exceptional = 2, Jackpot = 3, Ultra = 3, Cosmic = 3 }
@@ -62,7 +64,8 @@ function Config.Level(roll)
 end
 -- per-hatch timeline (extra beat for jackpot+). Rarer characters stretch every beat after 0.75 s by
 -- RarityDuration; Twitch/Build are fixed. Note: Config.T above is not used by Timeline (it has its own numbers).
-Config.RarityDuration = { Common = 1, Uncommon = 1.2, Rare = 1.45, Epic = 1.8, Legendary = 2.2 }
+Config.RarityDuration =
+    { Common = 1, Uncommon = 1.2, Rare = 1.45, Epic = 1.8, Legendary = 2.2, Mythic = 2.5, Cosmic = 2.8 }
 function Config.Timeline(roll, rarity)
     local scale = Config.RarityDuration[rarity or "Common"] or 1
     local extra = Config.Level(roll) >= 3 and Config.ExtraBeat or 0

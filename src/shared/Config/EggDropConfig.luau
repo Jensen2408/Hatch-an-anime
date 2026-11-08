@@ -510,5 +510,71 @@ return {
                 },
             },
         },
+        -- Added from NEW.csv (2026-11-09), after Unknown so every older egg / character keeps its Order.
+        -- Their models (Model = workspace.HunterAlien_New source) are static meshes: no rig, so no V2Moves clip.
+        {
+            Id = "Hunter",
+            Rarity = "Mythic",
+            Price = 40000000000,
+            Luck = 0.15,
+            Characters = {
+                {
+                    Id = "Gon",
+                    Name = "Green Hunter",
+                    Chance = 60,
+                    BaseIncome = 3000000,
+                    Move = "Jajanken",
+                    Model = "Gon_v3b",
+                },
+                {
+                    Id = "Killua",
+                    Name = "Lightning Assassin",
+                    Chance = 30,
+                    BaseIncome = 4500000,
+                    Move = "Godspeed",
+                    Model = "Killua_v3b",
+                },
+                {
+                    Id = "Hisoka",
+                    Name = "Card Magician",
+                    Chance = 10,
+                    BaseIncome = 7500000,
+                    Move = "Bungee Gum",
+                    Model = "Hisoka_v3b",
+                },
+            },
+        },
+        {
+            Id = "Alien",
+            Rarity = "Cosmic",
+            Price = 150000000000,
+            Luck = 0.1,
+            Characters = {
+                {
+                    Id = "Okarun",
+                    Name = "Curse Courier",
+                    Chance = 60,
+                    BaseIncome = 8000000,
+                    Move = "Turbo Dash",
+                    Model = "Okarun_v3b",
+                },
+                {
+                    Id = "Momo",
+                    Name = "Psychic Medium",
+                    Chance = 30,
+                    BaseIncome = 12000000,
+                    Move = "Spirit Grip",
+                    Model = "Momo_v3b",
+                },
+                {
+                    Id = "TurboGranny",
+                    Name = "Lucky Cat Curse",
+                    Chance = 10,
+                    BaseIncome = 20000000,
+                    Move = "Fortune Fury",
+                    Model = "TurboGranny_v3b",
+                },
+            },
+        },
     },
 }

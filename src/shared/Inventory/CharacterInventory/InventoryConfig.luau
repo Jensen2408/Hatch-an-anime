@@ -24,7 +24,7 @@ Config.Server = {
 Config.NotableRank = 3
 Config.TopRank = 5
 
-Config.Rarities = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Limited" }
+Config.Rarities = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Cosmic", "Limited" }
 
 Config.Sorts = {
     { Id = "Power", Label = "POWER" },
@@ -130,6 +130,8 @@ Config.Theme = {
         Rare = rgb(98, 172, 255),
         Epic = rgb(197, 126, 255),
         Legendary = rgb(255, 207, 92),
+        Mythic = rgb(255, 80, 165),
+        Cosmic = rgb(90, 240, 215),
         Limited = rgb(255, 60, 90),
     },
 }
