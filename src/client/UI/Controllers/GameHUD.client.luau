@@ -390,7 +390,7 @@ local function buildPreview(tool, parent)
     local front = isEgg and Vector3.new(0, 0, -1) or CFrame.Angles(0, math.rad(-24), 0):VectorToWorldSpace(Vector3.new(0, 0, -1))
     local up = Vector3.new(0, boxSize.Y * 0.06, 0)
     local radius = math.max(boxSize.Y, math.max(boxSize.X, boxSize.Z) * 0.92) / 2
-    local distance = radius / math.tan(math.rad(FOV / 2)) * 1.04 + math.max(boxSize.X, boxSize.Z) / 2
+    local distance = radius / math.tan(math.rad(FOV / 2)) * 0.9 + math.max(boxSize.X, boxSize.Z) * 0.3
     camera.CFrame = CFrame.lookAt(center + front * distance + up, center)
     -- light travels from the camera side into the model, slightly downward, so the face is lit
     viewport.LightDirection = (-front + Vector3.new(0.45, -0.7, 0)).Unit
@@ -650,7 +650,7 @@ local function restyleHeldSlots(groups)
                     or (button:GetAttribute("EdgeColor") or Color3.fromRGB(0, 0, 0))
                 edge.Thickness = isHeld and 2.5 or 1.5
             end
-            button.BackgroundTransparency = isHeld and 0.15 or 0.35
+            button.BackgroundTransparency = isHeld and 0.05 or 0.22
         end
     end
 end
@@ -670,7 +670,7 @@ local function buildSlot(slotIndex, group, signatures)
         Name = "Button",
         Size = UDim2.fromScale(1, 1),
         BackgroundColor3 = Color3.fromRGB(20, 20, 24),
-        BackgroundTransparency = isHeld and 0.15 or 0.35,
+        BackgroundTransparency = isHeld and 0.05 or 0.22,
         BorderSizePixel = 0,
         Text = "",
         AutoButtonColor = false,
@@ -801,10 +801,10 @@ local function buildSlot(slotIndex, group, signatures)
         end
     end)
     button.MouseEnter:Connect(function()
-        tween(button, 0.08, { BackgroundTransparency = 0.1 })
+        tween(button, 0.08, { BackgroundTransparency = 0 })
     end)
     button.MouseLeave:Connect(function()
-        tween(button, 0.08, { BackgroundTransparency = groupHas(group, getEquippedTool()) and 0.15 or 0.35 })
+        tween(button, 0.08, { BackgroundTransparency = groupHas(group, getEquippedTool()) and 0.05 or 0.22 })
     end)
     holder:SetAttribute("ToolRef", tostring(tool))
     holder:SetAttribute("Sig", signatures[slotIndex])
