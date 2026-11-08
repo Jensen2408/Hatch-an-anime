@@ -15,10 +15,24 @@ local visualFolder = Instance.new("Folder")
 visualFolder.Name = "LocalRiverEggs"
 visualFolder.Parent = workspace
 local activeRecords = {} -- [serverEgg] = { visual, connection, collectedConnection, update } (filled after anchors stream in)
+-- The server copy stays at the spawn point, so everything visible on it is switched off locally: parts, labels,
+-- prompts and (2026-11-08) the mutation aura's particles, beams, trails and lights, which used to hang at the spawn.
 local function hideServerCopy(instance)
-    if instance:IsA("BasePart") then
+    if instance:IsA("BasePart") or instance:IsA("Decal") then
         instance.LocalTransparencyModifier = 1
-    elseif instance:IsA("BillboardGui") or instance:IsA("ProximityPrompt") then
+    elseif
+        instance:IsA("BillboardGui")
+        or instance:IsA("SurfaceGui")
+        or instance:IsA("ProximityPrompt")
+        or instance:IsA("ParticleEmitter")
+        or instance:IsA("Beam")
+        or instance:IsA("Trail")
+        or instance:IsA("Light")
+        or instance:IsA("Highlight")
+        or instance:IsA("Fire")
+        or instance:IsA("Smoke")
+        or instance:IsA("Sparkles")
+    then
         instance.Enabled = false
     end
 end

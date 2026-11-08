@@ -298,10 +298,11 @@ ownerRequest.Event:Connect(function(owner, id, mutation)
     if template and (template:GetAttribute("ReleaseEnabled") ~= false or MUTATION_TIERS[mutation]) then
         local tier = MUTATION_TIERS[mutation] and mutation or nil
         local mutated = tier and mutatedTemplate(template, tier)
+        -- every admin egg (plain or mutated) waits for the next river slot, so it never spawns inside another egg
         if mutated then
-            table.insert(ownerQueue, { template = mutated, tier = tier }) -- takes the next normal river slot
+            table.insert(ownerQueue, { template = mutated, tier = tier })
         else
-            spawnEgg(template)
+            table.insert(ownerQueue, { template = template })
         end
     end
 end)
