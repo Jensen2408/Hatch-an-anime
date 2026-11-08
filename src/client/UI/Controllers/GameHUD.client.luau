@@ -243,7 +243,10 @@ end
 local function buildPreviewModel(tool)
     local model = Instance.new("Model")
     local egg = tool:FindFirstChild("Egg")
-    local sourceModel = egg and egg:IsA("Model") and egg or tool
+    local characterModel = tool:FindFirstChild("Character")
+    local sourceModel = (egg and egg:IsA("Model") and egg)
+        or (characterModel and characterModel:IsA("Model") and characterModel)
+        or tool
     -- the egg Model's WorldPivot goes stale once its parts move with the welded Handle, so frame from the Handle
     -- (eggs are built with Handle and egg both at the origin, so Handle space = the egg's upright template space)
     local handle = tool:FindFirstChild("Handle")
@@ -360,13 +363,15 @@ local function buildPreview(tool, parent)
             ZIndex = parent.ZIndex,
         }, parent)
     end
+    -- 2026-11-08 high quality pictures: the model faces the camera (eggs straight on, characters at a 3/4 angle),
+    -- fills the slot (32 degree lens, fitted to its height and width), bright studio light from the front-left.
     local viewport = create("ViewportFrame", {
         Size = UDim2.fromScale(1, 1),
         BackgroundTransparency = 1,
         ZIndex = parent.ZIndex,
-        LightColor = Color3.new(1, 1, 1),
-        Ambient = Color3.fromRGB(235, 235, 240),
-        LightDirection = Vector3.new(-0.3, -0.6, -1),
+        LightColor = Color3.fromRGB(255, 252, 245),
+        Ambient = Color3.fromRGB(165, 165, 175),
+        LightDirection = Vector3.new(-0.6, -0.9, -1),
     }, parent)
     local model
     if PREVIEW_CACHE[tool] then
@@ -376,22 +381,19 @@ local function buildPreview(tool, parent)
     end
     model.Parent = viewport
     local boxCFrame, boxSize = model:GetBoundingBox()
-    local camera = create("Camera", { FieldOfView = 20 }, viewport)
+    local FOV = 32
+    local camera = create("Camera", { FieldOfView = FOV }, viewport)
     viewport.CurrentCamera = camera
     local center = boxCFrame.Position
-    local distance = math.max(boxSize.X, boxSize.Y, boxSize.Z) / 2 / math.tan(math.rad(10)) * 1.05
-    local front = tool:GetAttribute("EggType") and Vector3.new(0, 0, -1) or Vector3.new(0.5, 0.2, -1).Unit
-    camera.CFrame = CFrame.lookAt(center + front * distance + Vector3.new(0, boxSize.Y * 0.05, 0), center)
-    -- slow turn so 3D eggs feel alive
-    task.spawn(function()
-        local angle = 0
-        while viewport.Parent do
-            angle += 0.012
-            local direction = CFrame.Angles(0, math.sin(angle) * 0.35, 0):VectorToWorldSpace(front)
-            camera.CFrame = CFrame.lookAt(center + direction * distance + Vector3.new(0, boxSize.Y * 0.05, 0), center)
-            task.wait(0.03)
-        end
-    end)
+    local isEgg = tool:GetAttribute("EggType") ~= nil and not tool:GetAttribute("CharacterId")
+    -- models face -Z of their pivot; the preview model is built in that pivot space
+    local front = isEgg and Vector3.new(0, 0, -1) or CFrame.Angles(0, math.rad(-24), 0):VectorToWorldSpace(Vector3.new(0, 0, -1))
+    local up = Vector3.new(0, boxSize.Y * 0.06, 0)
+    local radius = math.max(boxSize.Y, math.max(boxSize.X, boxSize.Z) * 0.92) / 2
+    local distance = radius / math.tan(math.rad(FOV / 2)) * 1.04 + math.max(boxSize.X, boxSize.Z) / 2
+    camera.CFrame = CFrame.lookAt(center + front * distance + up, center)
+    -- light travels from the camera side into the model, slightly downward, so the face is lit
+    viewport.LightDirection = (-front + Vector3.new(0.45, -0.7, 0)).Unit
     return viewport
 end
 -- "Characters" | "Eggs" | nil (any other tool is ignored by the bag and the Inventory panel)
@@ -635,7 +637,7 @@ local MUTATION_COLORS = {
     Rainbow = Color3.fromRGB(255, 90, 200),
     Molten = Color3.fromRGB(255, 105, 34),
 }
-local SLOT_SIZE = 62
+local SLOT_SIZE = 70
 -- renderBar's cheap path: same slots, only re-highlight the one whose stack holds the equipped tool.
 local function restyleHeldSlots(groups)
     for i, holder in slots do
@@ -703,6 +705,20 @@ local function buildSlot(slotIndex, group, signatures)
     local previewImage = buildPreview(tool, icon)
     if previewImage then
         previewImage.ZIndex = 7
+    end
+    -- thin rarity bar along the bottom of the slot
+    local rarityColor = RARITY_COLORS[_rarity]
+    if rarityColor then
+        local bar = create("Frame", {
+            Name = "RarityBar",
+            AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.new(0.5, 0, 1, -3),
+            Size = UDim2.new(1, -16, 0, 3),
+            BackgroundColor3 = rarityColor,
+            BorderSizePixel = 0,
+            ZIndex = 8,
+        }, button)
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
     end
     -- slot number (top-left) and stack count (bottom-right), white with a thin outline like Roblox
     local slotNumberLabel = create("TextLabel", {
@@ -1754,7 +1770,6 @@ do
     local activeTab, rarityIndex, mutationIndex, searchQuery, sellMode, armedItem = "All", 1, 1, "", false, nil
     -- the window art (ReplicatedStorage.MenuArt): background with the header, title, chips and grid face; tab /
     -- cell / sell pieces drawn on top. Every rect is in pixels of the 660 x 402 art.
-    local MenuArt = require(ReplicatedStorage:WaitForChild("MenuArt"):WaitForChild("MenuArt"))
     local ART = {
         Tabs = { All = { 223, 17, 125, 35 }, Eggs = { 352, 17, 124, 35 }, Characters = { 481, 17, 120, 35 } },
         Count = { 190, 17, 30, 35 },
@@ -1767,12 +1782,79 @@ do
         Cell = Vector2.new(118, 94),
         CellGap = Vector2.new(6, 7),
     }
+    -- 2026-11-08: Roblox's own backpack look, drawn in code (was the MenuArt image): a dark see-through panel above
+    -- the hotbar, dark pills for the controls, a blue selected tab and dark rounded cells. The rects (ART below) are
+    -- the same as before, so the rest of this section is unchanged. Old art: ServerStorage MenuArt "Inventory".
+    local MenuArt = {}
+    local PILL = Color3.fromRGB(58, 58, 64)
+    local ROBLOX_BLUE = Color3.fromRGB(0, 162, 255)
+    local GOTHAM = Font.fromEnum(Enum.Font.GothamBold)
+    local function roundBox(parent, name, r, color, transparency, z, corner)
+        local frame = create("Frame", {
+            Name = name,
+            Position = UDim2.fromOffset(r[1], r[2]),
+            Size = UDim2.fromOffset(r[3], r[4]),
+            BackgroundColor3 = color,
+            BackgroundTransparency = transparency,
+            BorderSizePixel = 0,
+            ZIndex = z,
+        }, parent)
+        create("UICorner", { CornerRadius = UDim.new(0, corner or 8) }, frame)
+        return frame
+    end
+    function MenuArt.setPiece(frame, kind)
+        if kind == "InvTabOn" then
+            frame.BackgroundColor3, frame.BackgroundTransparency = ROBLOX_BLUE, 0
+        elseif kind == "SellRed" then
+            frame.BackgroundColor3, frame.BackgroundTransparency = Color3.fromRGB(226, 50, 44), 0
+        elseif kind == "Cell" then
+            frame.BackgroundColor3, frame.BackgroundTransparency = Color3.fromRGB(28, 28, 32), 0.2
+        else
+            frame.BackgroundColor3, frame.BackgroundTransparency = PILL, 0.1
+        end
+    end
+    function MenuArt.piece(parent, name, kind, r, z, corner)
+        local frame = roundBox(parent, name, r, PILL, 0.1, z, corner and math.min(corner, 10) or 8)
+        MenuArt.setPiece(frame, kind)
+        return frame
+    end
+    function MenuArt.background(parent, _name, _art, z)
+        local panel = create("Frame", {
+            Name = "Backdrop",
+            Size = UDim2.fromScale(1, 1),
+            BackgroundColor3 = Color3.new(0, 0, 0),
+            BackgroundTransparency = 0.3,
+            BorderSizePixel = 0,
+            ZIndex = z,
+        }, parent)
+        create("UICorner", { CornerRadius = UDim.new(0, 12) }, panel)
+        create("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.82, Thickness = 1.5 }, panel)
+        create("TextLabel", {
+            Name = "Title",
+            Position = UDim2.fromOffset(22, 17),
+            Size = UDim2.fromOffset(160, 35),
+            BackgroundTransparency = 1,
+            Text = "Backpack",
+            FontFace = GOTHAM,
+            TextSize = 22,
+            TextColor3 = Color3.new(1, 1, 1),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = z + 1,
+        }, parent)
+        for _, key in { "Search", "Rarity", "Mutation" } do
+            roundBox(parent, key .. "Pill", ART[key], PILL, 0.1, z + 1)
+        end
+        roundBox(parent, "SellPill", ART.Sell, Color3.fromRGB(0, 176, 111), 0, z + 1)
+        roundBox(parent, "ClosePill", ART.Close, PILL, 0.1, z + 1)
+        roundBox(parent, "GridWell", ART.Grid, Color3.new(0, 0, 0), 0.5, z, 10)
+        return panel
+    end
     local PANEL_WIDTH, PANEL_HEIGHT = 660, 402
     local inventoryFrame = create("Frame", {
         Name = "Inventory",
         Active = true,
         AnchorPoint = Vector2.new(0.5, 1),
-        Position = UDim2.new(0.5, 0, 1, -122),
+        Position = UDim2.new(0.5, 0, 1, -130),
         Size = UDim2.fromOffset(PANEL_WIDTH, PANEL_HEIGHT),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
@@ -1829,6 +1911,7 @@ do
         tabButtons[tabName] = tabButton
     end
     local closeButton = artButton(ART.Close, 20)
+    closeButton.Text = "X"
     local searchBox = create("TextBox", {
         Position = UDim2.fromOffset(ART.Search[1] + 10, ART.Search[2]),
         Size = UDim2.fromOffset(ART.Search[3] - 20, ART.Search[4]),
@@ -1958,8 +2041,8 @@ do
             ZIndex = 24,
         }, cell)
         local iconFrame = create("Frame", {
-            Position = UDim2.fromOffset(6, 5),
-            Size = UDim2.new(1, -12, 0, 56),
+            Position = UDim2.fromOffset(6, 4),
+            Size = UDim2.new(1, -12, 0, 60),
             BackgroundTransparency = 1,
             ZIndex = 23,
         }, cell)

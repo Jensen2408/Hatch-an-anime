@@ -71,7 +71,11 @@ local function watchHotbar(hotbar)
 		if c:IsA("Frame") then task.spawn(skinSlot, c) end
 	end)
 end
+-- 2026-11-08: the hotbar and the Backpack window use Roblox's own dark backpack look now (GameHUD), so they are no
+-- longer skinned here. Set SKIN_BACKPACK = true to bring the white studded slots and window back.
+local SKIN_BACKPACK = false
 task.spawn(function()
+	if not SKIN_BACKPACK then return end
 	local hud = playerGui:WaitForChild("GameHUD")
 	local hotbar = hud:WaitForChild("Hotbar", 30)
 	if hotbar then watchHotbar(hotbar) end
@@ -353,7 +357,7 @@ local function skinInventory(inv)
 end
 task.spawn(function()
 	local hud = playerGui:WaitForChild("GameHUD")
-	local inv = hud:WaitForChild("Inventory", 60)
+	local inv = SKIN_BACKPACK and hud:WaitForChild("Inventory", 60)
 	if inv then skinInventory(inv) end
 end)
 
