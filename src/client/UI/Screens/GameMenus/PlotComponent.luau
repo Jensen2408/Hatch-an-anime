@@ -1,566 +1,428 @@
 -- GameMenus.PlotComponent  (ModuleScript, client)
--- Draws the Plot menu from the mockup art (PlotConfig / PlotAtlas): one background with the changing parts
--- painted out, pieces of an atlas on top, and FredokaOne labels for the values. Display only: MenuLogic
--- (RENDER.Plot) reads the plot state, formats every value and passes the actions as callbacks.
+-- My Plot in the Folk Stud look (2026-11-07): a white studded sheet, "MY PLOT" on the top border with the game's
+-- temple hanging over the corner and a red X over the other corner. Three stat cards (income, temple level,
+-- incubators), the Character Slots / Upgrades tabs over a scrolling well of slot cards (placed: mint with the
+-- character, empty: white, next to buy: mango with a glinting outline, locked: dark) or incubator rows, a white
+-- slots bar, three upgrade rows on the right and the next-milestone card.
+-- Display only: MenuLogic (RENDER.Plot) reads the plot state, formats every value and passes the actions as callbacks.
+-- Same API and model as the atlas version; the names FirstHatchTutorial looks for stay: SlotsTab, UpgradesTab and
+-- the upgrade rows TempleUpgrades / IncubatorSpeed / IncubatorUpgrades (each with a Buy button).
 --
---   PlotCanvas (1382x822 mockup pixels, UIScale = panel width / 1382)
---   ├── Background                          panel, title, stat icons + labels, row icons + texts, milestone
---   ├── Stat1..3                            value labels
---   ├── SlotsTab, UpgradesTab               hit-boxes (+ the swapped tab art on the Upgrades tab)
---   ├── Content (ScrollingFrame)            slot cards, or one row per incubator
---   ├── SlotsText, SlotsFill
---   ├── TempleUpgrades, IncubatorSpeed, IncubatorUpgrades   price + button (names used by FirstHatchTutorial)
---   └── Milestone                           progress dots (+ hit-box while there is something to buy)
---
---   local view = PlotComponent.new(panel, layer, model)   -- builds into `layer`
+--   local view = PlotComponent.new(panel, layer, model)
 --   view:Destroy()
 --
 -- model = {
 --   tab = "slots" | "upgrades", scrollY = number?,
 --   stats = { { label, value } x3 },
---   slots = { { number, state = "placed" | "empty" | "locked", image?, name?, income?, price?, onActivate?,
---               onRemove? } },   -- a locked slot with onActivate is the next one to buy
+--   slots = { { number, state = "placed" | "empty" | "locked", image?, characterId?, name?, income?, price?,
+--               onActivate?, onRemove? } },   -- a locked slot with onActivate is the next one to buy
 --   slotsText, slotsProgress (0..1),
 --   upgrades = { { name, title, subtitle, price, enabled, buttonText?, onActivate } x3 },
 --   incubators = { { title, subtitle, progress (0..1), price, enabled, buttonText?, onActivate } },
 --   milestone = { dots (0..5), onActivate? },
 --   onTab(tab), onScroll(y),
 -- }
+-- Old version: ServerStorage._ARCHIVE.PlotComponent_BeforeStud_2026-11-07
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local M = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
+local H = M.H
+local UISound = require(ReplicatedStorage:WaitForChild("UISound"))
 local Config = require(script.Parent:WaitForChild("PlotConfig"))
 local Atlas = require(script.Parent:WaitForChild("PlotAtlas"))
-local MenuArt = require(game:GetService("ReplicatedStorage"):WaitForChild("MenuArt"):WaitForChild("MenuArt"))
+local ShopConfig = require(script.Parent:WaitForChild("ShopMenuConfig"))
+local ShopAtlas = require(script.Parent:WaitForChild("ShopAtlas"))
+local MenuArt = require(ReplicatedStorage:WaitForChild("MenuArt"):WaitForChild("MenuArt"))
 
-local CANVAS = Atlas.Canvas
-local Z = 10 -- base ZIndex; layers above it
+local CANVAS = Atlas.Canvas                  -- 1382 x 822: MenuLogic sizes the panel by this aspect
+local CW, CH = CANVAS.X, CANVAS.Y
+local Z = 10
+local C = M.COLOR
+local WHITE, BLACK, hex = H.WHITE, H.BLACK, H.hex
+local GOLD = hex("FFC400")
+local GOLD_TEXT = hex("FFE14D")
+local CASH_TEXT = hex("2BF08C")
+local INK_TEXT = hex("3A3150")
+local CLOSE = { CW - 40, -30, 74, 74 }
+local TEMPLE_ICON = "rbxassetid://133879873952343"   -- FOLK house (i_house), same as the rail
+local COINS_ICON = "rbxassetid://86652590101281"   -- FOLK cash pile (i_cashpile)
+local CASH_ICON = "rbxassetid://136807180106184"   -- FOLK cash stack (i_cash), next to every price
+local LOCK_ICON = "rbxassetid://104989619138958"   -- FOLK gold lock (i_lock)
+local BOLT_ICON = "rbxassetid://115412194685542"   -- FOLK lightning (i_energy)
+local PLUS_ICON = "rbxassetid://124647673169644"   -- FOLK plus (i_plus)
+
+local LEFT = { X = 44, W = 790 }
+local TAB_Y, TAB_H = 178, 56
+local VIEW = { X = 44, Y = 246, W = 790, H = 470 }
+local FOOT_Y = 732
+local RIGHT = { X = 854, W = CW - 854 - 44 }
+local COLS, CARD_W, CARD_H, GAP, PAD = 4, 180, 214, 12, 8
+local ROW_COLORS = { C.coral, C.azure, C.bubblegum }
+
 local PlotComponent = {}
 PlotComponent.__index = PlotComponent
-PlotComponent.AspectRatio = CANVAS.X / CANVAS.Y
+PlotComponent.AspectRatio = CW / CH
 
--- ---------- keystone ----------
--- The mockup's sides lean out towards the bottom; the background is drawn with them vertical (PlotAtlas.Keystone).
--- Every mockup coordinate in PlotConfig goes through the same mapping: per row, Left(y)..Right(y) -> Target.
-local Keystone = Atlas.Keystone
-
-local function rowSpan(y)
-    return Keystone.Left.Offset + Keystone.Left.Slope * y, Keystone.Right.Offset + Keystone.Right.Slope * y
+---------------------------------------------------------------- building blocks
+local function txt(parent, name, str, x, y, w, h, size, z, col, align, wrap)
+	local l = H.new("TextLabel", { Name = name, BackgroundTransparency = 1, FontFace = M.FONT, Text = str or "", TextScaled = true, TextWrapped = wrap == true,
+		TextColor3 = col or WHITE, TextXAlignment = align or Enum.TextXAlignment.Center, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), ZIndex = z }, parent)
+	H.new("UITextSizeConstraint", { MaxTextSize = size, MinTextSize = 10 }, l)
+	H.new("UIStroke", { Name = "UIStroke", Thickness = size >= 28 and 3.7 or (size >= 20 and 3 or 2.5), Color = BLACK, LineJoinMode = Enum.LineJoinMode.Bevel }, l)
+	return l
+end
+local function atlasIcon(parent, name, image, info, cx, cy, size, z)
+	local r = info.Rect
+	local k = size / math.max(r[3], r[4])
+	return H.new("ImageLabel", { Name = name, BackgroundTransparency = 1, Image = image, ImageRectOffset = Vector2.new(r[1], r[2]), ImageRectSize = Vector2.new(r[3], r[4]),
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(cx, cy), Size = UDim2.fromOffset(r[3] * k, r[4] * k), ZIndex = z }, parent)
+end
+-- a piece of the plot atlas (coins, egg, locks)
+local function icon(parent, name, pieceName, cx, cy, size, z)
+	local info = Atlas.Pieces[pieceName]
+	return info and atlasIcon(parent, name, Config.Pieces, info, cx, cy, size, z)
+end
+-- a piece of the shop atlas (the bolt)
+local function shopIcon(parent, name, pieceName, cx, cy, size, z)
+	local r = ShopAtlas.Pieces[pieceName]
+	return r and atlasIcon(parent, name, ShopConfig.Pieces, { Rect = r }, cx, cy, size, z)
+end
+local function picture(parent, name, image, cx, cy, size, z)
+	local p = H.art(parent, name, image, cx, cy, size, z)
+	return p
+end
+local function card(parent, name, x, y, w, h, pal, z, shine)
+	H.shadow(parent, name, x, y, w, h, 18, z)
+	local f = H.rect(parent, name, x, y, w, h, 18, z + 1, WHITE)
+	H.grad(f, pal[1], pal[2])
+	H.ink(f, 4)
+	H.studs(f, Vector2.new(48, 48), 0.84, 18, z + 1)
+	if shine then H.shine(f, 18, z + 1) end
+	return f
+end
+-- a pressable button; off = the darkest slab with the reason, no lip, no click (MAX, LOCKED, ...)
+local function btn(parent, name, x, y, w, h, pal, word, size, z, onActivate, off)
+	local b
+	if off then
+		b = H.button(parent, name, x, y, w, h, 12, { hex("9A9A9A"), hex("6E6E6E"), hex("3C3C3C") }, z, { lip = 0, studs = 0.75 })
+		b.AutoButtonColor = false
+		b:SetAttribute("Pressable", nil)
+		-- still tells the player why when pressed (MenuLogic shows a toast)
+		if onActivate then b.Activated:Connect(onActivate) end
+	else
+		b = H.button(parent, name, x, y, w, h, 12, pal, z, { lip = 5, studs = 0.7 })
+		if onActivate then b.Activated:Connect(onActivate) end
+	end
+	txt(b, "Label", word, 8, 2, w - 16, h - (off and 4 or 9), size, b.ZIndex + 3)
+	return b
+end
+-- 2026-11-07 clean pass: the price sits ON the button (cash icon + amount), like the shop, instead of floating above it.
+-- off = grey slab with one short word (MAX / LOCKED); the long reason goes in the row's subtitle.
+local function priceBtn(parent, name, x, y, w, h, pal, price, size, z, onActivate, off, offWord)
+	if off or not price or price == "" or price == "MAX" then
+		return btn(parent, name, x, y, w, h, pal, offWord or "MAX", size, z, onActivate, true)
+	end
+	local b = H.button(parent, name, x, y, w, h, 12, pal, z, { lip = 5, studs = 0.7 })
+	if onActivate then b.Activated:Connect(onActivate) end
+	local row = H.new("Frame", { Name = "Price", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, -3),
+		AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, h - 10), ZIndex = b.ZIndex + 3 }, b)
+	H.new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder }, row)
+	local coin = H.art(row, "Coin", CASH_ICON, 0, 0, size + 6, b.ZIndex + 3)
+	coin.AnchorPoint = Vector2.zero
+	coin.LayoutOrder = 1
+	local value = H.new("TextLabel", { Name = "Label", BackgroundTransparency = 1, FontFace = M.FONT, Text = price, TextSize = size, TextColor3 = WHITE,
+		AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, h - 10), LayoutOrder = 2, ZIndex = b.ZIndex + 3 }, row)
+	H.new("UIStroke", { Name = "UIStroke", Thickness = size >= 28 and 3.7 or 3, Color = BLACK, LineJoinMode = Enum.LineJoinMode.Bevel }, value)
+	return b
+end
+-- coin + price, centred on cx (hidden for "MAX": the button says so)
+local function priceRow(parent, name, cx, cy, text, enabled, size, z)
+	if text == "MAX" then return nil end
+	local row = H.new("Frame", { Name = name, BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(cx, cy),
+		AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, size + 6), ZIndex = z }, parent)
+	H.new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder }, row)
+	local coin = H.art(row, "Coin", CASH_ICON, 0, 0, size + 4, z)
+	if coin and not enabled then coin.ImageColor3 = hex("A9A3BF") end
+	if coin then
+		coin.AnchorPoint = Vector2.zero
+		coin.LayoutOrder = 1
+	end
+	local value = H.new("TextLabel", { Name = "Price", BackgroundTransparency = 1, FontFace = M.FONT, Text = text, TextSize = size, TextColor3 = enabled and CASH_TEXT or hex("D6D6E4"),
+		AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, size + 6), LayoutOrder = 2, ZIndex = z }, row)
+	H.new("UIStroke", { Name = "UIStroke", Thickness = 3, Color = BLACK, LineJoinMode = Enum.LineJoinMode.Bevel }, value)
+	return row
+end
+-- level dots on a white strip
+local function dots(parent, x, y, filled, count, z)
+	local s, gap, pad = 22, 8, 6
+	local strip = H.rect(parent, "Dots", x, y, count * s + (count - 1) * gap + pad * 2, s + pad * 2, 10, z, WHITE)
+	H.ink(strip, 3)
+	for i = 1, count do
+		local d = H.circle(strip, "Dot" .. i, pad + (i - 1) * (s + gap) + s / 2, pad + s / 2, s, z + 1,
+			i <= filled and C.gold[1] or hex("E4DEF5"), i <= filled and C.gold[2] or hex("C9C1E6"), 2.5)
+		if i <= filled and i == filled then d:SetAttribute("Wiggle", 0) end
+	end
+	return strip
+end
+local function optOut(root)
+	root:SetAttribute("NoSkin", true)
+	root:SetAttribute("FS", true)
+	for _, d in root:GetDescendants() do
+		if d:IsA("GuiObject") then
+			d:SetAttribute("NoSkin", true)
+			d:SetAttribute("FS", true)
+		end
+	end
 end
 
-local function stretchAt(y)
-    local left, right = rowSpan(y)
-    return (Keystone.Target.Y - Keystone.Target.X) / (right - left)
-end
+---------------------------------------------------------------- slot cards
+function PlotComponent:_slotCard(parent, slot, x, y)
+	local isNext = slot.state == "locked" and slot.onActivate ~= nil
+	local pal = slot.state == "placed" and C.mint or (slot.state == "empty" and { WHITE, hex("ECECEC") } or (isNext and C.mango or C.ink))
+	local f = card(parent, string.format("Slot%02d", slot.number or 0), x, y, CARD_W, CARD_H, pal, Z + 1)
+	-- the slot number in a small dark square on the corner
+	local n = H.rect(f, "NumberTile", 8, 8, 34, 34, 8, Z + 4, BLACK)
+	n.BackgroundColor3 = hex("241D35")
+	txt(n, "Number", tostring(slot.number or ""), 0, 1, 34, 30, 24, Z + 5)
 
-local function keystoneX(x, y)
-    return Keystone.Target.X + (x - rowSpan(y)) * stretchAt(y)
-end
-
-local function keystonePoint(point)
-    return Vector2.new(keystoneX(point.X, point.Y), point.Y)
-end
-
--- a rect maps at its centre row: same y / height, x moved and the width stretched
-local function keystoneRect(r)
-    local centreY = r[2] + r[4] / 2
-    return { keystoneX(r[1], centreY), r[2], r[3] * stretchAt(centreY), r[4] }
-end
-
--- grid columns: each takes the mean x / width of the mockup's two cards in it (rows: PlotConfig.Grid)
-local function keystoneColumns()
-    local columns, count = {}, Config.Columns
-    for column = 1, count do
-        local top, bottom = keystoneRect(Config.Cells[column]), keystoneRect(Config.Cells[count + column])
-        columns[column] = { X = (top[1] + bottom[1]) / 2, Width = (top[3] + bottom[3]) / 2 }
-    end
-    return columns
-end
-
-local Layout = {
-    Stats = {},
-    Tabs = { Slots = keystoneRect(Config.Tabs.Slots), Upgrades = keystoneRect(Config.Tabs.Upgrades) },
-    Viewport = keystoneRect(Config.Viewport),
-    Columns = keystoneColumns(),
-    UpgradeRows = {},
-    Milestone = {
-        Rect = keystoneRect(Config.Milestone.Rect),
-        Dots = {
-            First = keystonePoint(Config.Milestone.Dots.First),
-            Step = Config.Milestone.Dots.Step * stretchAt(Config.Milestone.Dots.First.Y),
-            Count = Config.Milestone.Dots.Count,
-        },
-    },
-    FooterText = keystoneRect(Config.Footer.Text),
-    FooterBar = keystoneRect(Config.Footer.Bar),
-    FooterMinFill = Config.Footer.MinFill * stretchAt(Config.Footer.Bar[2]),
-}
-for i, value in Config.Stats.Values do
-    Layout.Stats[i] = keystoneRect(value.Rect)
-end
-for i, row in Config.UpgradeRows do
-    Layout.UpgradeRows[i] = {
-        Name = row.Name,
-        Row = keystoneRect(row.Row),
-        Price = keystonePoint(row.Price),
-        Button = keystoneRect(row.Button),
-    }
-end
-Layout.IncubatorWidth = Layout.Viewport[3] - (Config.Viewport[3] - Config.IncubatorRows.Width)
-
-local function rect(instance, r)
-    instance.Position = UDim2.fromOffset(r[1], r[2])
-    instance.Size = UDim2.fromOffset(r[3], r[4])
-end
-
-local function new(className, name, parent, zIndex)
-    local instance = Instance.new(className)
-    instance.Name = name
-    if instance:IsA("GuiObject") then
-        instance.BackgroundTransparency = 1
-        instance.BorderSizePixel = 0
-        instance.ZIndex = zIndex or Z
-    end
-    instance.Parent = parent
-    return instance
-end
-
--- one atlas piece, drawn at its mockup size unless a rect is given
-local function piece(parent, name, pieceName, position, zIndex)
-    local info = Atlas.Pieces[pieceName]
-    local image = new("ImageLabel", name, parent, zIndex)
-    image.Image = Config.Pieces
-    image.ImageRectOffset = Vector2.new(info.Rect[1], info.Rect[2])
-    image.ImageRectSize = Vector2.new(info.Rect[3], info.Rect[4])
-    image.Position = UDim2.fromOffset(position.X, position.Y)
-    image.Size = UDim2.fromOffset(info.Size.X, info.Size.Y)
-    return image
-end
-
--- a piece 9-sliced to `r`: its borders keep their mockup size
-local function slicedPiece(parent, name, pieceName, r, sliceCenter, zIndex)
-    local info = Atlas.Pieces[pieceName]
-    local image = piece(parent, name, pieceName, Vector2.zero, zIndex)
-    image.ScaleType = Enum.ScaleType.Slice
-    image.SliceCenter = sliceCenter
-    image.SliceScale = info.Size.X / info.Rect[3]
-    rect(image, r)
-    return image
-end
-
-local function label(parent, name, text, r, size, color, zIndex, options)
-    options = options or {}
-    local textLabel = new("TextLabel", name, parent, zIndex)
-    textLabel.FontFace = Config.Font
-    textLabel.Text = text
-    textLabel.TextSize = size
-    textLabel.TextColor3 = color
-    textLabel.TextXAlignment = options.alignX or Enum.TextXAlignment.Center
-    textLabel.TextWrapped = options.wrap == true
-    if options.fit then
-        textLabel.TextScaled = true
-        local limit = Instance.new("UITextSizeConstraint")
-        limit.MaxTextSize = size
-        limit.Parent = textLabel
-    end
-    rect(textLabel, r)
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Config.Stroke
-    stroke.Thickness = options.stroke or 3
-    stroke.LineJoinMode = Enum.LineJoinMode.Round
-    stroke.Enabled = (options.stroke or 3) > 0
-    stroke.Parent = textLabel
-    return textLabel
-end
-
-local function hitBox(parent, name, r, onActivate, zIndex)
-    local button = new("TextButton", name, parent, zIndex)
-    button.Text = ""
-    button.AutoButtonColor = false
-    rect(button, r)
-    button.Activated:Connect(onActivate)
-    return button
-end
-
--- coin + price, the pair centred on `centre` (hidden for "MAX": a maxed upgrade says so on its button)
-local function priceRow(parent, name, centre, text, color, coinPiece, textSize, zIndex)
-    local coin = Atlas.Pieces[coinPiece].Size
-    local row = new("Frame", name, parent, zIndex)
-    row.Visible = text ~= "MAX"
-    row.AnchorPoint = Vector2.new(0.5, 0.5)
-    row.Position = UDim2.fromOffset(centre.X, centre.Y)
-    row.AutomaticSize = Enum.AutomaticSize.X
-    row.Size = UDim2.fromOffset(0, math.max(coin.Y, textSize))
-    local layout = Instance.new("UIListLayout")
-    layout.FillDirection = Enum.FillDirection.Horizontal
-    layout.VerticalAlignment = Enum.VerticalAlignment.Center
-    layout.Padding = UDim.new(0, Config.Card.CoinGap)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Parent = row
-    local image = piece(row, "Coin", coinPiece, Vector2.zero, zIndex)
-    image.LayoutOrder = 1
-    local value = label(row, "Price", text, { 0, 0, 0, textSize }, textSize, color, zIndex, {
-        stroke = Config.Card.PriceStroke,
-    })
-    value.AutomaticSize = Enum.AutomaticSize.X
-    value.LayoutOrder = 2
-    return row
-end
-
--- buy button of an upgrade row: green PURCHASE art, or the grey button with the reason / MAX
-local function buyButton(parent, r, item, zIndex)
-    if item.enabled then
-        -- the word is part of the art: 9-slice corners ignore UIScale and would crop it on small screens
-        slicedPiece(parent, "Purchase", "PurchaseButton", r, Rect.new(12, 8, 100, 34), zIndex).ScaleType =
-            Enum.ScaleType.Stretch
-    else
-        slicedPiece(parent, "Disabled", "GreyButton", r, Rect.new(12, 8, 95, 34), zIndex)
-        local style, inset = Config.GreyButtonText, Config.GreyButtonText.Inset
-        label(
-            parent,
-            "Reason",
-            item.buttonText or "MAX",
-            { r[1] + inset[1], r[2] + inset[2], r[3] - inset[1] * 2, r[4] - inset[2] * 2 - 4 },
-            style.TextSize,
-            style.Color,
-            zIndex + 1,
-            { wrap = true, fit = true, stroke = 0 }
-        )
-    end
-    hitBox(parent, "Buy", r, item.onActivate, zIndex + 2)
-end
-
-local function dots(parent, layout, filled, zIndex)
-    for i = 1, layout.Count do
-        local size = Atlas.Pieces.DotOn.Size
-        local centre = layout.First + Vector2.new((i - 1) * layout.Step, 0)
-        piece(parent, "Dot" .. i, i <= filled and "DotOn" or "DotOff", centre - size / 2, zIndex)
-    end
-end
-
--- ---------- slot cards ----------
--- every card the same height, rows PlotConfig.Grid.Pitch apart
-local function cellRect(index)
-    local grid = Config.Grid
-    local row, column = (index - 1) // Config.Columns, Layout.Columns[(index - 1) % Config.Columns + 1]
-    return { column.X, grid.Top + row * grid.Pitch, column.Width, grid.Height }
-end
-
--- template frame (mockup card height), shrunk to fit a shorter card, centred at the top
-local function template(card, width, height, templateHeight)
-    local scale = math.min(1, height / templateHeight)
-    local frame = new("Frame", "Contents", card, Z + 4) -- above the card art (Sibling ZIndexBehavior)
-    frame.AnchorPoint = Vector2.new(0.5, 0)
-    frame.Position = UDim2.fromScale(0.5, 0)
-    frame.Size = UDim2.fromOffset(width / scale, templateHeight)
-    local uiScale = Instance.new("UIScale")
-    uiScale.Scale = scale
-    uiScale.Parent = frame
-    return frame, width / scale
-end
-
-function PlotComponent:_slotCard(parent, slot, r)
-    local cardStyle, colors = Config.Card, Config.Card.Colors
-    local card = new("Frame", string.format("Slot%02d", slot.number), parent, Z + 2)
-    rect(card, r)
-    local w, h = r[3], r[4]
-    slicedPiece(card, "Frame", "Card", { 0, 0, w, h }, cardStyle.SliceCenter, Z + 2)
-    local isNext = slot.state == "locked" and slot.onActivate ~= nil
-    if isNext then
-        local out = cardStyle.GlowOutset
-        slicedPiece(
-            card,
-            "Glow",
-            "Glow",
-            { -out[1], -out[2], w + out[1] + out[3], h + out[2] + out[4] },
-            cardStyle.GlowSliceCenter,
-            Z + 3
-        )
-    end
-    local number = cardStyle.Number
-    label(
-        card,
-        "Number",
-        tostring(slot.number),
-        { number.Centre.X - 20, number.Centre.Y - 20, 40, 40 },
-        number.TextSize,
-        colors.White,
-        Z + 4,
-        { stroke = number.Stroke }
-    )
-
-    if slot.state == "placed" then
-        local style = cardStyle.Placed
-        local contents, tw = template(card, w, h, style.Height)
-        if slot.image and slot.image ~= "" then
-            local portrait = new("ImageLabel", "Portrait", contents, Z + 4)
-            portrait.Image = slot.image
-            portrait.ScaleType = Enum.ScaleType.Fit
-            local p = style.Portrait
-            rect(portrait, { (tw - p[3]) / 2, p[2], p[3], p[4] })
-        elseif slot.characterId then
-            local p = style.Portrait
-            MenuArt.characterPortrait(contents, slot.characterId, { (tw - p[3]) / 2, p[2], p[3], p[4] }, Z + 4)
-        end
-        label(
-            contents,
-            "Name",
-            string.upper(slot.name or ""),
-            { 8, style.NameY - 16, tw - 16, 32 },
-            style.NameSize,
-            colors.White,
-            Z + 4,
-            { fit = true }
-        )
-        priceRow(
-            contents,
-            "Income",
-            Vector2.new(tw / 2, style.IncomeY),
-            slot.income or "",
-            colors.Green,
-            "CoinGreen",
-            style.IncomeSize,
-            Z + 4
-        )
-        local button = piece(
-            contents,
-            "Remove",
-            "RemoveButton",
-            Vector2.new((tw - Atlas.Pieces.RemoveButton.Size.X) / 2, style.Button[2]),
-            Z + 4
-        )
-        if slot.onRemove then
-            hitBox(button, "Hit", { 0, 0, button.Size.X.Offset, button.Size.Y.Offset }, slot.onRemove, Z + 6)
-        end
-    elseif slot.state == "empty" then
-        label(card, "Empty", "EMPTY", { 0, h / 2 - 20, w, 40 }, cardStyle.EmptySize, colors.Locked, Z + 4)
-    elseif isNext then
-        local style = cardStyle.Next
-        local contents, tw = template(card, w, h, style.Height)
-        local lock, nextLabel, unlock =
-            Atlas.Pieces.LockGold.Size, Atlas.Pieces.NextSlot.Size, Atlas.Pieces.UnlockButton.Size
-        piece(contents, "Lock", "LockGold", Vector2.new((tw - lock.X) / 2, style.Lock[2]), Z + 4)
-        piece(contents, "NextSlot", "NextSlot", Vector2.new((tw - nextLabel.X) / 2, style.Label[2]), Z + 4)
-        priceRow(
-            contents,
-            "Price",
-            Vector2.new(tw / 2, style.PriceY),
-            slot.price or "",
-            colors.Green,
-            "CoinGreen",
-            cardStyle.PriceSize,
-            Z + 4
-        )
-        piece(contents, "Unlock", "UnlockButton", Vector2.new((tw - unlock.X) / 2, style.Button[2]), Z + 4)
-        hitBox(card, "Hit", { 0, 0, w, h }, slot.onActivate, Z + 6)
-    else
-        local style = cardStyle.Locked
-        local tall = h >= 200
-        local priceY = tall and style.TallPriceY + (h - 219) / 2 or math.floor(h * style.ShortPriceRatio + 0.5)
-        local lockTop = priceY - (tall and style.LockAbovePrice or style.ShortLockAbovePrice)
-        local lock = Atlas.Pieces.LockGrey.Size
-        piece(card, "Lock", "LockGrey", Vector2.new((w - lock.X) / 2, lockTop), Z + 4)
-        priceRow(
-            card,
-            "Price",
-            Vector2.new(w / 2, priceY),
-            slot.price or "",
-            colors.Locked,
-            "CoinGrey",
-            cardStyle.PriceSize,
-            Z + 4
-        )
-    end
-    return card
+	if slot.state == "placed" then
+		if slot.image and slot.image ~= "" then
+			H.new("ImageLabel", { Name = "Portrait", BackgroundTransparency = 1, Image = slot.image, ScaleType = Enum.ScaleType.Fit,
+				Position = UDim2.fromOffset(20, 10), Size = UDim2.fromOffset(CARD_W - 40, 104), ZIndex = Z + 3 }, f)
+		elseif slot.characterId then
+			MenuArt.characterPortrait(f, slot.characterId, { 20, 10, CARD_W - 40, 104 }, Z + 3)
+		end
+		txt(f, "Name", string.upper(slot.name or ""), 8, 114, CARD_W - 16, 30, 24, Z + 5)
+		priceRow(f, "Income", CARD_W / 2, 154, slot.income or "", true, 24, Z + 5)
+		local remove = btn(f, "Remove", 22, CARD_H - 46, CARD_W - 44, 36, C.coral, "REMOVE", 22, Z + 5, slot.onRemove)
+		if not slot.onRemove then remove.Active = false end
+	elseif slot.state == "empty" then
+		-- a clean open slot: a plus and one word, nothing faint
+		H.art(f, "Plus", PLUS_ICON, CARD_W / 2, CARD_H / 2 - 22, 70, Z + 4)
+		txt(f, "Empty", "EMPTY", 10, CARD_H / 2 + 24, CARD_W - 20, 34, 28, Z + 4)
+	elseif isNext then
+		local o = f:FindFirstChild("Outline")
+		if o then o.Thickness = 5 end
+		f:SetAttribute("Glint", true)
+		H.beams(f, CARD_W / 2, 52, 150, Z + 2, WHITE, 0.3, 6)
+		local lock = H.art(f, "Lock", LOCK_ICON, CARD_W / 2, 50, 62, Z + 4)
+		if lock then lock:SetAttribute("Float", 50) end
+		H.gleam(txt(f, "NextSlot", "NEXT SLOT", 8, 92, CARD_W - 16, 34, 28, Z + 5))
+		priceBtn(f, "Unlock", 14, CARD_H - 60, CARD_W - 28, 48, C.leaf, slot.price, 26, Z + 5, slot.onActivate)
+	else
+		H.art(f, "Lock", LOCK_ICON, CARD_W / 2, CARD_H / 2 - 24, 66, Z + 4).ImageColor3 = hex("9A9A9A")   -- the gold lock, greyed: not next yet
+		-- the price in a white strip along the bottom, like the daily cards
+		local strip = H.rect(f, "PriceStrip", 12, CARD_H - 52, CARD_W - 24, 40, nil, Z + 4, WHITE)
+		H.ink(strip, 3)
+		priceRow(strip, "Price", (CARD_W - 24) / 2, 20, slot.price or "", true, 24, Z + 5)
+	end
+	return f
 end
 
 function PlotComponent:_incubatorRow(parent, i, item, y)
-    local style = Config.IncubatorRows
-    local w, h = Layout.IncubatorWidth, style.Height
-    local row = new("Frame", "Incubator" .. i, parent, Z + 2)
-    rect(row, { 0, y, w, h })
-    slicedPiece(row, "Frame", "RowBlank", { 0, 0, w, h }, style.RowSlice, Z + 2)
-    piece(row, "Egg", "Egg", Vector2.new(style.Egg[1], style.Egg[2]), Z + 3)
-    label(
-        row,
-        "Title",
-        item.title,
-        style.Title,
-        style.TitleSize,
-        Config.Card.Colors.White,
-        Z + 3,
-        { alignX = Enum.TextXAlignment.Left }
-    )
-    label(row, "Subtitle", item.subtitle, style.Subtitle, style.SubtitleSize, style.SubtitleColor, Z + 3, {
-        alignX = Enum.TextXAlignment.Left,
-        fit = true,
-        stroke = 2,
-    })
-    dots(row, style.Dots, math.floor((item.progress or 0) * style.Dots.Count + 0.5), Z + 3)
-    local priceStyle = Config.UpgradePrice
-    priceRow(
-        row,
-        "Price",
-        Vector2.new(w - style.PriceRight, style.PriceY),
-        item.price,
-        item.enabled and Config.Card.Colors.Green or priceStyle.Off,
-        item.enabled and "CoinGreenSmall" or "CoinGreySmall",
-        priceStyle.TextSize,
-        Z + 3
-    )
-    local b = style.Button
-    buyButton(row, { w - b[1], b[2], b[3], b[4] }, item, Z + 3)
+	local w = VIEW.W - PAD * 2 - 10
+	local h = 120
+	local f = card(parent, "Incubator" .. i, PAD, y, w, h, i % 2 == 1 and C.lilac or C.aqua, Z + 1)
+	local tile = H.rect(f, "EggTile", 14, 14, 92, 92, 16, Z + 3, WHITE)
+	H.ink(tile, 3.5)
+	local egg = icon(tile, "Egg", "Egg", 46, 46, 76, Z + 4)
+	if egg and item.enabled then egg:SetAttribute("Wiggle", 0) end
+	txt(f, "Title", item.title, 122, 10, w - 470, 36, 32, Z + 4, nil, Enum.TextXAlignment.Left)
+	txt(f, "Subtitle", item.subtitle, 122, 46, w - 470, 26, 20, Z + 4, WHITE, Enum.TextXAlignment.Left)
+	dots(f, 122, 76, math.floor((item.progress or 0) * 3 + 0.5), 3, Z + 4)
+	priceBtn(f, "Buy", w - 214, 34, 190, 54, C.leaf, item.price, 28, Z + 5, item.onActivate, not item.enabled,
+		(item.buttonText and #item.buttonText <= 8) and string.upper(item.buttonText) or (item.price == "MAX" and "MAX" or "LOCKED"))
+	return f
 end
 
 function PlotComponent:_buildContent()
-    local view = Layout.Viewport
-    local scroller = new("ScrollingFrame", "Content", self.canvas, Z + 1)
-    rect(scroller, view)
-    scroller.ScrollingDirection = Enum.ScrollingDirection.Y
-    scroller.ScrollBarThickness = 6
-    scroller.ScrollBarImageColor3 = Config.Card.Colors.Locked
-    scroller.CanvasSize = UDim2.new()
-    local height = 0
-    if self.model.tab == "upgrades" then
-        local style = Config.IncubatorRows
-        for i, item in self.model.incubators do
-            local y = 6 + (i - 1) * (style.Height + style.Gap)
-            self:_incubatorRow(scroller, i, item, y)
-            height = y + style.Height
-        end
-    else
-        for i, slot in self.model.slots do
-            local r = cellRect(i)
-            local cell = { r[1] - view[1], r[2] - view[2], r[3], r[4] } -- viewport coordinates
-            self:_slotCard(scroller, slot, cell)
-            height = math.max(height, cell[2] + cell[4])
-        end
-    end
-    height += Config.ScrollBottomPad
-    scroller.CanvasSize = UDim2.fromOffset(0, height)
-    scroller.CanvasPosition = Vector2.new(0, math.clamp(self.model.scrollY or 0, 0, math.max(0, height - view[4])))
-    scroller:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
-        self.model.onScroll(scroller.CanvasPosition.Y)
-    end)
+	local model = self.model
+	local well = H.rect(self.canvas, "ContentWell", VIEW.X, VIEW.Y, VIEW.W, VIEW.H, 18, Z, hex("EFEFEF"))
+	H.ink(well, 4)
+	local scroller = H.new("ScrollingFrame", { Name = "Content", BackgroundTransparency = 1, Position = UDim2.fromOffset(VIEW.X, VIEW.Y), Size = UDim2.fromOffset(VIEW.W, VIEW.H),
+		ScrollingDirection = Enum.ScrollingDirection.Y, ScrollBarThickness = 8, ScrollBarImageColor3 = hex("2E2A26"), CanvasSize = UDim2.new(), ZIndex = Z + 1 }, self.canvas)
+	local height = 0
+	if model.tab == "upgrades" then
+		for i, item in model.incubators do
+			local y = PAD + (i - 1) * (120 + GAP)
+			self:_incubatorRow(scroller, i, item, y)
+			height = y + 120 + PAD + 6
+		end
+	else
+		local x0 = (VIEW.W - 10 - (COLS * CARD_W + (COLS - 1) * GAP)) / 2
+		for i, slot in model.slots do
+			local column, row = (i - 1) % COLS, (i - 1) // COLS
+			local y = PAD + row * (CARD_H + GAP)
+			self:_slotCard(scroller, slot, x0 + column * (CARD_W + GAP), y)
+			height = math.max(height, y + CARD_H + PAD + 6)
+		end
+	end
+	scroller.CanvasSize = UDim2.fromOffset(0, height)
+	scroller.CanvasPosition = Vector2.new(0, math.clamp(model.scrollY or 0, 0, math.max(0, height - VIEW.H)))
+	scroller:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+		model.onScroll(scroller.CanvasPosition.Y)
+	end)
 end
 
 function PlotComponent:_buildTabs()
-    local tabs = Layout.Tabs
-    if self.model.tab == "upgrades" then
-        rect(piece(self.canvas, "SlotsTabArt", "TabSlotsOff", Vector2.zero, Z + 1), tabs.Slots)
-        rect(piece(self.canvas, "UpgradesTabArt", "TabUpgradesOn", Vector2.zero, Z + 1), tabs.Upgrades)
-    end
-    hitBox(self.canvas, "SlotsTab", tabs.Slots, function()
-        self.model.onTab("slots")
-    end, Z + 3)
-    hitBox(self.canvas, "UpgradesTab", tabs.Upgrades, function()
-        self.model.onTab("upgrades")
-    end, Z + 3)
+	local tabs = {
+		{ key = "slots", name = "SlotsTab", text = "CHARACTER SLOTS", pal = C.azure, w = 450 },
+		{ key = "upgrades", name = "UpgradesTab", text = "UPGRADES", pal = C.lilac, w = LEFT.W - 450 - 12 },
+	}
+	local x = LEFT.X
+	for _, t in tabs do
+		local b = H.button(self.canvas, t.name, x, TAB_Y, t.w, TAB_H, 14, t.pal, Z + 3, { lip = 6, studs = 0.7 })
+		if self.model.tab == t.key then
+			local o = b:FindFirstChild("Outline")
+			if o then o.Color, o.Thickness = GOLD, 5 end
+			b.Size = UDim2.fromOffset(t.w + 6, TAB_H + 6)
+		end
+		txt(b, "Label", t.text, 12, 4, t.w - 24, TAB_H - 14, 32, b.ZIndex + 3)
+		b.Activated:Connect(function() self.model.onTab(t.key) end)
+		x += t.w + 12
+	end
+end
+
+function PlotComponent:_buildStats()
+	local stats = self.model.stats or {}
+	local looks = {
+		{ pal = C.leaf, art = function(f) picture(f, "Icon", COINS_ICON, 50, 46, 70, Z + 4):SetAttribute("Float", 46) end },
+		{ pal = C.mango, art = function(f) picture(f, "Icon", TEMPLE_ICON, 50, 44, 74, Z + 4):SetAttribute("Float", 44) end },
+		{ pal = C.bubblegum, art = function(f) icon(f, "Icon", "Egg", 50, 46, 66, Z + 4):SetAttribute("Wiggle", 0) end },
+	}
+	local gap = 14
+	local w = (CW - 88 - gap * 2) / 3
+	for i = 1, 3 do
+		local stat, look = stats[i], looks[i]
+		if stat then
+			local f = card(self.canvas, "Stat" .. i, 44 + (i - 1) * (w + gap), 64, w, 94, look.pal, Z, true)
+			look.art(f)
+			txt(f, "Label", stat[1], 100, 10, w - 116, 26, 22, Z + 5, nil, Enum.TextXAlignment.Left)
+			H.gleam(txt(f, "Value", stat[2], 100, 36, w - 116, 48, 44, Z + 5, nil, Enum.TextXAlignment.Left))
+		end
+	end
 end
 
 function PlotComponent:_buildRight()
-    local priceStyle = Config.UpgradePrice
-    for i, rowConfig in Layout.UpgradeRows do
-        local item = self.model.upgrades[i]
-        if item then
-            local row = new("Frame", rowConfig.Name, self.canvas, Z + 1)
-            rect(row, rowConfig.Row)
-            local origin = Vector2.new(rowConfig.Row[1], rowConfig.Row[2])
-            priceRow(
-                row,
-                "Price",
-                rowConfig.Price - origin,
-                item.price,
-                item.enabled and Config.Card.Colors.Green or priceStyle.Off,
-                item.enabled and "CoinGreenSmall" or "CoinGreySmall",
-                priceStyle.TextSize,
-                Z + 2
-            )
-            local b = rowConfig.Button
-            buyButton(row, { b[1] - origin.X, b[2] - origin.Y, b[3], b[4] }, item, Z + 2)
-        end
-    end
+	local looks = {
+		function(tile) picture(tile, "Icon", TEMPLE_ICON, 44, 42, 76, Z + 4) end,
+		function(tile) H.art(tile, "Icon", BOLT_ICON, 44, 44, 70, Z + 4) end,
+		function(tile) icon(tile, "Icon", "Egg", 44, 44, 70, Z + 4) end,
+	}
+	local h, gap = 130, 12
+	for i, item in self.model.upgrades or {} do
+		if i > 3 then break end
+		local y = TAB_Y + (i - 1) * (h + gap)
+		local name = item.name or (Config.UpgradeRows[i] and Config.UpgradeRows[i].Name) or ("Upgrade" .. i)
+		local f = card(self.canvas, name, RIGHT.X, y, RIGHT.W, h, ROW_COLORS[i], Z)
+		local tile = H.rect(f, "IconTile", 12, 21, 88, 88, 16, Z + 3, WHITE)
+		H.ink(tile, 3.5)
+		local art = looks[i]
+		if art then art(tile) end
+		txt(f, "Title", item.title, 112, 10, RIGHT.W - 124, 34, 30, Z + 4, nil, Enum.TextXAlignment.Left)
+		-- one calm line of detail (or the reason it is locked), the price on the button
+		local detail = (not item.enabled and item.buttonText and #item.buttonText > 8) and item.buttonText or item.subtitle
+		txt(f, "Subtitle", detail, 112, 50, RIGHT.W - 124 - 178, 64, 20, Z + 4, WHITE, Enum.TextXAlignment.Left, true)
+		priceBtn(f, "Buy", RIGHT.W - 170, 62, 156, 52, C.leaf, item.price, 26, Z + 5, item.onActivate, not item.enabled,
+			(item.buttonText and #item.buttonText <= 8) and string.upper(item.buttonText) or (item.price == "MAX" and "MAX" or "LOCKED"))
+	end
+
+	-- the next milestone: press it to buy the next slot (or the temple upgrade)
+	local model = self.model.milestone or {}
+	local my = TAB_Y + 3 * (h + gap)
+	local mh = CH - 44 - my
+	local f = card(self.canvas, "Milestone", RIGHT.X, my, RIGHT.W, mh, C.gold, Z, true)
+	H.beams(f, 70, mh / 2, 170, Z + 2, WHITE, 0.3, 6)
+	picture(f, "Temple", TEMPLE_ICON, 70, mh / 2, 104, Z + 3):SetAttribute("Float", mh / 2)
+	H.gleam(txt(f, "Title", "NEXT MILESTONE", 132, 12, RIGHT.W - 148, 36, 32, Z + 4, nil, Enum.TextXAlignment.Left))
+	txt(f, "Text", "More space for your collection!", 132, 48, RIGHT.W - 148, 24, 20, Z + 4, nil, Enum.TextXAlignment.Left)
+	dots(f, 132, mh - 50, model.dots or 0, 5, Z + 4)
+	if model.onActivate then
+		f:SetAttribute("Glint", true)
+		local hit = H.new("TextButton", { Name = "Hit", BackgroundTransparency = 1, Text = "", AutoButtonColor = false, Size = UDim2.fromScale(1, 1), ZIndex = Z + 8 }, f)
+		hit.MouseEnter:Connect(function() UISound.Play("Hover") end)
+		hit.Activated:Connect(function()
+			UISound.Play("Click")
+			model.onActivate()
+		end)
+	end
 end
 
 function PlotComponent:_buildFooter()
-    local footer = Config.Footer
-    label(
-        self.canvas,
-        "SlotsText",
-        self.model.slotsText,
-        Layout.FooterText,
-        footer.TextSize,
-        Config.Card.Colors.White,
-        Z + 1,
-        {
-            alignX = Enum.TextXAlignment.Left,
-            fit = true,
-        }
-    )
-    local ratio = math.clamp(self.model.slotsProgress or 0, 0, 1)
-    if ratio > 0 then
-        local bar = Layout.FooterBar
-        local width = ratio >= 1 and bar[3] or math.max(Layout.FooterMinFill, math.floor(bar[3] * ratio + 0.5))
-        slicedPiece(self.canvas, "SlotsFill", "BarFill", { bar[1], bar[2], width, bar[4] }, footer.BarSlice, Z + 1)
-    end
-    local milestone, model = Layout.Milestone, self.model.milestone
-    local frame = new("Frame", "Milestone", self.canvas, Z + 1)
-    rect(frame, milestone.Rect)
-    local origin = Vector2.new(milestone.Rect[1], milestone.Rect[2])
-    dots(frame, {
-        First = milestone.Dots.First - origin,
-        Step = milestone.Dots.Step,
-        Count = milestone.Dots.Count,
-    }, model.dots or 0, Z + 2)
-    if model.onActivate then
-        hitBox(frame, "Hit", { 0, 0, milestone.Rect[3], milestone.Rect[4] }, model.onActivate, Z + 3)
-    end
+	local track = H.rect(self.canvas, "SlotsBar", LEFT.X, FOOT_Y, LEFT.W, 40, 12, Z + 1, WHITE)
+	H.ink(track, 4)
+	local ratio = math.clamp(self.model.slotsProgress or 0, 0, 1)
+	if ratio > 0 then
+		local w = ratio >= 1 and LEFT.W or math.max(40, math.floor(LEFT.W * ratio + 0.5))
+		local fill = H.rect(track, "SlotsFill", 0, 0, w, 40, 12, Z + 2, WHITE)
+		H.grad(fill, C.azure[1], C.azure[2])
+		H.shine(fill, 12, Z + 2)
+	end
+	H.gleam(txt(track, "SlotsText", self.model.slotsText or "", 12, 2, LEFT.W - 24, 36, 28, Z + 3))
 end
 
+---------------------------------------------------------------- the window
 function PlotComponent.new(panel, layer, model)
-    local self = setmetatable({ model = model }, PlotComponent)
-    -- the panel's own skin and Close button are not part of this art (closing: click outside / the Plot button)
-    for _, name in { "CleanSkin", "CleanBase", "FigmaWindow", "Close" } do
-        local child = panel:FindFirstChild(name)
-        if child and child:IsA("GuiObject") then
-            child.Visible = false
-        end
-    end
-    local canvas = new("Frame", "PlotCanvas", layer, Z)
-    canvas.AnchorPoint = Vector2.new(0.5, 0.5)
-    canvas.Position = UDim2.fromScale(0.5, 0.5)
-    canvas.Size = UDim2.fromOffset(CANVAS.X, CANVAS.Y)
-    local scale = Instance.new("UIScale")
-    scale.Parent = canvas
-    local function fit()
-        scale.Scale = math.max(panel.Size.X.Offset, 1) / CANVAS.X
-    end
-    fit()
-    self.sizeConnection = panel:GetPropertyChangedSignal("Size"):Connect(fit)
-    self.canvas = canvas
+	local self = setmetatable({ model = model }, PlotComponent)
+	for _, name in { "CleanSkin", "CleanBase", "FigmaWindow" } do
+		local child = panel:FindFirstChild(name)
+		if child and child:IsA("GuiObject") then child.Visible = false end
+	end
+	-- the panel's own Close button becomes an invisible hit-box over the drawn X
+	local closeButton = panel:FindFirstChild("Close")
+	if closeButton then
+		closeButton.Visible = true
+		closeButton.AnchorPoint = Vector2.zero
+		closeButton.Position = UDim2.fromScale(CLOSE[1] / CW, CLOSE[2] / CH)
+		closeButton.Size = UDim2.fromScale(CLOSE[3] / CW, CLOSE[4] / CH)
+		closeButton.BackgroundTransparency = 1
+		closeButton.ZIndex = 30
+		for _, d in closeButton:GetDescendants() do
+			if d:IsA("GuiObject") then d.Visible = false elseif d:IsA("UIStroke") then d.Enabled = false end
+		end
+		if closeButton:IsA("ImageButton") then closeButton.ImageTransparency = 1
+		elseif closeButton:IsA("TextButton") then closeButton.TextTransparency = 1 end
+	end
 
-    local background = new("ImageLabel", "Background", canvas, Z)
-    background.Image = Config.Background
-    background.Size = UDim2.fromScale(1, 1)
-    local stats = Config.Stats
-    for i, value in stats.Values do
-        local stat = model.stats[i]
-        if stat then
-            label(canvas, "Stat" .. i, stat[2], Layout.Stats[i], stats.TextSize, value.Color, Z + 1, {
-                alignX = Enum.TextXAlignment.Left,
-                fit = true,
-                stroke = stats.StrokeThickness,
-            })
-        end
-    end
-    self:_buildTabs()
-    self:_buildContent()
-    self:_buildRight()
-    self:_buildFooter()
-    canvas.Parent = layer
-    return self
+	local canvas = H.new("Frame", { Name = "PlotCanvas", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(CW, CH), ZIndex = Z }, nil)
+	local scale = H.new("UIScale", {}, canvas)
+	local function fit() scale.Scale = math.max(panel.Size.X.Offset, 1) / CW end
+	fit()
+	self.sizeConnection = panel:GetPropertyChangedSignal("Size"):Connect(fit)
+	self.canvas = canvas
+
+	-- the sheet, the title on the top border, the temple over the corner, the X over the other corner
+	H.shadow(canvas, "Sheet", 0, 0, CW, CH, 26, Z - 2)
+	local sheet = H.rect(canvas, "Background", 0, 0, CW, CH, 26, Z - 1, WHITE)
+	H.ink(sheet, 5)
+	H.studs(sheet, Vector2.new(50, 46), 0.8, 26, Z - 1)
+	H.beams(canvas, 52, 18, 190, Z + 1, hex("FF5A6E"), 0.35, 6)
+	picture(canvas, "HeaderIcon", TEMPLE_ICON, 52, 14, 120, Z + 2):SetAttribute("Float", 14)
+	local title = H.text(canvas, "HeaderTitle", "MY PLOT", CW / 2, 6, 72, Z + 4, WHITE)
+	H.new("UIGradient", { Rotation = 90, Color = ColorSequence.new(WHITE, hex("FFB0BA")) }, title)
+	H.gleam(title)
+	local x = H.rect(canvas, "CloseArt", CLOSE[1], CLOSE[2], CLOSE[3], CLOSE[4], 14, Z + 6, WHITE)
+	H.grad(x, C.coral[1], C.coral[2])
+	H.ink(x, 4)
+	txt(x, "X", "X", 0, 2, CLOSE[3], CLOSE[4] - 6, 54, Z + 7)
+
+	self:_buildStats()
+	self:_buildTabs()
+	self:_buildContent()
+	self:_buildRight()
+	self:_buildFooter()
+
+	optOut(canvas)
+	M.animate(canvas, { sound = function(kind) UISound.Play(kind == "hover" and "Hover" or "Click") end })
+	canvas.Parent = layer
+	return self
 end
 
 function PlotComponent:Destroy()
-    self.sizeConnection:Disconnect()
-    self.canvas:Destroy()
+	self.sizeConnection:Disconnect()
+	self.canvas:Destroy()
 end
 
 return PlotComponent

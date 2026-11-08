@@ -70,6 +70,42 @@ local function attachBanner(player, character)
         ColorSequenceKeypoint.new(0.59, Color3.fromRGB(255, 45, 61)),
         ColorSequenceKeypoint.new(1, Color3.fromRGB(235, 24, 43)),
     })
+    -- 2026-11-08: OWNER glow (user asked for glowing text). Two soft gold halo copies of the text sit behind the
+    -- title and breathe; the title's outline turns warm gold so the light reads as coming from the letters.
+    if role.Text == "OWNER" then
+        banner.Size = UDim2.fromOffset(260, 64)
+        banner.Brightness = 1.3
+        banner.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        titleLabel.ZIndex = 3
+        titleLabel.TextSize = role.Size + 3
+        outline.Color = Color3.fromRGB(255, 196, 64)
+        outline.Thickness = 2.2
+        local GLOW = Color3.fromRGB(255, 214, 92)
+        for i, layer in { { 4, 0.78, 0.82 } } do
+            local halo = Instance.new("TextLabel")
+            halo.Name = "OwnerGlow" .. i
+            halo.BackgroundTransparency = 1
+            halo.Size = UDim2.fromScale(1, 1)
+            halo.Text = titleLabel.Text
+            halo.Font = titleLabel.Font
+            halo.TextSize = titleLabel.TextSize
+            halo.TextColor3 = GLOW
+            halo.TextTransparency = layer[3]
+            halo.ZIndex = 3 - i
+            local haloStroke = Instance.new("UIStroke")
+            haloStroke.Color = GLOW
+            haloStroke.Thickness = layer[1]
+            haloStroke.Transparency = layer[2]
+            haloStroke.LineJoinMode = Enum.LineJoinMode.Round
+            haloStroke.Parent = halo
+            halo.Parent = banner
+            TweenService:Create(
+                haloStroke,
+                TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+                { Thickness = layer[1] * 1.25, Transparency = math.min(layer[2] + 0.08, 0.92) }
+            ):Play()
+        end
+    end
     gradient.Rotation = 18
     gradient.Offset = Vector2.new(-1, 0)
     gradient.Parent = titleLabel

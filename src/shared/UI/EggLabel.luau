@@ -24,12 +24,12 @@ local Config = {
     PlaytestFree = false, -- hint says "Collect · FREE"; no charges are made either way
     MaxDistance = 110, -- labels hide and pause beyond this
     NearFallbackDistance = 10, -- used only if an egg has no ProximityPrompt
-    GuiSize = Vector2.new(210, 138),
+    GuiSize = Vector2.new(210, 150),
     HeightAboveEgg = 0.8, -- studs between the egg's top and the label's bottom
     Font = Enum.Font.FredokaOne, -- swap to the exact font from your mockups if you have it
     Outline = rgb(11, 10, 14),
-    PriceFree = rgb(255, 255, 0),
-    PriceOk = rgb(20, 255, 0),
+    PriceFree = rgb(255, 184, 28),
+    PriceOk = rgb(70, 214, 64),
     PriceTooMuch = rgb(255, 16, 16),
     CurrencyStats = { "Money", "Cash", "Coins" }, -- leaderstats value used for green/red price
     CatalogFields = {
@@ -75,7 +75,24 @@ end
 local function textStroke(parent, thickness)
     return make(
         "UIStroke",
-        { Color = Config.Outline, Thickness = thickness, LineJoinMode = Enum.LineJoinMode.Round },
+        { Color = Color3.new(0, 0, 0), Thickness = thickness, LineJoinMode = Enum.LineJoinMode.Bevel },
+        parent
+    )
+end
+-- Folk Stud plate colours per rarity: { gradient top, gradient bottom } (same as CharacterInfo.Style.Plate)
+local PLATE = {
+    Common = { rgb(150, 156, 172), rgb(64, 70, 86) },
+    Uncommon = { rgb(67, 220, 78), rgb(11, 122, 27) },
+    Rare = { rgb(59, 120, 255), rgb(11, 42, 156) },
+    Epic = { rgb(168, 102, 255), rgb(74, 21, 166) },
+    Legendary = { rgb(255, 214, 72), rgb(214, 132, 0) },
+}
+local STUD = "rbxassetid://3014551673"
+local INK = rgb(36, 29, 53)
+local function ink(parent, thickness)
+    return make(
+        "UIStroke",
+        { Color = Color3.new(0, 0, 0), Thickness = thickness, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
         parent
     )
 end
@@ -262,6 +279,7 @@ local function build(self)
         ResetOnSpawn = false,
         Active = true,
         Adornee = self.adornee,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     }, nil)
     -- Root starts transparent and 8 px low; _appear() fades/slides it into place.
     local root = make("CanvasGroup", {
@@ -273,14 +291,72 @@ local function build(self)
         GroupTransparency = 1,
     }, gui)
     self.fit = make("UIScale", { Name = "Fit", Scale = 0.82 }, root)
+    -- 4 px headroom so the plate's top outline is not clipped by the CanvasGroup
+    make("UIPadding", { PaddingTop = UDim.new(0, 4) }, root)
     -- the tag behind the text: the MenuArt egg tag piece for this rarity (GPT Image art, assets/ui/menus3),
     -- stretched to the three text rows (its pointer stays at the bottom centre)
+    -- Folk Stud tag: burning rarity slab with studs, a thick black outline, a hard shadow and a pointer
+    -- under it, plus a white price strip like the character plates
     do
-        local MenuArt = require(ReplicatedStorage:WaitForChild("MenuArt"):WaitForChild("MenuArt"))
-        local tagName = "Tag" .. self.rarity
-        local ok = pcall(MenuArt.size, tagName)
-        local tag = MenuArt.piece(root, "Plate", ok and tagName or "TagCommon", { 4, -4, guiWidth - 8, 92 }, 1, 14)
-        tag.ResampleMode = Enum.ResamplerMode.Default
+        local colours = PLATE[self.rarity] or PLATE.Common
+        local plateH = 104
+        local shadow = make("Frame", {
+            Name = "Shadow",
+            Position = UDim2.fromOffset(8, 6),
+            Size = UDim2.fromOffset(guiWidth - 16, plateH),
+            BackgroundColor3 = Color3.new(0, 0, 0),
+            BackgroundTransparency = 0.45,
+            ZIndex = 1,
+        }, root)
+        corner(14, shadow)
+        local pointer = make("Frame", {
+            Name = "Pointer",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromOffset(guiWidth / 2, plateH - 1),
+            Size = UDim2.fromOffset(18, 18),
+            Rotation = 45,
+            BackgroundColor3 = colours[2],
+            ZIndex = 1,
+        }, root)
+        ink(pointer, 3.5)
+        local plate = make("Frame", {
+            Name = "Plate",
+            Position = UDim2.fromOffset(8, 0),
+            Size = UDim2.fromOffset(guiWidth - 16, plateH),
+            BackgroundColor3 = Color3.new(1, 1, 1),
+            ClipsDescendants = true,
+            ZIndex = 2,
+        }, root)
+        corner(14, plate)
+        ink(plate, 3.5)
+        make("UIGradient", { Rotation = 90, Color = ColorSequence.new(colours[1], colours[2]) }, plate)
+        make("ImageLabel", {
+            Name = "Studs",
+            Size = UDim2.fromScale(1, 1),
+            BackgroundTransparency = 1,
+            Image = STUD,
+            ScaleType = Enum.ScaleType.Tile,
+            TileSize = UDim2.fromOffset(30, 30),
+            ImageTransparency = 0.72,
+        }, plate)
+        local shine = make("Frame", {
+            Name = "Shine",
+            Position = UDim2.fromOffset(10, 6),
+            Size = UDim2.new(1, -20, 0, 4),
+            BackgroundColor3 = Color3.new(1, 1, 1),
+            BackgroundTransparency = 0.7,
+        }, plate)
+        corner(2, shine)
+        local strip = make("Frame", {
+            Name = "PriceStrip",
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.fromOffset(guiWidth / 2, 66),
+            Size = UDim2.fromOffset(guiWidth - 40, 28),
+            BackgroundColor3 = Color3.new(1, 1, 1),
+            ZIndex = 3,
+        }, root)
+        corner(9, strip)
+        ink(strip, 2.5)
     end
 
     -- One text row: a holder Frame at offsetY (height px) containing a scaled "Fill" TextLabel.
@@ -310,84 +386,80 @@ local function build(self)
                 { MaxTextSize = maxTextSize, MinTextSize = math.floor(maxTextSize * 0.6) },
                 textLabel
             )
-            textStroke(textLabel, 1.6)
+            textStroke(textLabel, 2.8)
             return textLabel
         end
-        -- A single clean outline avoids the heavy doubled shadow.   -- solid black drop shadow, like the mockups
+        holder.ZIndex = 4
         return makeLabel("Fill", color, Vector2.zero, 2), holder
     end
-    textRow("Name", 0, 30, 26, Color3.new(1, 1, 1), self.name)
-    local rarityLabel = textRow("Rarity", 32, 22, 20, Color3.new(1, 1, 1), string.upper(self.rarity))
-    do -- glowing rarity: rarity-coloured outline that pulses + a light shimmer through the letters
-        local rarityColor = Config.Rarities[self.rarity] or Config.Rarities.Common
-        local rarityStroke = rarityLabel:FindFirstChildOfClass("UIStroke")
-        if rarityStroke then
-            -- dark outline: readable on every tag colour (the glow copy below keeps the rarity colour)
-            rarityStroke.Color = Config.Outline
-            rarityStroke.Thickness = 2.2
-        end
-        -- Blurred-looking copy behind the text (thick, translucent stroke) that pulses forever.
-        local glow = rarityLabel:Clone()
-        glow.Name = "Glow"
-        glow.ZIndex = 1
-        glow.TextColor3 = rarityColor
-        glow.TextTransparency = 0.35
-        local glowStroke = glow:FindFirstChildOfClass("UIStroke")
-        if glowStroke then
-            glowStroke.Color = rarityColor
-            glowStroke.Thickness = 6
-            glowStroke.Transparency = 0.55
-        end
-        glow.Parent = rarityLabel.Parent
+    textRow("Name", 6, 28, 26, Color3.new(1, 1, 1), self.name)
+    do -- rarity: a white sticker pill with the word in the burning rarity colour, wiggling a little
+        local rarityColor = (PLATE[self.rarity] or PLATE.Common)[1]
+        local pill = make("Frame", {
+            Name = "Rarity",
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.fromOffset(guiWidth / 2, 38),
+            Size = UDim2.fromOffset(0, 20),
+            AutomaticSize = Enum.AutomaticSize.X,
+            BackgroundColor3 = Color3.new(1, 1, 1),
+            ZIndex = 4,
+        }, root)
+        corner(10, pill)
+        ink(pill, 2.5)
+        make("UIPadding", { PaddingLeft = UDim.new(0, 9), PaddingRight = UDim.new(0, 9) }, pill)
+        local word = make("TextLabel", {
+            Name = "Fill",
+            Size = UDim2.fromScale(0, 1),
+            AutomaticSize = Enum.AutomaticSize.X,
+            BackgroundTransparency = 1,
+            Font = Config.Font,
+            Text = string.upper(self.rarity),
+            TextColor3 = rarityColor,
+            TextSize = 16,
+            ZIndex = 5,
+        }, pill)
+        textStroke(word, 2)
+        pill.Rotation = -3
         TweenService:Create(
-            glow,
-            TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-            { TextTransparency = 0.75 }
+            pill,
+            TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+            { Rotation = 3 }
         ):Play()
-        if glowStroke then
+    end
+    -- 2026-11-08: mutated eggs get a moving mutation tag over the top edge of the plate (ReplicatedStorage.MutationStyle)
+    local mutation = self.egg and self.egg:GetAttribute("Mutation")
+    if mutation then
+        local okMS, MS = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("MutationStyle", 5))
+        if okMS and MS then
+            -- top-right corner of the plate (the label is a CanvasGroup, so it must stay inside its bounds)
+            local tag = MS.Badge(root, mutation, { size = 14, z = 6 })
+            tag.AnchorPoint = Vector2.new(1, 0)
+            tag.Position = UDim2.fromOffset(guiWidth - 4, 2)
+            tag.Rotation = 5
             TweenService:Create(
-                glowStroke,
+                tag,
                 TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                { Transparency = 0.9, Thickness = 9 }
+                { Rotation = 9 }
             ):Play()
         end
-        local shimmerGradient = make("UIGradient", {
-            Rotation = 20,
-            Offset = Vector2.new(-1, 0),
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
-                ColorSequenceKeypoint.new(0.42, Color3.new(1, 1, 1)),
-                ColorSequenceKeypoint.new(0.5, rarityColor:Lerp(Color3.new(1, 1, 1), 0.5)),
-                ColorSequenceKeypoint.new(0.58, Color3.new(1, 1, 1)),
-                ColorSequenceKeypoint.new(1, Color3.new(1, 1, 1)),
-            }),
-        }, rarityLabel)
-        -- Shimmer sweep every 2.4 s; the loop ends once the label is destroyed (Parent becomes nil).
-        task.spawn(function()
-            while rarityLabel.Parent do
-                shimmerGradient.Offset = Vector2.new(-1, 0)
-                TweenService
-                    :Create(shimmerGradient, TweenInfo.new(1.1, Enum.EasingStyle.Sine), { Offset = Vector2.new(1, 0) })
-                    :Play()
-                task.wait(2.4)
-            end
-        end)
     end
     local priceHolder
-    self.price, priceHolder = textRow("Price", 56, 26, 24, Config.PriceOk, EggLabel.FormatPrice(self.priceValue))
+    self.price, priceHolder = textRow("Price", 67, 26, 23, Config.PriceOk, EggLabel.FormatPrice(self.priceValue))
     self.emph = make("UIScale", { Name = "Emph" }, priceHolder)
     self:_updatePrice()
     -- Collect hint (custom ProximityPrompt UI, sits under the price)
     local hint = make("Frame", {
         Name = "Hint",
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 88),
+        Position = UDim2.new(0.5, 0, 0, 116),
         Size = UDim2.fromOffset(0, 28),
         AutomaticSize = Enum.AutomaticSize.X,
-        BackgroundColor3 = Config.Outline,
-        BackgroundTransparency = 0.15,
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BackgroundTransparency = 0,
+        ZIndex = 5,
     }, root)
     corner(14, hint)
+    ink(hint, 2.5)
     make("UIPadding", { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 10) }, hint)
     make("UIListLayout", {
         FillDirection = Enum.FillDirection.Horizontal,
@@ -399,13 +471,14 @@ local function build(self)
         Name = "Key",
         LayoutOrder = 1,
         Size = UDim2.fromOffset(22, 22),
-        BackgroundColor3 = rgb(243, 238, 232),
+        BackgroundColor3 = rgb(255, 196, 61),
         Font = Config.Font,
         Text = "E",
-        TextColor3 = Config.Outline,
-        TextSize = 14,
+        TextColor3 = INK,
+        TextSize = 15,
     }, hint)
-    self.keyCorner = corner(5, self.key)
+    self.keyCorner = corner(6, self.key)
+    ink(self.key, 2)
     self.verb = make("TextLabel", {
         Name = "Verb",
         LayoutOrder = 2,
@@ -414,8 +487,8 @@ local function build(self)
         BackgroundTransparency = 1,
         Font = Config.Font,
         Text = "Collect",
-        TextColor3 = rgb(243, 238, 232),
-        TextSize = 15,
+        TextColor3 = INK,
+        TextSize = 16,
     }, hint)
     hint.Visible = false
     self.hint = hint
@@ -424,7 +497,7 @@ local function build(self)
     self.tap = make("TextButton", {
         Name = "TapTarget",
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 84),
+        Position = UDim2.new(0.5, 0, 0, 112),
         Size = UDim2.fromOffset(190, 36),
         BackgroundTransparency = 1,
         Text = "",
@@ -521,14 +594,14 @@ function EggLabel:SetNear(on, promptInput)
             self.keyCorner.CornerRadius = UDim.new(1, 0)
             self.verb.Text = "Collect" .. freeSuffix
         elseif kind == "touch" then
-            self.key.Text, self.key.BackgroundColor3 = "", rgb(243, 238, 232)
+            self.key.Text, self.key.BackgroundColor3 = "", rgb(255, 196, 61)
             self.keyCorner.CornerRadius = UDim.new(1, 0)
             self.verb.Text = "Tap to collect" .. freeSuffix
         else
             local keyCode = prompt and prompt.KeyboardKeyCode or Enum.KeyCode.E
             local keyString = UserInputService:GetStringForKeyCode(keyCode)
             self.key.Text = (keyString ~= nil and keyString ~= "") and keyString:upper() or keyCode.Name
-            self.key.BackgroundColor3, self.key.TextColor3 = rgb(243, 238, 232), Config.Outline
+            self.key.BackgroundColor3, self.key.TextColor3 = rgb(255, 196, 61), INK
             self.keyCorner.CornerRadius = UDim.new(0, 5)
             self.verb.Text = "Collect" .. freeSuffix
         end

@@ -1,7 +1,9 @@
 --[[ JoinArrival (LocalScript, StarterPlayerScripts)
-	Arrival cinematic that plays once per join. Originally sky -> plot -> behind the character; the current
-	path (buildPath, "Hero" arrival) starts close on YOUR character's face and orbits round to the normal
-	camera behind you, then blends into the default camera (handoff).
+	Arrival cinematic that plays once per join. Since 2026-11-08 it is the "Sky Drop" (GTA-style switch):
+	the camera starts high above the map looking straight down at YOUR character, drops in two quick jumps
+	(motion blur + FOV punch each time), then swoops round into the normal camera behind you.
+	The old "Hero" face-orbit version: ServerStorage._ARCHIVE.Intro_BeforeSkyDrop_2026-11-08.
+	The loading screen is replaced by ReplicatedFirst.SkyStart (a plain sky cover, same handshake).
 	The server (PlotManager) already assigns the plot and spawns the character at plot.PlotSpawn;
 	this script only waits for that, then animates the camera locally.
 	While it plays: controls are sunk (ContextActionService "JoinArrivalLock"), ProximityPrompts and the
@@ -81,36 +83,30 @@ coverFrame.BackgroundColor3 = SKY_COLOR
 coverFrame.BackgroundTransparency = 1
 coverFrame.Parent = arrivalGui
 
--- the blue menu-art button (ReplicatedStorage.MenuArt piece ButtonBlue); the face dips on press
-local skipButton = Instance.new("TextButton")
-skipButton.Name = "Skip"
-skipButton.AnchorPoint = Vector2.new(1, 1)
-skipButton.Position = UDim2.new(1, -24, 1, -24)
-skipButton.Size = UDim2.fromOffset(170, 62)
-skipButton.BackgroundTransparency = 1
-skipButton.BorderSizePixel = 0
-skipButton.Text = ""
-skipButton.AutoButtonColor = false
-skipButton.Parent = arrivalGui
+-- the skip button: a studded Folk Stud kit button (2026-11-08; the old MenuArt ButtonBlue one is in
+-- ServerStorage._ARCHIVE.Scripts_BeforeStudJoinUI_2026-11-08). Bottom-right corner, sized for the screen;
+-- hover and press bounce come from FolkStudUI.animate (its Pop scale), the screen fit from skipScale on a holder.
+local StudKit = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
+local skipHolder = Instance.new("Frame")
+skipHolder.Name = "SkipHolder"
+skipHolder.AnchorPoint = Vector2.new(1, 1)
+skipHolder.Position = UDim2.new(1, -28, 1, -28)
+skipHolder.Size = UDim2.fromOffset(190, 74)
+skipHolder.BackgroundTransparency = 1
+skipHolder.Parent = arrivalGui
 local skipScale = Instance.new("UIScale")
-skipScale.Parent = skipButton
-local skipFace = MenuArt.piece(skipButton, "Face", "ButtonBlue", { 0, 0, 170, 62 }, 1, 14)
-MenuArt.label(skipFace, "Label", "SKIP ▶▶", { 10, 4, 150, 50 }, 30, nil, 2, { alignX = Enum.TextXAlignment.Center })
+skipScale.Name = "Fit"
+skipScale.Parent = skipHolder
+local skipButton = StudKit.H.button(skipHolder, "Skip", 0, 0, 190, 74, 16, StudKit.COLOR.blue, 4)
+skipButton.Visible = false
+StudKit.H.text(skipButton, "Label", "SKIP ▶▶", 95, 34, 34, 6)
 local function rescale()
     local screenSize = arrivalGui.AbsoluteSize
     skipScale.Scale = math.clamp(math.min(screenSize.X, screenSize.Y) / 720, screenSize.Y < 500 and 0.6 or 0.8, 1.15) -- smaller skip button on phones
 end
 arrivalGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(rescale)
 rescale()
-skipButton.MouseButton1Down:Connect(function()
-    skipFace.Position = UDim2.fromOffset(0, 3)
-end)
-skipButton.MouseButton1Up:Connect(function()
-    skipFace.Position = UDim2.fromOffset(0, 0)
-end)
-skipButton.MouseLeave:Connect(function()
-    skipFace.Position = UDim2.fromOffset(0, 0)
-end)
+StudKit.animate(arrivalGui)
 
 -- ===== 3. Sounds (optional) =====
 local function makeSound(slot)
@@ -335,6 +331,10 @@ local function restore(runState, guiFade)
     end
     showLabels(runState)
     RunService:UnbindFromRenderStep("JoinArrivalCamera")
+    if runState.blur then
+        runState.blur:Destroy()
+        runState.blur = nil
+    end
     lockControls(false)
     ProximityPromptService.Enabled = runState.promptsWere ~= false
     local camera = workspace.CurrentCamera
@@ -374,7 +374,7 @@ end
 
 -- builds the camera journey for this plot; returns nil if it cannot be framed
 local function buildPath(plot, character)
-    -- "Hero" arrival: close-up on YOUR character's face, then orbit round to the normal camera behind you.
+    -- "Sky Drop": high overhead looking down at YOUR character, two drops, swoop in behind you.
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     local plotSpawn = plot:FindFirstChild("PlotSpawn")
     if not rootPart or not plotSpawn then
@@ -396,6 +396,26 @@ local function buildPath(plot, character)
         endPos = focus + (hit.Position - focus).Unit * math.max(2, (hit.Position - focus).Magnitude - 0.6)
     end
     local endCF = CFrame.lookAt(endPos, focus)
+    -- Sky Drop keyframes: overhead shots look straight down with the screen's "up" pointing the way you face,
+    -- so the final swoop lines up with the camera behind you.
+    local function overhead(height, back, turn)
+        local dir = CFrame.Angles(0, turn, 0):VectorToWorldSpace(forward)
+        return CFrame.lookAt(focus + UP * height - dir * back, focus, dir)
+    end
+    if true then
+        return {
+            sky = true,
+            focus = focus,
+            endCF = endCF,
+            finish = endPos,
+            keys = {
+                overhead(Config.DropHeights[1], 6, math.rad(-35)), -- way up, slowly turning
+                overhead(Config.DropHeights[2], 6, math.rad(-12)),
+                overhead(Config.DropHeights[3], 9, math.rad(0)),
+                endCF,
+            },
+        }
+    end
     local faceDirection = flatDirection(rootPart.CFrame.LookVector)
     local startAngle = math.atan2(faceDirection.X, faceDirection.Z) -- camera starts in front of the face
     local endOffset = endPos - focus
@@ -420,8 +440,53 @@ local function buildPath(plot, character)
     }
 end
 
+-- Sky Drop timeline (fractions of the travel time): hold, drop, hold, drop, hold, swoop.
+local SKY_BEATS = {
+    { 0.00, 0.20, "hold", 1 },
+    { 0.20, 0.34, "drop", 1 },
+    { 0.34, 0.46, "hold", 2 },
+    { 0.46, 0.58, "drop", 2 },
+    { 0.58, 0.66, "hold", 3 },
+    { 0.66, 1.00, "swoop", 3 },
+}
+local function easeInOutCubic(t)
+    t = clamp01(t)
+    return t < 0.5 and 4 * t * t * t or 1 - (-2 * t + 2) ^ 3 / 2
+end
+-- returns camera CFrame, motion blur size and an FOV offset for linear time u (0..1)
+local function skyPose(path, u)
+    if u >= 1 then
+        return path.endCF, 0, 0
+    end
+    local keys = path.keys
+    for _, beat in SKY_BEATS do
+        local a, b, kind, k = beat[1], beat[2], beat[3], beat[4]
+        if u < b then
+            local t = (u - a) / (b - a)
+            if kind == "hold" then
+                -- slow drift down + turn while hanging in the air
+                local drift = CFrame.new(0, 0, -t * 6) -- a few studs toward the ground (camera looks down)
+                return keys[k] * drift * CFrame.Angles(0, 0, math.rad(4) * t), 0, 0
+            elseif kind == "drop" then
+                local e = easeInOutCubic(t)
+                local fast = math.sin(t * math.pi) -- 0 at both ends, 1 mid-drop
+                local from = keys[k] * CFrame.new(0, 0, -6) * CFrame.Angles(0, 0, math.rad(4))
+                return from:Lerp(keys[k + 1], e), 22 * fast, 14 * fast
+            else
+                local e = smootherstep(t)
+                local from = keys[k] * CFrame.new(0, 0, -6) * CFrame.Angles(0, 0, math.rad(4))
+                return from:Lerp(keys[k + 1], e), 8 * math.sin(math.min(t * 2, 1) * math.pi), 0
+            end
+        end
+    end
+    return path.endCF, 0, 0
+end
+
 -- Camera pose at `progress` (0..1) along the orbit from the face close-up to the landing shot.
 local function poseAt(path, progress)
+    if path.sky then
+        return (skyPose(path, progress))
+    end
     if progress >= 1 then
         return path.endCF
     end
@@ -697,6 +762,10 @@ local function begin(isReplay)
         end
         handoffAt = os.clock()
         handoffCF = camera.CFrame
+        if runState.blur then
+            runState.blur:Destroy()
+            runState.blur = nil
+        end
         skipButton.Visible = false
         setCharacterAlpha(runState.char, 0)
         -- hand the camera back already pointing where the default camera will look
@@ -768,10 +837,27 @@ local function begin(isReplay)
             if runState.jumping then
                 return
             end
-            local progress = smootherstep(elapsed / travelTime) -- slow sky beat, faster middle, soft landing
             camera.CameraType = Enum.CameraType.Scriptable
-            camera.CFrame = poseAt(runState.path, progress)
-            camera.FieldOfView = Config.StartFov + (runState.fov - Config.StartFov) * smoothstep(progress)
+            if runState.path.sky then
+                local u = clamp01(elapsed / travelTime)
+                local cf, blurSize, fovPunch = skyPose(runState.path, u)
+                camera.CFrame = cf
+                camera.FieldOfView = Config.StartFov + (runState.fov - Config.StartFov) * smoothstep(u) + fovPunch
+                if not runState.blur then
+                    runState.blur = Instance.new("BlurEffect")
+                    runState.blur.Name = "JoinArrivalBlur"
+                    runState.blur.Parent = camera
+                end
+                runState.blur.Size = blurSize
+                if whoosh and not hasWhooshed and u > 0.18 then
+                    hasWhooshed = true
+                    whoosh:Play()
+                end
+            else
+                local progress = smootherstep(elapsed / travelTime) -- slow sky beat, faster middle, soft landing
+                camera.CFrame = poseAt(runState.path, progress)
+                camera.FieldOfView = Config.StartFov + (runState.fov - Config.StartFov) * smoothstep(progress)
+            end
             -- character fades in during the reveal beat
             -- (currently forced visible every frame; _revealStart is unused)
             local _revealStart = (Config.SkyTime + Config.ApproachTime) / travelTime

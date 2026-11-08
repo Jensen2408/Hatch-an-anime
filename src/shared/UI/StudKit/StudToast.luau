@@ -1,27 +1,40 @@
 -- ReplicatedStorage.StudKit.StudToast  (ModuleScript, client)
--- Figma "10 Notifications": Toast cards (600x82) stacked bottom-center, newest at the bottom. Each toast has
--- a colored kind tile (info / success / error), the message and disappears after a few seconds; at most
--- StudTheme.Toast.Max stay on screen.
+-- Game messages ("Go to your plot to unlock", "Not enough money" ...) in the Folk Stud look (2026-11-07): a candy slab
+-- per message (coral = error, leaf = success, azure = info) with a black outline, faint studs, a light sweep and a hard
+-- shadow, a FOLK icon breaking out over its left end, and the words in Fredoka with a black outline. Stacked
+-- bottom-centre, newest at the bottom; at most StudTheme.Toast.Max stay on screen. Same API as before:
 --
 --   local toasts = StudToast.new(screenGui)
 --   toasts:Show("Not enough money", "error")   -- kind: "info" (default) | "success" | "error"
+-- Old version: ServerStorage._ARCHIVE.StudToast_BeforeFolk_2026-11-07
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local Kit = script.Parent
 local Theme = require(Kit:WaitForChild("StudTheme"))
-local StudUI = require(Kit:WaitForChild("StudUI"))
+local M = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
+local H = M.H
 
-local Colors = Theme.Colors
 local Style = Theme.Toast
+local W, TH = Style.Size.X, Style.Size.Y   -- 600 x 82
 
+-- FOLK Icon Pack, 256 px (assets\ui\stud\up\i_warn / i_check / i_info)
 local KINDS = {
-    info = { Color = Colors.Blue, Glyph = "i" },
-    success = { Color = Colors.Green, Glyph = "✓" },
-    error = { Color = Colors.Red, Glyph = "!" },
+    info = { pal = M.COLOR.azure, icon = "rbxassetid://129678499568475" },
+    success = { pal = M.COLOR.leaf, icon = "rbxassetid://128694588334272" },
+    error = { pal = M.COLOR.coral, icon = "rbxassetid://93462464183428" },
 }
 
 local StudToast = {}
 StudToast.__index = StudToast
+
+-- SharpUI squares corners and mitres strokes on anything without NoSkin; every piece opts out before it is parented
+local function optOut(root)
+    root:SetAttribute("NoSkin", true)
+    for _, d in ipairs(root:GetDescendants()) do
+        if d:IsA("GuiObject") then d:SetAttribute("NoSkin", true) end
+    end
+end
 
 function StudToast.new(screenGui)
     local self = setmetatable({ gui = screenGui, order = 0, live = {} }, StudToast)
@@ -30,7 +43,7 @@ function StudToast.new(screenGui)
     holder.BackgroundTransparency = 1
     holder.AnchorPoint = Vector2.new(0.5, 1)
     holder.Position = UDim2.new(0.5, 0, 1, -Style.BottomOffset)
-    holder.Size = UDim2.fromOffset(Style.Size.X, (Style.Size.Y + Style.Gap) * Style.Max)
+    holder.Size = UDim2.fromOffset(W + 40, (TH + Style.Gap) * Style.Max)
     holder.ZIndex = Style.ZIndex
     holder:SetAttribute("NoSkin", true)
     local list = Instance.new("UIListLayout")
@@ -48,6 +61,7 @@ function StudToast.new(screenGui)
     fit()
     screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
     holder.Parent = screenGui
+    M.animate(holder, { sounds = false })   -- floats, wiggles and light sweeps on every toast
     self.holder = holder
     return self
 end
@@ -58,7 +72,7 @@ function StudToast:_remove(toast)
         return
     end
     table.remove(self.live, index)
-    local shrink = TweenService:Create(toast:FindFirstChildOfClass("UIScale"), TweenInfo.new(0.15), { Scale = 0 })
+    local shrink = TweenService:Create(toast:FindFirstChildOfClass("UIScale"), TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.In), { Scale = 0 })
     shrink.Completed:Once(function()
         toast:Destroy()
     end)
@@ -70,25 +84,34 @@ function StudToast:Show(message, kind)
         return
     end
     local style = KINDS[kind or "info"] or KINDS.info
+    local Z = Style.ZIndex
     self.order += 1
-    local toast =
-        StudUI.card(self.holder, "Toast", { 0, 0, Style.Size.X, Style.Size.Y }, Colors.Panel2, Style.Radius, Colors.Ink)
-    toast.LayoutOrder = self.order
-    local tile = StudUI.plate(toast, "Kind", Style.IconRect, style.Color, Style.IconRadius, Colors.Ink)
-    StudUI.label(
-        tile,
-        "Glyph",
-        style.Glyph,
-        { 0, 0, Style.IconRect[3], Style.IconRect[4] },
-        Style.GlyphSize,
-        Colors.White,
-        StudUI.centered({ display = true })
-    )
-    StudUI.label(toast, "Message", message, Style.TextRect, Style.TextSize, Colors.White, { wrap = true })
+
+    -- the layout slot; the slab, shadow and icon sit inside it
+    local toast = H.new("Frame", { Name = "Toast", BackgroundTransparency = 1, Size = UDim2.fromOffset(W, TH), LayoutOrder = self.order, ZIndex = Z }, nil)
+    H.shadow(toast, "Slab", 0, 0, W, TH, 16, Z)
+    local slab = H.rect(toast, "Slab", 0, 0, W, TH, 16, Z + 1, H.WHITE)
+    H.grad(slab, style.pal[1], style.pal[2])
+    H.ink(slab, 4)
+    H.studs(slab, Vector2.new(48, 48), 0.74, 16, Z + 1)
+    H.shine(slab, 16, Z + 2)
+
+    -- the icon breaks out over the left end
+    local icon = H.sticker(toast, "Icon", style.icon, 30, TH / 2 - 2, 84, Z + 4)
+    icon:SetAttribute("Wiggle", 6)
+
+    local label = H.new("TextLabel", { Name = "Message", BackgroundTransparency = 1, FontFace = M.FONT, Text = message, TextColor3 = H.WHITE,
+        TextScaled = true, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.fromOffset(84, 10),
+        Size = UDim2.fromOffset(W - 84 - 18, TH - 24), ZIndex = Z + 5 }, toast)
+    H.new("UITextSizeConstraint", { MaxTextSize = 30, MinTextSize = 14 }, label)
+    H.new("UIStroke", { Name = "UIStroke", Thickness = 3.7, Color = H.BLACK, LineJoinMode = Enum.LineJoinMode.Bevel }, label)
+
     local pop = Instance.new("UIScale")
     pop.Scale = 0.6
     pop.Parent = toast
-    TweenService:Create(pop, TweenInfo.new(0.2, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+    optOut(toast)
+    toast.Parent = self.holder
+    TweenService:Create(pop, TweenInfo.new(0.22, Enum.EasingStyle.Back), { Scale = 1 }):Play()
 
     table.insert(self.live, toast)
     while #self.live > Style.Max do

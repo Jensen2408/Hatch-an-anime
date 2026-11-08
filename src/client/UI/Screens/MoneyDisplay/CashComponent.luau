@@ -1,150 +1,97 @@
 -- MoneyDisplay.CashComponent  (ModuleScript, client)
--- Builds the Cash UI once and updates only its text afterwards. Display only: it does not read or change the
--- economy. MoneyLogic feeds it the replicated Cash value and the income per second.
---
---   CashUI (Frame, UIScale)
---   ├── MainBackground (ImageLabel)
---   │   ├── CoinIcon (ImageLabel)
---   │   └── CashAmount (TextLabel, + black outline copies)
---   └── IncomePanel (ImageLabel)
---       └── IncomeText (TextLabel, + black outline copies)
+-- The cash card in the Folk Stud look (2026-11-07): a white studded plate with a black outline and a hard shadow,
+-- the game's coin breaking out over the left edge on faint spinning rays, the amount in candy green with a light
+-- sweeping over its outline, and a flat green income pill underneath. Display only; MoneyLogic feeds it.
+-- Same API and the same names MoneyLogic looks for (MainBackground > CoinIcon), so MoneyLogic is unchanged:
 --
 --   local cash = CashComponent.new(screenGui)
 --   cash:SetCash(4200000)   --> "$4.2M"
 --   cash:SetIncome(25)      --> "+$25 / sec"
 --   cash:SetVisible(true)
+-- Old version: ServerStorage._ARCHIVE.CashComponent_BeforeStud_2026-11-07
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
+local M = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
+local H = M.H
 local Config = require(script.Parent:WaitForChild("CashConfig"))
 local NumberFormat = require(ReplicatedStorage:WaitForChild("CharacterInventory"):WaitForChild("InventoryFormat"))
+
+local COIN = "rbxassetid://136807180106184"   -- FOLK cash stack (i_cash)
+local CASH_GREEN = H.hex("2BF08C")
+local W, HGT = Config.RootSize.X, Config.RootSize.Y   -- 330 x 141, MoneyLogic lays the card out by this size
 
 local CashComponent = {}
 CashComponent.__index = CashComponent
 
 -- 1000 -> "$1K", 4200000 -> "$4.2M" (InventoryFormat.Short truncates, never rounds up)
 function CashComponent.FormatCash(value)
-    return "$" .. NumberFormat.Short(value)
+	return "$" .. NumberFormat.Short(value)
 end
 
-local function newImage(name, image, layout, zIndex, parent)
-    local label = Instance.new("ImageLabel")
-    label.Name = name
-    label.BackgroundTransparency = 1
-    label.Image = image
-    label.ScaleType = Enum.ScaleType.Fit -- never distort the pixel art
-    label.ResampleMode = Enum.ResamplerMode.Pixelated
-    label.AnchorPoint = layout.AnchorPoint or Vector2.zero
-    label.Position = layout.Position
-    label.Size = layout.Size
-    label.ZIndex = zIndex
-    label.Parent = parent
-    return label
-end
-
-local function newText(name, layout, color, zIndex, parent)
-    local label = Instance.new("TextLabel")
-    label.Name = name
-    label.BackgroundTransparency = 1
-    label.FontFace = Config.Font
-    label.TextScaled = true -- shrinks long values instead of clipping them
-    label.TextColor3 = color
-    label.TextXAlignment = Enum.TextXAlignment.Center
-    label.TextYAlignment = Enum.TextYAlignment.Center
-    label.AnchorPoint = layout.AnchorPoint or Vector2.zero
-    label.Position = layout.Position
-    label.Size = layout.Size
-    label.ZIndex = zIndex
-    label.Parent = parent
-    return label
-end
-
--- Black copies of `label` at integer pixel offsets: the 8 directions at `thickness`, plus a drop shadow row
--- `shadow` pixels further down. Same size as the label, so TextScaled picks the same text size for every copy.
-local function addPixelOutline(label, outline)
-    local copies = {}
-    local thickness, shadow = outline.Thickness, outline.Shadow
-    local offsets = {}
-    for dy = -1, 1 do
-        for dx = -1, 1 do
-            if dx ~= 0 or dy ~= 0 then
-                table.insert(offsets, Vector2.new(dx * thickness, dy * thickness))
-            end
-        end
-    end
-    if shadow > 0 then
-        for dx = -1, 1 do
-            table.insert(offsets, Vector2.new(dx * thickness, thickness + shadow))
-        end
-    end
-    for _, offset in offsets do
-        local copy = Instance.new("TextLabel")
-        copy.Name = "Outline"
-        copy.BackgroundTransparency = 1
-        copy.FontFace = label.FontFace
-        copy.TextScaled = true
-        copy.TextColor3 = Config.Colors.Outline
-        copy.TextXAlignment = label.TextXAlignment
-        copy.TextYAlignment = label.TextYAlignment
-        copy.Position = UDim2.fromOffset(offset.X, offset.Y)
-        copy.Size = UDim2.fromScale(1, 1)
-        copy.ZIndex = label.ZIndex - 1 -- below the label (MoneyDisplay uses Global ZIndexBehavior)
-        copy.Parent = label
-        table.insert(copies, copy)
-    end
-    return copies
-end
-
-local function setText(label, copies, text)
-    if label.Text == text then
-        return
-    end
-    label.Text = text
-    for _, copy in copies do
-        copy.Text = text
-    end
+-- a label that fits its box: long amounts shrink instead of running off the plate
+local function fitText(parent, name, x, y, w, h, maxSize, z, col)
+	local l = H.new("TextLabel", { Name = name, BackgroundTransparency = 1, FontFace = M.FONT, Text = "", TextScaled = true, TextColor3 = col,
+		Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), ZIndex = z }, parent)
+	H.new("UITextSizeConstraint", { MaxTextSize = maxSize }, l)
+	H.new("UIStroke", { Name = "UIStroke", Thickness = 3.7, Color = H.BLACK, LineJoinMode = Enum.LineJoinMode.Bevel }, l)
+	return l
 end
 
 function CashComponent.new(parent)
-    local self = setmetatable({}, CashComponent)
-    local root = Instance.new("Frame")
-    root.Name = "CashUI"
-    root.BackgroundTransparency = 1
-    root.Size = UDim2.fromOffset(Config.RootSize.X, Config.RootSize.Y)
-    self.Scale = Instance.new("UIScale")
-    self.Scale.Parent = root
+	local self = setmetatable({}, CashComponent)
+	local root = H.new("Frame", { Name = "CashUI", BackgroundTransparency = 1, Size = UDim2.fromOffset(W, HGT) }, nil)
+	self.Scale = H.new("UIScale", {}, root)
 
-    local z = Config.ZIndex
-    local mainBackground =
-        newImage("MainBackground", Config.Assets.MainBackground, Config.MainBackground, z.MainBackground, root)
-    newImage("CoinIcon", Config.Assets.Coin, Config.Coin, z.Coin, mainBackground)
-    self.CashAmount = newText("CashAmount", Config.CashAmount, Config.Colors.CashAmount, z.CashAmount, mainBackground)
-    self.CashAmountOutline = addPixelOutline(self.CashAmount, Config.Outline.CashAmount)
+	-- the plate: white sheet, faint studs, black outline, hard shadow (read only, so no lip)
+	local PX, PY, PW, PH = 22, 8, 296, 84
+	H.shadow(root, "Main", PX, PY, PW, PH, 16, 2)
+	local plate = H.rect(root, "MainBackground", PX, PY, PW, PH, 16, 3, H.WHITE)
+	H.ink(plate, 4)
+	H.studs(plate, Vector2.new(50, 46), 0.8, 16, 3)
+	H.shine(plate, 16, 4)
 
-    local incomePanel = newImage("IncomePanel", Config.Assets.IncomePanel, Config.IncomePanel, z.IncomePanel, root)
-    self.IncomeText = newText("IncomeText", Config.IncomeText, Config.Colors.IncomeText, z.IncomeText, incomePanel)
-    self.IncomeTextOutline = addPixelOutline(self.IncomeText, Config.Outline.IncomeText)
+	-- the coin breaks out over the left edge, on faint spinning gold rays
+	H.beams(plate, 22, PH / 2, 140, 4, H.hex("FFD000"), 0.35, 6)
+	local coin = H.art(plate, "CoinIcon", COIN, 22, PH / 2 - 2, 96, 6)
+	H.sparkle(plate, "Twinkle1", 62, 10, 22, 7, 0)
+	H.sparkle(plate, "Twinkle2", -14, 74, 18, 7, 0.5)
 
-    self.Root = root
-    self:SetCash(0)
-    self:SetIncome(0)
-    root.Parent = parent
-    return self
+	-- the amount, in candy green with a light sweeping over its outline
+	self.CashAmount = fitText(plate, "CashAmount", 76, 10, PW - 90, PH - 20, 50, 8, CASH_GREEN)
+	H.gleam(self.CashAmount)
+
+	-- income per second: a flat green pill under the plate
+	local IW, IH = 200, 38
+	local ix = PX + (PW - IW) / 2 + 20
+	H.shadow(root, "Income", ix, PY + PH + 4, IW, IH, 12, 2)
+	local pill = H.rect(root, "IncomePanel", ix, PY + PH + 4, IW, IH, 12, 4, H.WHITE)
+	H.ink(pill, 4)
+	H.grad(pill, M.COLOR.leaf[1], M.COLOR.leaf[2])
+	self.IncomeText = fitText(pill, "IncomeText", 10, 3, IW - 20, IH - 6, 26, 6, H.WHITE)
+
+	M.animate(root, { sounds = false })
+	self.Root = root
+	self:SetCash(0)
+	self:SetIncome(0)
+	root.Parent = parent
+	return self
 end
 
 function CashComponent:SetCash(value)
-    setText(self.CashAmount, self.CashAmountOutline, CashComponent.FormatCash(value))
+	local t = CashComponent.FormatCash(value)
+	if self.CashAmount.Text ~= t then self.CashAmount.Text = t end
 end
 
 function CashComponent:SetIncome(perSecond)
-    setText(self.IncomeText, self.IncomeTextOutline, "+" .. CashComponent.FormatCash(perSecond) .. Config.IncomeSuffix)
+	local t = "+" .. CashComponent.FormatCash(perSecond) .. Config.IncomeSuffix
+	if self.IncomeText.Text ~= t then self.IncomeText.Text = t end
 end
 
 function CashComponent:SetVisible(visible)
-    self.Root.Visible = visible
+	self.Root.Visible = visible
 end
 
 function CashComponent:Destroy()
-    self.Root:Destroy()
+	self.Root:Destroy()
 end
 
 return CashComponent

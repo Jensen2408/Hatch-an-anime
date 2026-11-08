@@ -17,6 +17,9 @@
       },
       "StartupLoader": {
         "$path": "src/client/Bootstrap/StartupLoader.luau"
+      },
+      "SkyStart": {
+        "$path": "src/client/Bootstrap/SkyStart.client.luau"
       }
     },
     "StarterPlayer": {
@@ -248,7 +251,10 @@
           "$path": "src/client/Characters/V2MoveClient.client.luau"
         },
         "MutationCoating": {
-          "$path": "src/client/Effects/MutationCoating.client.luau"
+          "$path": "src/client/Effects/MutationCoating.client.luau",
+          "MoltenSurface": {
+            "$path": "src/client/Effects/MutationCoating/MoltenSurface.luau"
+          }
         },
         "RainbowMutationClient": {
           "$path": "src/client/Effects/RainbowMutationClient.client.luau"
@@ -258,6 +264,27 @@
         },
         "GalaxyPrototype": {
           "$path": "src/client/Effects/GalaxyPrototype.client.luau"
+        },
+        "EventTimers": {
+          "$path": "src/client/UI/Stud/EventTimers.client.luau"
+        },
+        "StudPolish": {
+          "$path": "src/client/UI/Stud/StudPolish.client.luau"
+        },
+        "StudHUDSkin": {
+          "$path": "src/client/UI/Stud/StudHUDSkin.client.luau"
+        },
+        "StudWorldSkin": {
+          "$path": "src/client/UI/Stud/StudWorldSkin.client.luau"
+        },
+        "TutorialSpotlight": {
+          "$path": "src/client/Tutorial/TutorialSpotlight.client.luau"
+        },
+        "UpcomingTeaser": {
+          "$path": "src/client/UI/Controllers/UpcomingTeaser.client.luau"
+        },
+        "UpdateBoardClient": {
+          "$path": "src/client/World/UpdateBoardClient.client.luau"
         }
       }
     },
@@ -3902,6 +3929,18 @@
         "BodyProjection": {
           "$path": "src/shared/Effects/GalaxyPrototype/BodyProjection.model.json"
         }
+      },
+      "MangaUI": {
+        "$path": "src/shared/UI/MangaUI.luau"
+      },
+      "UpcomingConfig": {
+        "$path": "src/shared/Config/UpcomingConfig.luau"
+      },
+      "MutationStyle": {
+        "$path": "src/shared/UI/MutationStyle.luau"
+      },
+      "FolkStudUI": {
+        "$path": "src/shared/UI/FolkStudUI.luau"
       }
     },
     "ServerScriptService": {

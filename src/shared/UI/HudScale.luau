@@ -6,10 +6,11 @@ local HudScale = {}
 
 HudScale.Reference = Vector2.new(1280, 600) -- the smallest screen that shows the HUD at full size
 HudScale.Min = 0.45 -- keeps text readable on the narrowest screens (portrait phones)
+HudScale.Size = 0.82 -- overall HUD size (2026-11-08: the new UI was too big). 1 = the old size; change only this to resize everything
 
 function HudScale.For(screenSize)
     local reference = HudScale.Reference
-    return math.clamp(math.min(screenSize.X / reference.X, screenSize.Y / reference.Y), HudScale.Min, 1)
+    return math.clamp(math.min(screenSize.X / reference.X, screenSize.Y / reference.Y), HudScale.Min, 1) * HudScale.Size
 end
 
 return HudScale

@@ -14,7 +14,6 @@ local player = Players.LocalPlayer
 local UISound = require(ReplicatedStorage:WaitForChild("UISound"))
 local ShopConfig = require(ReplicatedStorage:WaitForChild("ShopSystem"):WaitForChild("ShopConfig"))
 local shopRemote = ReplicatedStorage.ShopSystem:WaitForChild("ShopRemote")
-local MenuArt = require(ReplicatedStorage:WaitForChild("MenuArt"):WaitForChild("MenuArt"))
 
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
 local BLACK, WHITE = Color3.new(0, 0, 0), Color3.new(1, 1, 1)
@@ -218,6 +217,12 @@ local function showWindow()
     local awaySeconds = tonumber(player:GetAttribute("OfflineSeconds")) or 0
     local canDouble = (ShopConfig.Products.Offline2x or 0) ~= 0
 
+    -- 2026-11-08: Folk Stud look (white studded sheet, black outlines, title on the top border, kit buttons).
+    -- The old MenuArt window: ServerStorage._ARCHIVE.Scripts_BeforeStudJoinUI_2026-11-08.OfflineEarningsUI
+    local Kit = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
+    local H = Kit.H
+    local hex = Color3.fromHex
+    local W, HT = 560, 540 -- design size of the holder; the sheet sits inside it with room for the overhangs
     local screenGui = create("ScreenGui", {
         Name = "OfflineEarningsUI",
         ResetOnSpawn = false,
@@ -227,147 +232,81 @@ local function showWindow()
     }, player:WaitForChild("PlayerGui"))
     local dimFrame = create(
         "Frame",
-        { BackgroundColor3 = rgb(10, 6, 22), BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 1 },
+        { BackgroundColor3 = BLACK, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 1 },
         screenGui
     )
-    TweenService:Create(dimFrame, TweenInfo.new(0.3), { BackgroundTransparency = 0.35 }):Play()
+    TweenService:Create(dimFrame, TweenInfo.new(0.3), { BackgroundTransparency = 0.45 }):Play()
+    -- two scales: Fit follows the screen, Pop is the open/close bounce (a pop that tweens a saved fit value can leave
+    -- the window invisible when the camera size is still 0 at Play start)
     local holder = create("Frame", {
+        Name = "Root",
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(560, 540),
+        Size = UDim2.fromOffset(W, HT),
         BackgroundTransparency = 1,
         ZIndex = 2,
     }, screenGui)
-    local fitScale = create("UIScale", { Scale = 0.6 }, holder)
+    local fitScale = create("UIScale", { Name = "Fit" }, holder)
     local function rescale()
         local screenSize = screenGui.AbsoluteSize
         return math.clamp(math.min(screenSize.X / 620, screenSize.Y / 600), 0.5, 1.15)
     end
-    TweenService:Create(fitScale, TweenInfo.new(0.35, Enum.EasingStyle.Back), { Scale = rescale() }):Play()
+    fitScale.Scale = rescale()
     screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
         fitScale.Scale = rescale()
     end)
-    -- the window art (ReplicatedStorage.MenuArt, assets/ui/menus3): header with the title and X, the away pill,
-    -- the golden glow; buttons and badge are pieces. Every rect below is in pixels of the 560 x 540 window.
-    create("ImageLabel", {
-        BackgroundTransparency = 1,
-        Image = GLOW_IMAGE,
-        ImageColor3 = rgb(255, 200, 40),
-        ImageTransparency = 0.6,
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.new(1, 160, 1, 160),
-        ZIndex = 2,
-    }, holder)
-    local window = create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 4 }, holder)
-    MenuArt.background(window, "Offline", nil, 4)
-    -- away pill (drawn): clock + "You were away for ..." centred in it
-    local pill = create("Frame", {
-        Position = UDim2.fromOffset(173, 84),
-        Size = UDim2.fromOffset(213, 41),
-        BackgroundTransparency = 1,
-        ZIndex = 6,
-    }, window)
-    create("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        VerticalAlignment = Enum.VerticalAlignment.Center,
-        Padding = UDim.new(0, 7),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    }, pill)
-    create("ImageLabel", {
-        BackgroundTransparency = 1,
-        Image = "rbxassetid://112731802177209",
-        ScaleType = Enum.ScaleType.Fit,
-        ResampleMode = Enum.ResamplerMode.Pixelated,
-        LayoutOrder = 0,
-        Size = UDim2.fromOffset(24, 24),
-        ZIndex = 8,
-    }, pill)
-    makeLabel(
-        pill,
-        "You were away for " .. formatAwayTime(awaySeconds),
-        17,
-        rgb(255, 220, 120),
-        { Size = UDim2.new(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 1, ZIndex = 7 }
-    )
-    -- hero: coin pile + sparkles over the drawn glow
-    local hero = create("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 148),
-        Size = UDim2.fromOffset(300, 140),
-        BackgroundTransparency = 1,
-        ZIndex = 6,
-    }, window)
-    local pile = { { 0, 18, 92 }, { -60, 34, 70 }, { 62, 32, 72 }, { -28, -6, 64 }, { 34, -8, 66 } }
+    local window = create("Frame", { Name = "Stage", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 2 }, holder)
+    local popScale = create("UIScale", { Name = "Pop", Scale = 0.8 }, window)
+    TweenService:Create(popScale, TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+
+    -- the sheet: white, studs, thick black outline, hard shadow
+    local SX, SY, SW, SH = 20, 44, 520, 470
+    H.shadow(window, "Sheet", SX - 2, SY + 4, SW + 4, SH + 4, 16, 2)
+    local sheet = H.rect(window, "Sheet", SX, SY, SW, SH, 14, 3)
+    H.ink(sheet, 4)
+    H.studs(sheet, Vector2.new(50, 46), 0.8, 14, 3)
+    -- title centred on the top border, the coin icon hanging over the corner, the red X over the other corner
+    H.sticker(window, "Icon", COINS_IMAGE, SX + 22, SY - 2, 84, 9)
+    H.gleam(H.text(window, "Title", "WELCOME BACK!", SX + 70, SY - 2, 46, 9, WHITE, "left"))
+    local closeButton = H.closeButton(window, SX + SW - 42, SY - 26)
+
+    -- away pill (only read, so flat: no studs, no lip)
+    local pill = H.rect(window, "AwayPill", 130, SY + 40, 300, 42, 12, 5)
+    H.ink(pill, 3)
+    H.grad(pill, hex("2FB8FF"), hex("0283FB"))
+    H.text(pill, "Away", "You were away for " .. formatAwayTime(awaySeconds), 150, 21, 22, 6, WHITE)
+
+    -- hero: spinning gold rays behind a floating coin pile, sparkles round it
+    local HX, HY = W / 2, SY + 158
+    H.beams(window, HX, HY, 340, 4, hex("FFC400"), 0.3, 8) -- drawn rays (the rays image does not load in this place)
+    local pile = { { 0, 18, 96 }, { -66, 34, 72 }, { 68, 32, 74 }, { -30, -10, 66 }, { 36, -12, 68 } }
     for i, coin in pile do
-        local coinImage = create("ImageLabel", {
-            BackgroundTransparency = 1,
-            Image = COINS_IMAGE,
-            ScaleType = Enum.ScaleType.Fit,
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(0.5, coin[1], 0.5, coin[2]),
-            Size = UDim2.fromOffset(coin[3], coin[3]),
-            ZIndex = 8 + i,
-        }, hero)
-        TweenService:Create(
-            coinImage,
-            TweenInfo.new(1 + i * 0.15, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-            { Position = UDim2.new(0.5, coin[1], 0.5, coin[2] - 6) }
-        ):Play()
+        local s = H.sticker(window, "Coin" .. i, COINS_IMAGE, HX + coin[1], HY + coin[2], coin[3], 5 + i, true)
+        s.Rotation = (i % 2 == 0 and -1 or 1) * (4 + i * 2)
     end
-    for i = 1, 7 do
-        local angle = i / 7 * math.pi * 2
-        local sparkle = create("ImageLabel", {
-            BackgroundTransparency = 1,
-            Image = SPARK_IMAGE,
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(0.5, math.cos(angle) * 140, 0.5, math.sin(angle) * 70),
-            Size = UDim2.fromOffset(i % 2 == 0 and 14 or 22, i % 2 == 0 and 14 or 22),
-            ImageColor3 = i % 2 == 0 and WHITE or rgb(255, 230, 140),
-            ZIndex = 15,
-        }, hero)
-        TweenService:Create(
-            sparkle,
-            TweenInfo.new(0.7 + i * 0.12, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-            { ImageTransparency = 0.85, Rotation = 45 }
-        ):Play()
-    end
-    -- amount (counts up)
-    local amountLabel = makeLabel(
-        window,
-        "$0",
-        72,
-        rgb(130, 255, 110),
-        { Position = UDim2.fromOffset(0, 288), Size = UDim2.new(1, 0, 0, 78), ZIndex = 8 }
-    )
-    local amountGlow = amountLabel:Clone()
-    amountGlow.ZIndex = 7
-    amountGlow.TextTransparency = 0.6
-    amountGlow:FindFirstChildOfClass("UIStroke").Color = rgb(90, 255, 90)
-    amountGlow:FindFirstChildOfClass("UIStroke").Thickness = 12
-    amountGlow:FindFirstChildOfClass("UIStroke").Transparency = 0.7
-    amountGlow.Parent = window
-    makeLabel(
-        window,
-        "earned while you were away",
-        15,
-        rgb(220, 215, 245),
-        { Position = UDim2.fromOffset(0, 364), Size = UDim2.new(1, 0, 0, 20), ZIndex = 8 }
-    )
+    H.sparkle(window, "Spark1", HX - 140, HY - 40, 34, 12, 0)
+    H.sparkle(window, "Spark2", HX + 146, HY - 18, 26, 12, 1.3)
+    H.sparkle(window, "Spark3", HX - 112, HY + 54, 22, 12, 2.4)
+    H.sparkle(window, "Spark4", HX + 118, HY + 60, 30, 12, 0.7)
+
+    -- amount (counts up), green with a light sweep
+    local amountLabel = H.text(window, "Amount", "$0", HX, SY + 286, 76, 12, hex("12D67A"))
+    amountLabel:FindFirstChild("UIStroke").Thickness = 5
+    H.gleam(amountLabel)
+    H.text(window, "Sub", "earned while you were away", HX, SY + 330, 22, 12, WHITE)
     task.spawn(function()
         local startedAt = os.clock()
         while amountLabel.Parent do
             local progress = math.clamp((os.clock() - startedAt) / 1.2, 0, 1)
             progress = 1 - (1 - progress) ^ 3
             amountLabel.Text = formatShortCash(amount * progress)
-            amountGlow.Text = amountLabel.Text
             if progress >= 1 then
                 break
             end
             task.wait()
         end
     end)
+
     -- buttons
     local closing = false
     local function close()
@@ -376,10 +315,11 @@ local function showWindow()
         end
         closing = true
         UISound.Play("Close")
-        TweenService
-            :Create(fitScale, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.6 })
-            :Play()
+        TweenService:Create(popScale, TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.In), { Scale = 0.8 }):Play()
         TweenService:Create(dimFrame, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
+        task.delay(0.16, function()
+            holder.Visible = false
+        end)
         task.delay(0.22, function()
             screenGui:Destroy()
         end)
@@ -393,89 +333,47 @@ local function showWindow()
         end
         close()
     end
-    -- the drawn X closes too
-    local closeButton = create("TextButton", {
-        Text = "",
-        BackgroundTransparency = 1,
-        Position = UDim2.fromOffset(494, 3),
-        Size = UDim2.fromOffset(62, 55),
-        ZIndex = 20,
-    }, window)
     closeButton.Activated:Connect(function()
         collectAndClose()
     end)
-    -- a button piece (OffGreen / OffGold) at rect with its title + subtitle and a press bounce
-    local function makeButton(text, subtitle, pieceName, rect, onClick, pulse)
-        local buttonHolder = create("Frame", {
-            Position = UDim2.fromOffset(rect[1], rect[2]),
-            Size = UDim2.fromOffset(rect[3], rect[4]),
-            BackgroundTransparency = 1,
-            ZIndex = 8,
-        }, window)
-        local art = MenuArt.piece(buttonHolder, "Art", pieceName, { 0, 0, rect[3], rect[4] }, 9, 18)
-        makeLabel(art, text, 28, WHITE, {
-            Position = UDim2.fromOffset(0, subtitle and 14 or 0),
-            Size = UDim2.new(1, 0, 0, subtitle and 34 or rect[4]),
-            ZIndex = 11,
-        })
+    -- a studded kit button with a big word and a small line under it; hover/press bounce comes from Kit.animate
+    local BY, BH = SY + 364, 88
+    local function makeButton(name, textValue, subtitle, pal, x, w, onClick)
+        local b = H.button(window, name, x, BY, w, BH, 16, pal, 8)
+        H.text(b, "Label", textValue, w / 2, subtitle and 30 or (BH - 4) / 2, subtitle and 34 or 40, 11)
         if subtitle then
-            makeLabel(
-                art,
-                subtitle,
-                16,
-                rgb(255, 255, 225),
-                { Position = UDim2.fromOffset(0, 50), Size = UDim2.new(1, 0, 0, 22), ZIndex = 11 }
-            )
+            H.text(b, "Sub", subtitle, w / 2, 64, 19, 11)
         end
-        local hit = create("TextButton", {
-            Text = "",
-            AutoButtonColor = false,
-            BackgroundTransparency = 1,
-            Size = UDim2.fromScale(1, 1),
-            ZIndex = 12,
-        }, buttonHolder)
-        local pulseScale = create("UIScale", {}, buttonHolder)
-        if pulse then
-            TweenService:Create(
-                pulseScale,
-                TweenInfo.new(0.65, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                { Scale = 1.05 }
-            ):Play()
-        end
-        hit.MouseEnter:Connect(function()
-            UISound.Play("Hover")
-        end)
-        hit.MouseButton1Down:Connect(function()
-            art.Position = UDim2.fromOffset(0, 3)
-        end)
-        hit.MouseButton1Up:Connect(function()
-            art.Position = UDim2.fromScale(0, 0)
-        end)
-        hit.Activated:Connect(function()
-            UISound.Play("Click")
+        b.Activated:Connect(function()
             onClick()
         end)
-        return buttonHolder
+        return b
     end
     if canDouble then
-        makeButton("COLLECT", formatShortCash(amount), "OffGreen", { 39, 408, 240, 101 }, function()
+        makeButton("Collect", "COLLECT", formatShortCash(amount), Kit.COLOR.lime, SX + 30, 220, function()
             collectAndClose()
         end)
         local doubleButton = makeButton(
+            "Double",
             "2× COLLECT",
             formatShortCash(amount * 2) .. "  ·  R$ " .. tostring(ShopConfig.Prices.Offline2x or 19),
-            "OffGold",
-            { 284, 408, 240, 101 },
+            Kit.COLOR.gold,
+            SX + SW - 30 - 220,
+            220,
             function()
                 pcall(function()
                     shopRemote:InvokeServer("Buy", "Offline2x")
                 end)
-            end,
-            true
+            end
         )
-        local badge = MenuArt.piece(doubleButton, "Badge", "OffBadge", { 162, -26, 90, 40 }, 14, 12)
-        badge.Rotation = -6
-        makeLabel(badge, "2× CASH!", 15, WHITE, { Size = UDim2.fromScale(1, 1), ZIndex = 15 })
+        doubleButton:SetAttribute("Glint", true) -- the best deal's outline glints gold
+        -- red tag on the corner of the 2x button, wiggling
+        local badge = H.rect(doubleButton, "Badge", 134, -30, 104, 36, 10, 14)
+        H.ink(badge, 3)
+        H.grad(badge, Kit.COLOR.red[1], Kit.COLOR.red[2])
+        H.text(badge, "Label", "2× CASH!", 52, 17, 20, 15)
+        badge.Rotation = 6
+        badge:SetAttribute("Wiggle", 6)
         player:GetAttributeChangedSignal("OfflineDoubled"):Connect(function()
             if not player:GetAttribute("OfflineDoubled") or not amountLabel.Parent then
                 return
@@ -486,39 +384,43 @@ local function showWindow()
                 while amountLabel.Parent do
                     local progress = math.clamp((os.clock() - startedAt) / 0.8, 0, 1)
                     amountLabel.Text = formatShortCash(amount * (1 + progress))
-                    amountGlow.Text = amountLabel.Text
                     if progress >= 1 then
                         break
                     end
                     task.wait()
                 end
             end)
-            local flash = create(
-                "Frame",
-                { BackgroundColor3 = WHITE, BackgroundTransparency = 0.2, Size = UDim2.fromScale(1, 1), ZIndex = 30 },
-                window
-            )
-            addCorner(flash, 18)
+            local flash = H.rect(sheet, "Flash", 0, 0, SW, SH, 14, 30)
+            flash.BackgroundTransparency = 0.2
             TweenService:Create(flash, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
             task.delay(1.8, function()
                 collectAndClose(amount * 2)
             end)
         end)
     else
-        makeButton("AWESOME!", nil, "OffGreen", { 130, 408, 300, 101 }, function()
+        makeButton("Collect", "AWESOME!", nil, Kit.COLOR.lime, W / 2 - 150, 300, function()
             collectAndClose()
         end)
     end
+    -- the kit animates it all: rays spin, coins float, sparkles twinkle, words gleam, buttons bounce with the game's sounds
+    Kit.animate(screenGui, {
+        sound = function(kind)
+            UISound.Play(kind == "hover" and "Hover" or "Click")
+        end,
+    })
     UISound.Play("Open")
 end
 
 -- wait for the join sequence (loading screen + sky arrival) to finish, then show
 task.spawn(function()
     local startedAt = os.clock()
+    -- 2026-11-08: the loading screen is gone (SkyStart sets LoadingScreenDone as soon as the sky cover fades), so wait
+    -- for the sky-drop intro itself to finish; otherwise the window popped up in the middle of the drop
     repeat
         task.wait(0.5)
-    until (player:GetAttribute("JoinArrivalFinished") or player:GetAttribute("LoadingScreenDone"))
-        or os.clock() - startedAt > 20
+    until player:GetAttribute("JoinArrivalFinished")
+        or (player:GetAttribute("LoadingScreenDone") and not player:GetAttribute("JoinArrivalStarted") and os.clock() - startedAt > 6)
+        or os.clock() - startedAt > 45
     task.wait(1.2)
     showWindow()
     player:GetAttributeChangedSignal("OfflineEarnings"):Connect(showWindow)
