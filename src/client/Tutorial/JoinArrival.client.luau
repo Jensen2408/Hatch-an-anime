@@ -508,110 +508,68 @@ local function streamAround(position)
 end
 
 -- Welcome card with your avatar and display name; pops in now and shrinks away just before the landing.
+-- the Folk Stud welcome card (2026-11-08): a white studded plate with a black outline and hard shadow, your avatar in a
+-- pink studded tile breaking out over the left edge, "WELCOME BACK," on the top border and your name in big gold letters
+-- with a light sweeping over them. Old menu-art card: ServerStorage._ARCHIVE.JoinArrival_BeforeStudSkip_2026-11-08
 local function showWelcomeCard(travelTime)
+    local FolkStud = StudKit
+    local FH = StudKit.H
+    local nameText = string.upper(player.DisplayName) .. "!"
+    local nameWidth = game:GetService("TextService"):GetTextSize(nameText, 50, Enum.Font.FredokaOne, Vector2.new(2000, 100)).X
+    local W, HT = math.max(330, nameWidth + 170), 108
     local card = Instance.new("Frame")
     card.Name = "WelcomeCard"
     card.AnchorPoint = Vector2.new(0.5, 1)
-    card.Position = UDim2.new(0.5, 0, 1, -70)
-    card.Size = UDim2.fromOffset(0, 116)
-    card.AutomaticSize = Enum.AutomaticSize.X
+    card.Position = UDim2.new(0.5, 0, 1, -44)
+    card.Size = UDim2.fromOffset(W, HT)
     card.BackgroundTransparency = 1
-    card.BorderSizePixel = 0
     card.ZIndex = 50
-    -- the pink menu-art card (MenuArt piece CardPink), 9-sliced to the width of the name
-    local cardArt = MenuArt.piece(card, "Art", "CardPink", { 0, 0, 240, 116 }, 50, 30)
-    cardArt.Size = UDim2.fromScale(1, 1)
-    -- content row (the art is scale-sized, so only this row sets the card's width)
-    local contentRow = Instance.new("Frame")
-    contentRow.Name = "Content"
-    contentRow.BackgroundTransparency = 1
-    contentRow.AutomaticSize = Enum.AutomaticSize.X
-    contentRow.Size = UDim2.fromScale(0, 1)
-    contentRow.ZIndex = 52
-    contentRow.Parent = card
-    local padding = Instance.new("UIPadding")
-    padding.PaddingLeft = UDim.new(0, 18)
-    padding.PaddingRight = UDim.new(0, 30)
-    padding.PaddingBottom = UDim.new(0, 6) -- the art's bottom lip
-    padding.Parent = contentRow
-    local rowLayout = Instance.new("UIListLayout")
-    rowLayout.FillDirection = Enum.FillDirection.Horizontal
-    rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-    rowLayout.Padding = UDim.new(0, 16)
-    rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    rowLayout.Parent = contentRow
-    -- avatar head shot inside the menu-art icon tile
-    local avatarTile = MenuArt.piece(contentRow, "AvatarTile", "IconTile", { 0, 0, 90, 88 }, 52)
-    avatarTile.LayoutOrder = 1
+    -- the plate (read only: flat, studs at 0.8, no lip)
+    FH.shadow(card, "Plate", 0, 0, W, HT, 16, 50)
+    local plate = FH.rect(card, "Plate", 0, 0, W, HT, 14, 51)
+    FH.ink(plate, 4)
+    FH.studs(plate, Vector2.new(50, 46), 0.8, 12, 51)
+    FH.shine(plate, 14, 52)
+    -- avatar tile: pink candy square breaking out over the left edge, on spinning gold rays
+    FH.rays(card, 58, HT / 2, 210, 50, FH.hex("FFD000"))
+    local tile = FH.rect(card, "AvatarTile", -10, HT / 2 - 54, 108, 108, 18, 54)
+    FH.ink(tile, 4)
+    FH.grad(tile, FolkStud.COLOR.pink[1], FolkStud.COLOR.pink[2])
+    FH.studs(tile, Vector2.new(48, 48), 0.7, 17, 54)
+    tile.Rotation = -6
     local avatar = Instance.new("ImageLabel")
     avatar.Name = "Avatar"
     avatar.BackgroundTransparency = 1
-    avatar.Position = UDim2.fromOffset(9, 8)
-    avatar.Size = UDim2.fromOffset(72, 72)
-    avatar.ZIndex = 53
-    avatar.Parent = avatarTile
+    avatar.Position = UDim2.fromOffset(8, 6)
+    avatar.Size = UDim2.fromOffset(92, 92)
+    avatar.ZIndex = 56
+    avatar.Parent = tile
     task.spawn(function()
         local thumbnailOk, thumbnailUrl = pcall(function()
-            return Players:GetUserThumbnailAsync(
-                player.UserId,
-                Enum.ThumbnailType.HeadShot,
-                Enum.ThumbnailSize.Size150x150
-            )
+            return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150)
         end)
         if thumbnailOk then
             avatar.Image = thumbnailUrl
         end
     end)
-    local textColumn = Instance.new("Frame")
-    textColumn.BackgroundTransparency = 1
-    textColumn.Size = UDim2.fromOffset(0, 80)
-    textColumn.AutomaticSize = Enum.AutomaticSize.X
-    textColumn.LayoutOrder = 2
-    textColumn.ZIndex = 52
-    textColumn.Parent = contentRow
-    local columnLayout = Instance.new("UIListLayout")
-    columnLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-    columnLayout.Padding = UDim.new(0, 0)
-    columnLayout.Parent = textColumn
-    local greetingLabel = Instance.new("TextLabel")
-    greetingLabel.BackgroundTransparency = 1
-    greetingLabel.Size = UDim2.fromOffset(0, 26)
-    greetingLabel.AutomaticSize = Enum.AutomaticSize.X
-    greetingLabel.TextXAlignment = Enum.TextXAlignment.Left
-    greetingLabel.FontFace = Font.new("rbxasset://fonts/families/FredokaOne.json")
-    greetingLabel.TextSize = 22
-    greetingLabel.TextColor3 = Color3.fromRGB(255, 226, 240)
-    greetingLabel.ZIndex = 52
-    greetingLabel.Text = "WELCOME BACK,"
-    do
-        local greetingStroke = Instance.new("UIStroke")
-        greetingStroke.Color = MenuArt.Stroke
-        greetingStroke.Thickness = 2
-        greetingStroke.Parent = greetingLabel
-    end
-    greetingLabel.Parent = textColumn
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.Size = UDim2.fromOffset(0, 50)
-    nameLabel.AutomaticSize = Enum.AutomaticSize.X
-    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-    nameLabel.FontFace = Font.new("rbxasset://fonts/families/FredokaOne.json")
-    nameLabel.TextSize = 44
-    nameLabel.TextColor3 = Color3.new(1, 1, 1)
-    nameLabel.ZIndex = 52
-    nameLabel.Text = string.upper(player.DisplayName) .. "!"
-    local nameStroke = Instance.new("UIStroke")
-    nameStroke.Color = MenuArt.Stroke
-    nameStroke.Thickness = 4
-    nameStroke.Parent = nameLabel
-    nameLabel.Parent = textColumn
+    -- "WELCOME BACK," on the top border, the name big and gold
+    FH.text(card, "Greeting", "WELCOME BACK,", 118, -2, 26, 58, FolkStud.COLOR.pink[1], "left")
+    local nameLabel = FH.text(card, "PlayerName", nameText, 118, HT / 2 + 8, 50, 58, Color3.new(1, 1, 1), "left")
+    local g = Instance.new("UIGradient")
+    g.Rotation = 90
+    g.Color = ColorSequence.new(FH.hex("FFE600"), FH.hex("FF8A00"))
+    g.Parent = nameLabel
+    FH.gleam(nameLabel)
+    FH.sparkle(card, "Twinkle1", W - 18, 10, 26, 59, 0)
+    FH.sparkle(card, "Twinkle2", W - 50, HT - 6, 18, 59, 0.5)
+
     local screenSize = arrivalGui.AbsoluteSize
-    local fullScale = math.clamp(math.min(screenSize.X, screenSize.Y) / 1100, 0.42, 0.72) -- smaller, scales with screen
-    card.Position = UDim2.new(0.5, 0, 1, -40)
+    local fullScale = math.clamp(math.min(screenSize.X, screenSize.Y) / 1000, 0.48, 0.85)
     local cardScale = Instance.new("UIScale")
     cardScale.Scale = 0.6 * fullScale
     cardScale.Parent = card
     card.Parent = arrivalGui
+    FolkStud.animate(card, { sounds = false })
     TweenService:Create(cardScale, TweenInfo.new(0.35, Enum.EasingStyle.Back), { Scale = fullScale }):Play()
     task.delay(travelTime - 0.3, function()
         if card.Parent then

@@ -1,4 +1,4 @@
--- LeaveEarningsOverlay (LocalScript): when the Roblox menu (Esc) opens, show behind it that the temple keeps earning offline.
+-- LeaveEarningsOverlay (LocalScript, Folk Stud look 2026-11-08; old look: ServerStorage._ARCHIVE.LeaveEarningsOverlay_BeforeStud_2026-11-08): when the Roblox menu (Esc) opens, show behind it that the temple keeps earning offline.
 -- Offline rate matches PlayerDataService: half of live income, for up to 8 hours.
 -- Display only (estimate from the local player's PlacedItems IncomePerSecond x OwnerIncomeMultiplier); no remotes.
 -- If PlayerDataService's offline rate / cap change, OFFLINE_RATE / OFFLINE_CAP here must be updated by hand.
@@ -60,103 +60,56 @@ local function getIncomePerSecond()
         * (workspace:GetAttribute("AbuseCashMultiplier") or 1)
 end
 
+---------------------------------------------------------------- the card, in the Folk Stud look (2026-11-08)
+-- A white studded plate at the top of the screen (the Roblox menu covers the middle): "YOUR TEMPLE KEEPS EARNING!"
+-- on the top border, the cash stack breaking out over the left edge on spinning gold rays, the offline rate in candy
+-- green and the 8 hour cap underneath, with coins raining behind it.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local FolkStud = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
+local H = FolkStud.H
+local CASH_ART = "rbxassetid://136807180106184"
+local CASH_GREEN = H.hex("2BF08C")
+local W, HT = 700, 176
+
 local screenGui = create(
     "ScreenGui",
-    { Name = "LeaveEarningsOverlay", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 999, Enabled = false },
+    { Name = "LeaveEarningsOverlay", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 999, Enabled = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling },
     player:WaitForChild("PlayerGui")
 )
-local background = create(
-    "Frame",
-    { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(18, 8, 40), BackgroundTransparency = 1 },
-    screenGui
-)
-create(
-    "UIGradient",
-    { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(60, 20, 110), Color3.fromRGB(10, 4, 24)) },
-    background
-)
-local rays = create("ImageLabel", {
-    BackgroundTransparency = 1,
-    Image = RAYS_IMAGE,
-    ImageColor3 = Color3.fromRGB(255, 210, 90),
-    ImageTransparency = 1,
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.16),
-    Size = UDim2.fromOffset(900, 900),
-}, screenGui)
-local halo = create("ImageLabel", {
-    BackgroundTransparency = 1,
-    Image = GLOW_IMAGE,
-    ImageColor3 = Color3.fromRGB(255, 200, 60),
-    ImageTransparency = 1,
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.13),
-    Size = UDim2.fromOffset(620, 300),
-}, screenGui)
-local textHolder = create("Frame", {
-    BackgroundTransparency = 1,
-    AnchorPoint = Vector2.new(0.5, 0),
-    Position = UDim2.new(0.5, 0, 0, 24),
-    Size = UDim2.fromOffset(900, 170),
-}, screenGui)
-local textScale = create("UIScale", {}, textHolder)
-local function makeText(text, y, size, color, thickness)
-    local label = create("TextLabel", {
-        BackgroundTransparency = 1,
-        Position = UDim2.fromOffset(0, y),
-        Size = UDim2.new(1, 0, 0, size + 8),
-        Text = text,
-        FontFace = FONT,
-        TextSize = size,
-        TextColor3 = color,
-        TextTransparency = 1,
-    }, textHolder)
-    local stroke = create(
-        "UIStroke",
-        { Color = BLACK, Thickness = thickness, Transparency = 1, LineJoinMode = Enum.LineJoinMode.Round },
-        label
-    )
-    return label, stroke
-end
-local titleLabel, titleStroke = makeText("🌙  YOUR TEMPLE KEEPS EARNING!", 0, 44, WHITE, 5)
-local rateLabel, rateStroke = makeText("$0/s while you're away", 58, 34, Color3.fromRGB(130, 255, 110), 4)
-local capLabel, capStroke =
-    makeText("Come back to collect up to $0  ·  max 8 hours", 104, 22, Color3.fromRGB(255, 225, 150), 3)
-local titleGradient = create("UIGradient", {
-    Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 214, 72)),
-        ColorSequenceKeypoint.new(0.5, WHITE),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 140, 220)),
-    }),
-}, titleLabel)
-local rain =
-    create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ClipsDescendants = true }, screenGui)
+local background = create("Frame", { Name = "Dim", Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLACK, BackgroundTransparency = 1, ZIndex = 0 }, screenGui)
+local rain = create("Frame", { Name = "Rain", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ClipsDescendants = true, ZIndex = 0 }, screenGui)
+
+local root = create("Frame", { Name = "Root", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 52), Size = UDim2.fromOffset(W, HT) }, screenGui)
+local fitScale = create("UIScale", { Name = "Fit" }, root)
+local stage = create("Frame", { Name = "Stage", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0), Size = UDim2.fromScale(1, 1) }, root)
+local popScale = create("UIScale", { Name = "Pop", Scale = 0.6 }, stage)
+
+H.rays(stage, 46, HT / 2 + 4, 300, 1, H.hex("FFD000"))
+H.shadow(stage, "Plate", 0, 0, W, HT, 16, 2)
+local plate = H.rect(stage, "Plate", 0, 0, W, HT, 14, 2)
+H.ink(plate, 4)
+H.studs(plate, Vector2.new(50, 46), 0.8, 12, 2)
+H.shine(plate, 14, 3)
+H.sticker(stage, "Cash", CASH_ART, 46, HT / 2 + 2, 136, 7, true)
+H.sparkle(stage, "Twinkle1", 104, 30, 26, 8, 0)
+H.sparkle(stage, "Twinkle2", 6, 150, 20, 8, 0.5)
+H.gleam(H.text(stage, "Title", "YOUR TEMPLE KEEPS EARNING!", W / 2 + 40, -2, 40, 8))
+local rateLabel = H.text(stage, "Rate", "$0/s while you're away", W / 2 + 46, 76, 44, 8, CASH_GREEN)
+H.gleam(rateLabel)
+local capLabel = H.text(stage, "Cap", "Come back to collect up to $0  ·  max 8 hours", W / 2 + 46, 132, 23, 8, H.hex("FFD000"))
+FolkStud.animate(root, { sounds = false })
 
 local isOpen, renderConnection = false, nil
-local function fadeOverlay(isVisible)
-    local tweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Quad)
-    TweenService:Create(background, tweenInfo, { BackgroundTransparency = isVisible and 0.25 or 1 }):Play()
-    TweenService:Create(rays, tweenInfo, { ImageTransparency = isVisible and 0.55 or 1 }):Play()
-    TweenService:Create(halo, tweenInfo, { ImageTransparency = isVisible and 0.3 or 1 }):Play()
-    for _, target in { titleLabel, rateLabel, capLabel } do
-        TweenService:Create(target, tweenInfo, { TextTransparency = isVisible and 0 or 1 }):Play()
-    end
-    for _, target in { titleStroke, rateStroke, capStroke } do
-        TweenService:Create(target, tweenInfo, { Transparency = isVisible and 0 or 1 }):Play()
-    end
-end
 local function spawnFallingCoin()
-    local size = math.random(26, 54)
-    local image = math.random() < 0.75 and COINS_IMAGE or SPARK_IMAGE
+    local size = math.random(30, 58)
     local coinLabel = create("ImageLabel", {
         BackgroundTransparency = 1,
-        Image = image,
+        Image = math.random() < 0.6 and CASH_ART or COINS_IMAGE,
         ScaleType = Enum.ScaleType.Fit,
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(math.random(), 0, 0, -60),
         Size = UDim2.fromOffset(size, size),
         Rotation = math.random(-40, 40),
-        ImageTransparency = image == SPARK_IMAGE and 0.2 or 0,
     }, rain)
     local duration = 3 + math.random() * 2.5
     TweenService:Create(coinLabel, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
@@ -177,21 +130,17 @@ local function showOverlay()
     capLabel.Text = "Come back to collect up to " .. formatShortCash(rate * OFFLINE_CAP) .. "  ·  max 8 hours"
     if rate <= 0 then
         rateLabel.Text = "Place characters on your stands"
-        capLabel.Text = "...and they earn cash for you even while you're offline!"
+        capLabel.Text = "...they earn cash for you even while you're offline!"
     end
-    textScale.Scale = math.clamp(workspace.CurrentCamera.ViewportSize.X / 960, 0.5, 1.1)
+    fitScale.Scale = math.clamp(workspace.CurrentCamera.ViewportSize.X / (W + 260), 0.45, 1.1)
     screenGui.Enabled = true
-    fadeOverlay(true)
-    textScale.Scale *= 0.85
-    TweenService:Create(textScale, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Scale = textScale.Scale / 0.85 })
-        :Play()
-    local spawnTimer, startedAt = 0, os.clock()
+    popScale.Scale = 0.6
+    TweenService:Create(popScale, TweenInfo.new(0.4, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+    TweenService:Create(background, TweenInfo.new(0.35, Enum.EasingStyle.Quad), { BackgroundTransparency = 0.4 }):Play()
+    local spawnTimer = 0
     renderConnection = RunService.RenderStepped:Connect(function(dt)
-        rays.Rotation += dt * 8
-        titleGradient.Offset = Vector2.new(math.sin((os.clock() - startedAt) * 1.5) * 0.4, 0)
-        halo.Size = UDim2.fromOffset(620 + math.sin(os.clock() * 2) * 40, 300 + math.sin(os.clock() * 2) * 20)
         spawnTimer += dt
-        if spawnTimer > 0.12 then
+        if spawnTimer > 0.14 then
             spawnTimer = 0
             spawnFallingCoin()
         end
@@ -202,12 +151,13 @@ local function hideOverlay()
         return
     end
     isOpen = false
-    fadeOverlay(false)
+    TweenService:Create(popScale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.6 }):Play()
+    TweenService:Create(background, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
     if renderConnection then
         renderConnection:Disconnect()
         renderConnection = nil
     end
-    task.delay(0.4, function()
+    task.delay(0.26, function()
         if not isOpen then
             screenGui.Enabled = false
             rain:ClearAllChildren()
