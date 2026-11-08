@@ -91,7 +91,16 @@ local function baseDistance(plot, pos)
     local lo, hi = Rules.BaseMin, Rules.BaseMax
     local dx = math.max(lo.X - rel.X, 0, rel.X - hi.X)
     local dz = math.max(lo.Z - rel.Z, 0, rel.Z - hi.Z)
-    local inside = dx == 0 and dz == 0 and rel.Y >= lo.Y and rel.Y <= hi.Y
+    -- secured only inside the capture square on the plot's spawn pad (EggStealConfig CaptureHalfSize)
+    local spawnPad = plot:FindFirstChild("PlotSpawn")
+    local inside
+    if spawnPad then
+        local pad = spawnPad.CFrame:PointToObjectSpace(pos)
+        local half = Rules.CaptureHalfSize or 6
+        inside = math.abs(pad.X) <= half and math.abs(pad.Z) <= half and pad.Y >= -4 and pad.Y <= (Rules.CaptureHeight or 14)
+    else
+        inside = dx == 0 and dz == 0 and rel.Y >= lo.Y and rel.Y <= hi.Y
+    end
     return math.sqrt(dx * dx + dz * dz), inside
 end
 

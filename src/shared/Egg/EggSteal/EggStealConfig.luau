@@ -35,6 +35,10 @@ Config.Rules = {
     -- Covers the temple, fence, chamber yard and spawn pad of a plot. Plots are 130+ studs apart.
     BaseMin = Vector3.new(-58, -15, -32),
     BaseMax = Vector3.new(32, 60, 48),
+    -- Capture zone (2026-11-08): a stolen egg is secured inside this small square on the player's PlotSpawn pad
+    -- (PlotSpawn space, studs). StolenEggBanner draws it as a white glowing box rising from the ground.
+    CaptureHalfSize = 6, -- 12 x 12 studs
+    CaptureHeight = 14, -- from just under the pad to this high above it
 
     StealableStatuses = { Incubating = true, Loaded = true }, -- chamber Status values that can be stolen from
 
