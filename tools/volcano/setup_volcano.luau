@@ -8,11 +8,9 @@ It finishes the imported volcano so it works with the Volcano Eruption event:
      "Incubator One Stud Cavity" variant, EmissiveMaskContent from emissive_ids.json, EmissiveTint (255,150,60), EmissiveStrength 0
   4. attribute ManualPlace = true and Persistent streaming
 Fill EMISSIVE from assets/Volcano/emissive_ids.json (uploaded masks) before running. ]]
-local EMISSIVE = {
-    S1 = 123765265008842, S2 = 123765265008842, S3 = 123765265008842, S4 = 123765265008842, S5 = 123765265008842,
-    S6 = 100830098846033, -- the part with the lava lake and the lip of the opening
-    S7 = 123765265008842, S8 = 123765265008842, S9 = 123765265008842,
-}
+local EMISSIVE = { S1 = 123765265008842, S2 = 123765265008842, S3 = 123765265008842, S4 = 123765265008842, S5 = 123765265008842, S6 = 123765265008842, S7 = 123765265008842, S8 = 110245954805345, S9 = 134289558024090 }
+local COLOR = { S1 = 91057401424667, S2 = 137711700548656, S3 = 81504297165788, S4 = 133335444790918, S5 = 89321068038879, S6 = 132458354712271, S7 = 70756323052654, S8 = 132719087372371, S9 = 124899494675911 }
+local NORMAL = { S1 = 108669205068766, S2 = 108705082556581, S3 = 97058665822916, S4 = 91175222066635, S5 = 119571529139001, S6 = 108913843964993, S7 = 109498852079175, S8 = 88637828747257, S9 = 79417054280657 }
 local MAP_CENTRE = Vector3.new(0, 0, 0)
 local OPENING_RING = 98 -- studs from the crater's centre: inside the opening's strip (88 to 110)
 
@@ -74,6 +72,8 @@ for _, d in new:GetDescendants() do
         local key = d.Name:match("_S(%d)$")
         local appearance = d:FindFirstChildOfClass("SurfaceAppearance")
         if appearance and key and EMISSIVE["S" .. key] then
+            appearance.ColorMapContent = Content.fromUri("rbxassetid://" .. COLOR["S" .. key])
+            appearance.NormalMapContent = Content.fromUri("rbxassetid://" .. NORMAL["S" .. key])
             appearance.EmissiveMaskContent = Content.fromUri("rbxassetid://" .. EMISSIVE["S" .. key])
             appearance.EmissiveTint = Color3.fromRGB(255, 150, 60)
             appearance.EmissiveStrength = 0

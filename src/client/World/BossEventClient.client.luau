@@ -413,8 +413,10 @@ local function spawnBoss()
     end
     local highlight = make("Highlight", {
         FillColor = Color3.new(1, 1, 1),
-        FillTransparency = 1,
-        OutlineTransparency = 1,
+        FillTransparency = 1, -- (the hit flash tweens this)
+        -- every boss gets this black outline (house style for bosses): it keeps the big voxel silhouette readable against the map
+        OutlineColor = Color3.new(0, 0, 0),
+        OutlineTransparency = 0,
         DepthMode = Enum.HighlightDepthMode.Occluded,
     }, model)
     local egg

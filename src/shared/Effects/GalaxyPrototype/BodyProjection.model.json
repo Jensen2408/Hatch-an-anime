@@ -1,0 +1,141 @@
+{
+  "Children": [
+    {
+      "Properties": {
+        "Transparency": 1,
+        "CanQuery": false,
+        "CanCollide": false,
+        "Anchored": true,
+        "MeshId": "rbxassetid://72455137049347",
+        "CanTouch": false,
+        "Size": [
+          0.5750000476837158,
+          0.27500003576278687,
+          0.34150004386901855
+        ]
+      },
+      "Name": "T42_SunGod Part 2",
+      "ClassName": "MeshPart"
+    },
+    {
+      "Properties": {
+        "Transparency": 1,
+        "CanQuery": false,
+        "CanCollide": false,
+        "Anchored": true,
+        "MeshId": "rbxassetid://99510776307431",
+        "CanTouch": false,
+        "Size": [
+          0.6375000476837158,
+          0.2875000238418579,
+          0.3540000021457672
+        ]
+      },
+      "Name": "T42_SunGod Part 6",
+      "ClassName": "MeshPart"
+    },
+    {
+      "Properties": {
+        "Transparency": 1,
+        "CanQuery": false,
+        "CanCollide": false,
+        "Anchored": true,
+        "MeshId": "rbxassetid://125810500023263",
+        "CanTouch": false,
+        "Size": [
+          0.4645000100135803,
+          0.014498993754386902,
+          0.30000001192092896
+        ]
+      },
+      "Name": "T42_SunGod Part 3",
+      "ClassName": "MeshPart"
+    },
+    {
+      "Properties": {
+        "Transparency": 1,
+        "CanQuery": false,
+        "CanCollide": false,
+        "Anchored": true,
+        "MeshId": "rbxassetid://102888151377375",
+        "CanTouch": false,
+        "Size": [
+          0.6415000557899475,
+          0.3624999523162842,
+          0.40400004386901855
+        ]
+      },
+      "Name": "T42_SunGod Part 7",
+      "ClassName": "MeshPart"
+    },
+    {
+      "Properties": {
+        "Transparency": 1,
+        "CanQuery": false,
+        "CanCollide": false,
+        "Anchored": true,
+        "MeshId": "rbxassetid://79066681138571",
+        "CanTouch": false,
+        "Size": [
+          0.6790000200271606,
+          0.4375,
+          0.3165000081062317
+        ]
+      },
+      "Name": "T42_SunGod Part 4",
+      "ClassName": "MeshPart"
+    },
+    {
+      "Properties": {
+        "Transparency": 1,
+        "CanQuery": false,
+        "CanCollide": false,
+        "Anchored": true,
+        "MeshId": "rbxassetid://86863964693103",
+        "CanTouch": false,
+        "Size": [
+          0.564499020576477,
+          0.22699904441833496,
+          0.3500019609928131
+        ]
+      },
+      "Name": "T42_SunGod Part 8",
+      "ClassName": "MeshPart"
+    },
+    {
+      "Properties": {
+        "Transparency": 1,
+        "CanQuery": false,
+        "CanCollide": false,
+        "Anchored": true,
+        "MeshId": "rbxassetid://139624345989268",
+        "CanTouch": false,
+        "Size": [
+          0.5164999961853027,
+          0.22700101137161255,
+          0.302001029253006
+        ]
+      },
+      "Name": "T42_SunGod Part 1",
+      "ClassName": "MeshPart"
+    },
+    {
+      "Properties": {
+        "Transparency": 1,
+        "CanQuery": false,
+        "CanCollide": false,
+        "Anchored": true,
+        "MeshId": "rbxassetid://72858289653305",
+        "CanTouch": false,
+        "Size": [
+          0.6125019788742065,
+          0.2749999761581421,
+          0.32500195503234863
+        ]
+      },
+      "Name": "T42_SunGod Part 5",
+      "ClassName": "MeshPart"
+    }
+  ],
+  "ClassName": "Folder"
+}

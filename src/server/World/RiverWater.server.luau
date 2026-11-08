@@ -4,7 +4,7 @@
 --      only, the place file keeps it), so the animated mesh water is the only surface. Set the script attribute ClearTerrainWater = false to keep the terrain water.
 --      Skipped when the experience can't create EditableMeshes (Game Settings > Security), since the clients then
 --      have no mesh water to show.
---   2. Runs the high tide clock (HighTideService) ~10x per second and announces scheduled tides.
+--   2. Runs the rapids clock (HighTideService) ~10x per second and announces scheduled tides.
 local AssetService = game:GetService("AssetService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local riverAssets = ReplicatedStorage:WaitForChild("WaterfallRiver")
@@ -55,7 +55,7 @@ while true do
     local _, startedNow = HighTideService.Update(workspace:GetServerTimeNow())
     if startedNow and announceEvent then
         announceEvent:FireAllClients({
-            title = "HIGH TIDE!",
+            title = "RAPIDS!",
             text = "The waterfall burst — huge waves and a flood of eggs are racing down the river!",
             color = "tide",
             by = "Server",

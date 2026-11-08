@@ -298,18 +298,21 @@ handlers.StopVolcano = function(player, _args)
 end
 handlers.StartHighTide = function(player, args)
     local secs = math.clamp(math.floor(tonumber(args.seconds) or 50), 25, 600)
-    HighTideService.Force(workspace:GetServerTimeNow(), secs)
+    local ok, message = HighTideService.Force(workspace:GetServerTimeNow(), secs)
+    if not ok then
+        return false, message
+    end
     announceEvent:FireAllClients({
-        title = "HIGH TIDE!",
+        title = "RAPIDS!",
         text = "The waterfall burst — huge waves and a flood of eggs are racing down the river! (" .. secs .. "s)",
         color = "tide",
         by = player.DisplayName,
     })
-    return true, "High tide started for " .. secs .. " seconds."
+    return true, "Rapids started for " .. secs .. " seconds."
 end
 handlers.StopHighTide = function(_player, _args)
     HighTideService.Stop(workspace:GetServerTimeNow(), RiverWaves.TideFallTime)
-    return true, "Forced high tide is receding (the regular 7-minute cycle still runs)."
+    return true, "Forced rapids are receding (the regular 7-minute cycle still runs)."
 end
 handlers.Announce = function(player, args)
     local message = type(args.text) == "string" and args.text:sub(1, 120) or ""

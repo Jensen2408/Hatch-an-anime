@@ -12,6 +12,8 @@ matter here.
 ]]
 local Config = {}
 
+Config.Enabled = false -- held for the next Arena update
+
 -- ===== Schedule =====
 Config.CycleSeconds = 3600 -- one scheduled brawl per hour...
 Config.OffsetSeconds = 0 -- ...on the hour (the river boss is at :30)

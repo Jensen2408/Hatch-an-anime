@@ -246,6 +246,18 @@
         },
         "V2MoveClient": {
           "$path": "src/client/Characters/V2MoveClient.client.luau"
+        },
+        "MutationCoating": {
+          "$path": "src/client/Effects/MutationCoating.client.luau"
+        },
+        "RainbowMutationClient": {
+          "$path": "src/client/Effects/RainbowMutationClient.client.luau"
+        },
+        "MeteorEventClient": {
+          "$path": "src/client/World/MeteorEventClient.client.luau"
+        },
+        "GalaxyPrototype": {
+          "$path": "src/client/Effects/GalaxyPrototype.client.luau"
         }
       }
     },
@@ -3401,6 +3413,9 @@
       }
     },
     "ReplicatedStorage": {
+      "MutationSurfaceFinishes": {
+        "$path": "src/shared/Effects/MutationSurfaceFinishes.model.json"
+      },
       "$className": "ReplicatedStorage",
       "$ignoreUnknownInstances": true,
       "ArenaEvent": {
@@ -3872,6 +3887,21 @@
         "CosmicOracle": {
           "$path": "src/shared/Characters/V2Moves/CosmicOracle.luau"
         }
+      },
+      "MeteorEvent": {
+        "MeteorConfig": {
+          "$path": "src/shared/World/MeteorEvent/MeteorConfig.luau"
+        },
+        "$className": "Folder"
+      },
+      "GalaxyPrototype": {
+        "$className": "Folder",
+        "OrionPixels": {
+          "$path": "src/shared/Effects/GalaxyPrototype/OrionPixels.luau"
+        },
+        "BodyProjection": {
+          "$path": "src/shared/Effects/GalaxyPrototype/BodyProjection.model.json"
+        }
       }
     },
     "ServerScriptService": {
@@ -4138,6 +4168,12 @@
       },
       "StarterCharacter": {
         "$path": "src/server/PlayerData/StarterCharacter.luau"
+      },
+      "MeteorEventService": {
+        "$path": "src/server/World/MeteorEventService.server.luau"
+      },
+      "GalaxyPrototypeAssets": {
+        "$path": "src/server/World/GalaxyPrototypeAssets.server.luau"
       }
     }
   }

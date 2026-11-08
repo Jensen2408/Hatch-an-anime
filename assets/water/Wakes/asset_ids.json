@@ -1,0 +1,19 @@
+{
+  "ring": "116282367317969",
+  "stream": "96909846657117",
+  "drop": "126670601810831",
+  "source": "Original procedural pixel art; tools/water/wake-textures.js",
+  "wake_atlas": "135265028807430",
+  "wake_source": "tools/water/wake-atlas.js",
+  "egg_wake_atlas": "rbxassetid://97974454229539",
+  "player_wake_atlas": "rbxassetid://102403119137953",
+  "splash": "rbxassetid://133191168318787",
+  "cube": "rbxassetid://102688400056466",
+  "hull_foam": "rbxassetid://137166137844169",
+  "wake_track": "rbxassetid://130272470799897",
+  "hull_coarse": "rbxassetid://109788613874435",
+  "track_coarse": "rbxassetid://76004795890424",
+  "splash_round_coarse": "rbxassetid://77297633636595",
+  "hull_shoulders": "rbxassetid://120435341960932",
+  "hull_closed_nose": "rbxassetid://110842520915298"
+}

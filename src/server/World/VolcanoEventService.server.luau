@@ -10,6 +10,7 @@ local TextChatService = game:GetService("TextChatService")
 
 local Config = require(ReplicatedStorage:WaitForChild("VolcanoEvent"):WaitForChild("VolcanoConfig"))
 local AdminRoles = require(script.Parent:WaitForChild("AdminRoles"))
+local HighTideService = require(script.Parent:WaitForChild("HighTideService"))
 
 local control = script:FindFirstChild("Control") or Instance.new("BindableFunction")
 control.Name = "Control"
@@ -44,9 +45,7 @@ local function keepVolcanoStreamed()
         for _, d in found:GetDescendants() do
             if d:IsA("Model") and d.ModelStreamingMode ~= Enum.ModelStreamingMode.Persistent then
                 d.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
-            elseif d:IsA("MeshPart") and d.RenderFidelity ~= Enum.RenderFidelity.Precise then
-                d.RenderFidelity = Enum.RenderFidelity.Precise
-            end
+            end -- (RenderFidelity cannot be written by a script: it is set to Precise on the volcano in Studio, see tools/volcano/setup_volcano.luau)
         end
     end
     local bgTrees = workspace:FindFirstChild("Flat Trees Background", true)
@@ -54,11 +53,6 @@ local function keepVolcanoStreamed()
         for _, child in bgTrees:GetChildren() do
             if child:IsA("Model") and child.ModelStreamingMode ~= Enum.ModelStreamingMode.Persistent then
                 child.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
-            end
-        end
-        for _, d in bgTrees:GetDescendants() do
-            if d:IsA("MeshPart") and d.RenderFidelity ~= Enum.RenderFidelity.Precise then
-                d.RenderFidelity = Enum.RenderFidelity.Precise
             end
         end
     end
@@ -116,6 +110,7 @@ local state = { running = false, token = 0 }
 
 local function setStart(value)
     workspace:SetAttribute("VolcanoStart", value)
+    HighTideService.Update(workspace:GetServerTimeNow())
 end
 
 local function endEvent(message)

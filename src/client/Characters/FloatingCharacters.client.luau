@@ -29,6 +29,8 @@ local Config = {
     SwayYaw = 8,
     SwayTilt = 0,
     MaxDistance = 140,
+    OutlineDistance = 220, -- black outline only within this many studs of the camera
+    MaxOutlines = 24, -- Roblox draws about 31 highlights; keep room for other effects
     Cream = Color3.fromRGB(255, 243, 207),
 }
 
@@ -118,7 +120,18 @@ local function add(model)
     ringOutline.Adornee, ringOutline.Color3, ringOutline.LineThickness, ringOutline.SurfaceTransparency, ringOutline.Transparency =
         ring, Config.Cream, 0.06, 1, 1
     ringOutline.Parent = ring
+    -- black outline (house style for characters and bosses): outline only, no fill; lives in the FX folder, so it goes with it
+    local outline = Instance.new("Highlight")
+    outline.Name = "BlackOutline"
+    outline.Adornee = model
+    outline.FillTransparency = 1
+    outline.OutlineColor = Color3.new(0, 0, 0)
+    outline.OutlineTransparency = 0
+    outline.DepthMode = Enum.HighlightDepthMode.Occluded
+    outline.Enabled = false
+    outline.Parent = folder
     active[model] = {
+        outline = outline,
         base = home,
         size = size,
         ground = ground,
@@ -153,12 +166,22 @@ RunService.RenderStepped:Connect(function()
     local camera = workspace.CurrentCamera
     local cameraPosition = camera and camera.CFrame.Position or Vector3.zero
     local now = workspace:GetServerTimeNow()
+    local outlined = 0
     for model, state in active do
         if not model.Parent then
             remove(model)
             continue
         end
-        if (state.base.Position - cameraPosition).Magnitude > Config.MaxDistance then
+        local distance = (state.base.Position - cameraPosition).Magnitude
+        -- Roblox only draws about 31 highlights at once: outline just the characters near the camera
+        local wantOutline = distance <= Config.OutlineDistance and outlined < Config.MaxOutlines
+        if wantOutline then
+            outlined += 1
+        end
+        if state.outline.Enabled ~= wantOutline then
+            state.outline.Enabled = wantOutline
+        end
+        if distance > Config.MaxDistance then
             continue
         end
         local floatTime = now + state.seed
@@ -179,5 +202,58 @@ RunService.RenderStepped:Connect(function()
         local ringWidth = state.size.X * (1.1 + rippleProgress * 1.1)
         state.ring.Size = Vector3.new(ringWidth, 0.05, ringWidth)
         state.sel.Transparency = 1 - 0.6 * (1 - rippleProgress) * math.min(1, rippleProgress * 8)
+    end
+end)
+
+-- Black outlines on eggs too (house style: eggs, characters and bosses). Outline-only Highlights on the nearest river and incubator
+-- eggs; the characters above use up to Config.MaxOutlines of Roblox's ~31 highlights, so eggs get a small share.
+local EGG_TAGS = { "RiverEgg", "IncubatorEgg" }
+local EGG_OUTLINE_DISTANCE = 150
+local MAX_EGG_OUTLINES = 6
+local eggOutlines = {} -- [Instance] = Highlight
+task.spawn(function()
+    while true do
+        task.wait(0.4)
+        local camera = workspace.CurrentCamera
+        local cameraPosition = camera and camera.CFrame.Position or Vector3.zero
+        local near = {}
+        for _, tag in EGG_TAGS do
+            for _, egg in CollectionService:GetTagged(tag) do
+                if egg:IsDescendantOf(workspace) then
+                    local ok, pivot = pcall(function()
+                        return egg:IsA("Model") and egg:GetPivot().Position or egg.Position
+                    end)
+                    local distance = ok and (pivot - cameraPosition).Magnitude or math.huge
+                    if distance <= EGG_OUTLINE_DISTANCE then
+                        table.insert(near, { egg = egg, distance = distance })
+                    end
+                end
+            end
+        end
+        table.sort(near, function(a, b)
+            return a.distance < b.distance
+        end)
+        local keep = {}
+        for i = 1, math.min(#near, MAX_EGG_OUTLINES) do
+            local egg = near[i].egg
+            keep[egg] = true
+            if not eggOutlines[egg] then
+                local outline = Instance.new("Highlight")
+                outline.Name = "BlackOutline"
+                outline.Adornee = egg
+                outline.FillTransparency = 1
+                outline.OutlineColor = Color3.new(0, 0, 0)
+                outline.OutlineTransparency = 0
+                outline.DepthMode = Enum.HighlightDepthMode.Occluded
+                outline.Parent = egg
+                eggOutlines[egg] = outline
+            end
+        end
+        for egg, outline in eggOutlines do
+            if not keep[egg] or not egg.Parent then
+                outline:Destroy()
+                eggOutlines[egg] = nil
+            end
+        end
     end
 end)

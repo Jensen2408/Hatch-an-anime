@@ -205,6 +205,10 @@ function Roll.play(res, onDone)
     local drama = math.min(tier + (bonus and 1 or 0), 6) -- intensity; colours and type still follow `tier`
     local accent = bonusRoll and typeof(res.qualityColor) == "Color3" and res.qualityColor or tierColor
     local origin = res.origin
+    -- inside the incubator: a tank-sized egg, a small circle on the egg platform, the camera just outside the glass
+    local inChamber = res.inChamber == true
+    local EGG_W = inChamber and Config.EggChamberHeight or EGG_W
+    local circleStuds = inChamber and Config.ChamberCircleSize or Config.CircleSize
     local sceneMotion, uiMotion = K.motion(), K.motion()
     local anim = sceneMotion.anim
 
@@ -234,14 +238,15 @@ function Roll.play(res, onDone)
     local faceDir = flat.Magnitude > 0.1 and flat.Unit or Vector3.zAxis
     local rayParams = RaycastParams.new()
     rayParams.FilterDescendantsInstances = { char, fx }
-    for _, turn in { 0, 30, -30, 60, -60, 90, -90, 120, -120, 180 } do
+    for _, turn in (inChamber and {} or { 0, 30, -30, 60, -60, 90, -90, 120, -120, 180 }) do
         local dir = CFrame.Angles(0, math.rad(turn), 0):VectorToWorldSpace(faceDir)
         if not workspace:Raycast(origin, dir * 18, rayParams) then
             faceDir = dir
             break
         end
     end
-    local worldEye = origin + faceDir * 15 - Vector3.new(0, 2.2, 0)
+    local worldEye = inChamber and origin + faceDir * Config.ChamberCameraDistance + Vector3.new(0, 0.9, 0)
+        or origin + faceDir * 15 - Vector3.new(0, 2.2, 0)
     local down = workspace:Raycast(origin, Vector3.new(0, -24, 0), rayParams)
     local groundY = down and down.Position.Y or origin.Y - 4
 
@@ -271,7 +276,7 @@ function Roll.play(res, onDone)
         Vector3.new(origin.X, groundY + 1, origin.Z),
         Vector3.zAxis
     )
-    local circleGui, circlePart = K.panel(fx, Config.CircleSize, Config.CircleSize, floorCf, 24)
+    local circleGui, circlePart = K.panel(fx, circleStuds, circleStuds, floorCf, 24)
     local circleA, circleB = K.image(circleGui, "circle_a", PAPER), K.image(circleGui, "circle_b", PAPER)
     for _, i in { circleA, circleB } do
         i.Position = UDim2.fromScale(0.5, 0.5)
@@ -423,6 +428,15 @@ function Roll.play(res, onDone)
 
     -- Own character out of the shot, controls off for the animation
     local hidden = {}
+    -- the real egg in the tank makes way for the summon's copy while it plays
+    local tankEgg = inChamber and typeof(res.chamber) == "Instance" and res.chamber:FindFirstChild("IncubatingEgg")
+    if tankEgg then
+        for _, d in tankEgg:GetDescendants() do
+            if d:IsA("BasePart") or d:IsA("Decal") then
+                hidden[d] = true
+            end
+        end
+    end
     if char then
         for _, d in char:GetDescendants() do
             if d:IsA("BasePart") or d:IsA("Decal") then
@@ -478,7 +492,7 @@ function Roll.play(res, onDone)
         rainbow = false,
         burstRate = 0.09,
     }
-    local eggY = sceneMotion.spring(-EGG_W, 2.2, 0.55)
+    local eggY = sceneMotion.spring(inChamber and -0.35 * EGG_W or -EGG_W, 2.2, 0.55)
     local circleSize = sceneMotion.spring(0, 1.8, 0.8, function(v)
         circleA.Size = UDim2.fromScale(v, v)
         circleB.Size = UDim2.fromScale(v * 0.72, v * 0.72)
@@ -893,13 +907,15 @@ function Roll.play(res, onDone)
             eyeAt.to, lookAt.to, fov.to = worldEye, origin + Vector3.new(0, 0.6, 0), 44
             eggY.to = 0
             circleSize.to = 1
+            local smokeK = inChamber and 0.35 or 1
+            local smokeR = 8 * smokeK
             for i = 1, low and 3 or 6 do
                 local a = i / 6 * math.pi * 2
                 K.flip(
                     fx,
-                    Vector3.new(origin.X + math.cos(a) * 8, groundY + 0.8, origin.Z + math.sin(a) * 8),
+                    Vector3.new(origin.X + math.cos(a) * smokeR, groundY + 0.8 * smokeK, origin.Z + math.sin(a) * smokeR),
                     "smoke",
-                    { size = 3.5, life = 0.6, color = Color3.fromRGB(226, 214, 200), rot = rng:NextNumber(0, 360) }
+                    { size = 3.5 * smokeK, life = 0.6, color = Color3.fromRGB(226, 214, 200), rot = rng:NextNumber(0, 360) }
                 )
             end
             hold(0.85)
@@ -914,7 +930,7 @@ function Roll.play(res, onDone)
                 st.raysSize = 14 + e * 30
                 st.focusA = 1 - u * 0.5
                 st.shake = 0.1 + e * 0.3
-                eyeAt.to = worldEye:Lerp(origin + faceDir * 5, e)
+                eyeAt.to = worldEye:Lerp(origin + faceDir * (inChamber and Config.ChamberDiveDistance or 5), e)
                 fov.to = 44 + e * 44
             end)
             hold(0.44)

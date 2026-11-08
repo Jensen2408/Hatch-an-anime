@@ -205,3 +205,31 @@ Earlier versions are no longer used. That covers the smooth maps, the first pixe
 | High tide | about 2.1 ms per frame |
 
 The first build was 5.6 ms per frame. Each vertex's wave terms are now computed once at startup, and the grid is coarser.
+
+## 2026-11-06 subject wakes
+
+Egg rings removed. WaterfallRiverMotion now uses an eight-frame pixel foam atlas (135265028807430) with broken V edges and animated eddies. One SurfaceGui carrier per nearby subject; no ordinary wake Trails/Beams. Pixelated resampling, corrected top-face orientation, 32-subject cap and 190-stud culling. Impact rings remain separate. Short water splash sounds follow animated foot reversals instead of a continuous loop. Build and fresh Studio Play checks passed; no formal FPS benchmark or place publication.
+
+V4 follow-up: separate egg/player atlases (97974454229539 / 102403119137953), larger 32x48 logical pixels, widened egg hull foam with subject at 30% of length, 7.5x8.5 player wash. Splash 133191168318787 has no dark outline. Cube-like particle sprite 102688400056466: six per planted foot, 18 on jump, 12–36 on landing. Source art: tools/water/wake-detail.js. Build/sync/Play verified; jump and landing observed. Initial asset generation delays cleared for visible tests. No FPS benchmark or place publication.
+
+V5 supersedes the sprite art: no rings or sprites. Six solid foam flecks per egg, four per player. Shared 160-cube pool simulates ballistic splashes; river contact spawns two smaller nonrecursive droplets. Footsteps/jumps/impacts retain audio. Build/compile/sync and runtime contact test passed; no FPS benchmark or place publication. Old texture candidates are unused.
+
+V6 supersedes V5: restored burst-only particle splashes, analytically timed secondary water spray, and outline-free player impact rings. Eggs remain ring-free. Wakes use 24 egg / 16 player solid foam segments in open shoulders and fading tails, no sprite animation. Build/sync/compile/Play passed; particles and player ring observed, egg wakes image-free; no FPS benchmark or place publication.
+
+V7: visible part wakes are prohibited by user preference. Static pixel textures replace all foam geometry; invisible positioning carrier only, no frame animation. Egg/player assets 84805120069288 / 92452745065673; redesigned pale double broken ring 128865490482400 for player impacts only. Particle splashes retained. Generator tools/water/wake-static.js. Build/compile/sync and structural runtime verified, visual approval pending.
+
+V8: Minecraft reference-inspired open hull foam 137166137844169 + static textured Trail 130272470799897 retaining curved movement history; no sprite frames/visible foam Parts. Player lifetime 1.15 s / max 14 studs, eggs 1.5 s / 22 studs. Narrow particle packets get analytic landing spray/contact decals (not exact per-particle collision). Build, sync, compile, Play screenshots and filtered error check passed. No FPS benchmark/place publication.
+
+V9: coarse binary-alpha foam textures 109788613874435/76004795890424. History now uses 10 surface-reprojected Beam spans per subject (Trail old heights clipped moving waves), +0.24 clearance. Hull surrounding samples +0.25. Rapids crest had +0.08 beneath sheen +0.10; replaced broad plane with six shorter strips +0.22. Build/sync/compile/high-tide runtime passed. More spans/samples; FPS and every camera/LOD not verified. Not place-published.
+
+V10: history texture repeat follows hull diameter, zero texture speed, cumulative-distance UV phase. Width 94–100% diameter matches square hull pixel cells. Egg hull 11% tighter (radius factor 2.85), stern offset .28 radius. Build/sync/compile/Play sample checked; not published.
+
+V11: egg diameter factor 2.65 (~7% smaller). Rapids restored to full Stretch crest image, no strip offsets/repetition; endpoint/interior wave samples determine clearance. V9 strip mapping was broken. Build/sync/compile/high-tide Play verified, not published.
+
+V12: dry dark-board visual tests with player/small egg/large egg; matched painted foam widths via .70/.67 ratio rather than transparent image bounds. Live leading history span removes sample gap; zero-length spans disabled. Build/diff/source execution and compile verified; test board removed, not published.
+
+V13: grounded player wake emission, no live airborne head; history 1.8s with adaptive spacing and progressive fade. Coarse 32-cell circular splash 77297633636595, dry-tested at two sizes. Build/dry tests/Play checked; not published.
+
+V14: static origin texture 120435341960932 replaces round bubble with rounded nose/open parallel shoulders; stern starts diameter*.15+.1 at shoulder end row .65. Dry player/egg before/after views and asset preload passed; build/compile/source sync checked; preview cleaned, not published.
+
+V15: continuous ellipse front cap, shorter forward reach, closed-nose asset 110842520915298. Build/compile/Play preload pass; dry cap visibility inconclusive, user review pending. No publication.

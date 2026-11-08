@@ -23,6 +23,9 @@ local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 local folder = ReplicatedStorage:WaitForChild("ArenaEvent")
 local Config = require(folder:WaitForChild("ArenaConfig"))
+if not Config.Enabled then
+    return
+end
 local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
 local joinEvent = folder:WaitForChild("Join")
 local equipEvent = folder:WaitForChild("EquipLoadout")

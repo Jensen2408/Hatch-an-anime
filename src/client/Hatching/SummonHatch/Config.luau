@@ -83,6 +83,11 @@ Config.SilhouetteHeight = 14 -- studs, the figures on the reel cards
 Config.EggWorldHeight = 7 -- studs, the egg rising in front of the incubator
 Config.EggRoomHeight = 8.6 -- studs, the egg in the summon room
 Config.CircleSize = 30 -- studs, the summon circle on the floor in front of the incubator
+-- Inside the incubator (SummonHatchServer sends inChamber): the opening plays where the egg sits in the tank.
+Config.EggChamberHeight = 2.6 -- studs, same size as the egg in the tank
+Config.ChamberCircleSize = 3.2 -- studs, fits the egg platform
+Config.ChamberCameraDistance = 9 -- studs from the egg to the first camera, outside the front glass
+Config.ChamberDiveDistance = 3.2 -- studs, the dive stops just outside the glass (2.5 in front of the egg)
 Config.Reel = 3.4 -- seconds the cards circle the egg
 Config.Turns = 3
 Config.HoldSeconds = 14 -- the result stays until COLLECT, at most this long

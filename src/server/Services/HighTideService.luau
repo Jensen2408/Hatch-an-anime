@@ -17,6 +17,14 @@ local Service = {}
 Service.CycleSeconds = CYCLE_SECONDS
 Service.TideSeconds = TIDE_SECONDS
 
+local VolcanoConfig = require(game:GetService("ReplicatedStorage"):WaitForChild("VolcanoEvent"):WaitForChild("VolcanoConfig"))
+local suppressedScheduledStart
+
+local function volcanoActive(now)
+    local started = workspace:GetAttribute("VolcanoStart")
+    return type(started) == "number" and now >= started and now < started + VolcanoConfig.TotalSeconds
+end
+
 local announcedStart -- the scheduled window already announced
 local firstUpdate = true
 
@@ -35,7 +43,19 @@ function Service.Update(now)
     if forcedAt and forcedUntil and forcedAt >= startAt then
         startAt, endsAt, forced = forcedAt, forcedUntil, true
     end
-    local active = now >= startAt and now < endsAt
+    -- Volcano owns the river through warning, eruption and cooling. Consume any
+    -- overlapping Rapids window so it cannot resume halfway through afterwards.
+    local blocked = volcanoActive(now)
+    if blocked then
+        suppressedScheduledStart = cycleStart
+        workspace:SetAttribute("HighTideForcedAt", nil)
+        workspace:SetAttribute("HighTideForcedUntil", nil)
+    end
+    local suppressed = blocked or (not forced and suppressedScheduledStart == cycleStart)
+    local active = not suppressed and now >= startAt and now < endsAt
+    if suppressed then
+        startAt, endsAt = nil, nil
+    end
     publish("HighTideStartedAt", startAt)
     publish("HighTideEndsAt", endsAt)
     publish("HighTideActive", active)
@@ -52,8 +72,13 @@ end
 
 -- Staff trigger: a tide lasting `seconds` from now. Stop() lets the current forced tide recede.
 function Service.Force(now, seconds)
+    if volcanoActive(now) then
+        return false, "Rapids cannot start during a volcano eruption."
+    end
     workspace:SetAttribute("HighTideForcedAt", now)
     workspace:SetAttribute("HighTideForcedUntil", now + seconds)
+    Service.Update(now)
+    return true
 end
 
 function Service.Stop(now, fallSeconds)

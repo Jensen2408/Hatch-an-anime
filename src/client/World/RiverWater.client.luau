@@ -401,7 +401,7 @@ local function crestBeam(index)
     b.FaceCamera = false
     b.Segments = 1
     b.LightEmission = 0.25
-    b.LightInfluence = 0.75
+    b.LightInfluence = 0
     b.Color = ColorSequence.new(Color3.fromRGB(244, 252, 255))
     b.Width0, b.Width1 = CREST_WIDTH, CREST_WIDTH
     b.Enabled = false
@@ -416,29 +416,36 @@ local function updateCrests(state, simple)
     for _, surge in state.surges do
         local crest = surge.crest
         if crest > 0 and crest < TOTAL + 2 and surge.height > 0.06 then
-            used += 1
-            local pooled = crestBeam(used)
-            -- Ribbon from just ahead of the crest (front lip, downstream) back over the wave's shoulder, following
-            -- its slope.
-            local frontD, backD = crest + 1.6, crest + 1.6 - CREST_WIDTH
-            local frontP, _, r = frameAt(math.clamp(frontD, 0, TOTAL))
-            local backP = frameAt(math.clamp(backD, 0, TOTAL))
-            -- Simple Water has no wave geometry, so its crests lie on the flat (tide-raised) surface.
-            local frontY = SURFACE_Y + (simple and state.level or Waves.HeightAt(state, frontD, 0)) + 0.08
-            local backY = SURFACE_Y + (simple and state.level or Waves.HeightAt(state, backD, 0)) + 0.08
-            local front = Vector3.new(frontP.X, frontY, frontP.Z)
-            local back = Vector3.new(backP.X, backY, backP.Z)
-            local centre = (front + back) / 2
-            local towardBack = (back - front).Unit
-            local half = Path.WidthAt(math.clamp(crest, 0, TOTAL)) * 0.5 + 0.2
-            -- The image's right edge (the lip) maps to the attachments' -Y, so Y points to the back of the wave.
-            local cf = CFrame.fromMatrix(centre, r, towardBack)
-            pooled.a0.WorldCFrame = cf - r * half
-            pooled.a1.WorldCFrame = cf + r * half
-            local b = pooled.beam
-            b.Width0, b.Width1 = (back - front).Magnitude, (back - front).Magnitude
-            b.Transparency = NumberSequence.new(1 - math.clamp(surge.height / Waves.SurgeHeight, 0, 1) * 0.85)
-            b.Enabled = true
+            -- Preserve the full crest image. Offsetting six full images repeated/squeezed its pattern.
+            used+=1
+            local pooled=crestBeam(used)
+            local frontD,backD=crest+1.6,crest+1.6-CREST_WIDTH
+            local frontP,_,r=frameAt(math.clamp(frontD,0,TOTAL))
+            local backP=frameAt(math.clamp(backD,0,TOTAL))
+            local function height(d)
+                if simple then return SURFACE_Y+state.level end
+                return SURFACE_Y+math.max(Waves.HeightAt(state,d,-1),Waves.HeightAt(state,d,0),Waves.HeightAt(state,d,1))
+            end
+            local fy,by=height(frontD),height(backD)
+            local clearance=0.22
+            for n=1,5 do
+                local t=n/6
+                clearance=math.max(clearance,height(frontD+(backD-frontD)*t)-(fy+(by-fy)*t)+0.22)
+            end
+            local front=Vector3.new(frontP.X,fy+clearance,frontP.Z)
+            local back=Vector3.new(backP.X,by+clearance,backP.Z)
+            local half=Path.WidthAt(math.clamp(crest,0,TOTAL))*0.5+0.2
+            local cf=CFrame.fromMatrix((front+back)/2,r,(back-front).Unit)
+            pooled.a0.WorldCFrame=cf-r*half
+            pooled.a1.WorldCFrame=cf+r*half
+            local beam=pooled.beam
+            beam.Width0,beam.Width1=(back-front).Magnitude,(back-front).Magnitude
+            beam.TextureMode=Enum.TextureMode.Stretch
+            beam.TextureLength=1
+            beam.TextureSpeed=0
+            beam:SetTextureOffset(0)
+            beam.Transparency=NumberSequence.new(1-math.clamp(surge.height/Waves.SurgeHeight,0,1))
+            beam.Enabled=true
         end
     end
     for i = used + 1, #crestPool do
