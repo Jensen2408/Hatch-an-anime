@@ -293,71 +293,13 @@ local function build(self)
     self.fit = make("UIScale", { Name = "Fit", Scale = 0.82 }, root)
     -- 4 px headroom so the plate's top outline is not clipped by the CanvasGroup
     make("UIPadding", { PaddingTop = UDim.new(0, 4) }, root)
-    -- the tag behind the text: the MenuArt egg tag piece for this rarity (GPT Image art, assets/ui/menus3),
-    -- stretched to the three text rows (its pointer stays at the bottom centre)
-    -- Folk Stud tag: burning rarity slab with studs, a thick black outline, a hard shadow and a pointer
-    -- under it, plus a white price strip like the character plates
-    do
-        local colours = PLATE[self.rarity] or PLATE.Common
-        local plateH = 104
-        local shadow = make("Frame", {
-            Name = "Shadow",
-            Position = UDim2.fromOffset(8, 6),
-            Size = UDim2.fromOffset(guiWidth - 16, plateH),
-            BackgroundColor3 = Color3.new(0, 0, 0),
-            BackgroundTransparency = 0.45,
-            ZIndex = 1,
-        }, root)
-        corner(14, shadow)
-        local pointer = make("Frame", {
-            Name = "Pointer",
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromOffset(guiWidth / 2, plateH - 1),
-            Size = UDim2.fromOffset(18, 18),
-            Rotation = 45,
-            BackgroundColor3 = colours[2],
-            ZIndex = 1,
-        }, root)
-        ink(pointer, 3.5)
-        local plate = make("Frame", {
-            Name = "Plate",
-            Position = UDim2.fromOffset(8, 0),
-            Size = UDim2.fromOffset(guiWidth - 16, plateH),
-            BackgroundColor3 = Color3.new(1, 1, 1),
-            ClipsDescendants = true,
-            ZIndex = 2,
-        }, root)
-        corner(14, plate)
-        ink(plate, 3.5)
-        make("UIGradient", { Rotation = 90, Color = ColorSequence.new(colours[1], colours[2]) }, plate)
-        make("ImageLabel", {
-            Name = "Studs",
-            Size = UDim2.fromScale(1, 1),
-            BackgroundTransparency = 1,
-            Image = STUD,
-            ScaleType = Enum.ScaleType.Tile,
-            TileSize = UDim2.fromOffset(30, 30),
-            ImageTransparency = 0.72,
-        }, plate)
-        local shine = make("Frame", {
-            Name = "Shine",
-            Position = UDim2.fromOffset(10, 6),
-            Size = UDim2.new(1, -20, 0, 4),
-            BackgroundColor3 = Color3.new(1, 1, 1),
-            BackgroundTransparency = 0.7,
-        }, plate)
-        corner(2, shine)
-        local strip = make("Frame", {
-            Name = "PriceStrip",
-            AnchorPoint = Vector2.new(0.5, 0),
-            Position = UDim2.fromOffset(guiWidth / 2, 66),
-            Size = UDim2.fromOffset(guiWidth - 40, 28),
-            BackgroundColor3 = Color3.new(1, 1, 1),
-            ZIndex = 3,
-        }, root)
-        corner(9, strip)
-        ink(strip, 2.5)
+    -- 2026-11-09 round 2: no plate behind the text. The words float on their own with a thick ink outline, and
+    -- the rarity word (and a mutated egg's name) carries a moving colour flow (ReplicatedStorage.RarityText).
+    local okRT, RarityText = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("RarityText", 5))
+    if not okRT then
+        RarityText = nil
     end
+    local mutation = self.egg and self.egg:GetAttribute("Mutation")
 
     -- One text row: a holder Frame at offsetY (height px) containing a scaled "Fill" TextLabel.
     -- Returns fillLabel, holder.
@@ -386,61 +328,47 @@ local function build(self)
                 { MaxTextSize = maxTextSize, MinTextSize = math.floor(maxTextSize * 0.6) },
                 textLabel
             )
-            textStroke(textLabel, 2.8)
+            textStroke(textLabel, 3.2)
             return textLabel
         end
         holder.ZIndex = 4
         return makeLabel("Fill", color, Vector2.zero, 2), holder
     end
-    textRow("Name", 6, 28, 26, Color3.new(1, 1, 1), self.name)
-    do -- rarity: a white sticker pill with the word in the burning rarity colour, wiggling a little
-        local rarityColor = (PLATE[self.rarity] or PLATE.Common)[1]
-        local pill = make("Frame", {
+    local nameLabel = textRow("Name", 2, 32, 30, Color3.new(1, 1, 1), self.name)
+    if RarityText and mutation then
+        RarityText.Apply(nameLabel, mutation)
+    end
+    do -- rarity: just the word, in its moving rarity colours, wiggling a little
+        local word = make("TextLabel", {
             Name = "Rarity",
             AnchorPoint = Vector2.new(0.5, 0),
-            Position = UDim2.fromOffset(guiWidth / 2, 38),
-            Size = UDim2.fromOffset(0, 20),
-            AutomaticSize = Enum.AutomaticSize.X,
-            BackgroundColor3 = Color3.new(1, 1, 1),
-            ZIndex = 4,
-        }, root)
-        corner(10, pill)
-        ink(pill, 2.5)
-        make("UIPadding", { PaddingLeft = UDim.new(0, 9), PaddingRight = UDim.new(0, 9) }, pill)
-        local word = make("TextLabel", {
-            Name = "Fill",
-            Size = UDim2.fromScale(0, 1),
-            AutomaticSize = Enum.AutomaticSize.X,
+            Position = UDim2.fromOffset(guiWidth / 2, 34),
+            Size = UDim2.fromOffset(guiWidth - 10, 30),
             BackgroundTransparency = 1,
             Font = Config.Font,
             Text = string.upper(self.rarity),
-            TextColor3 = rarityColor,
-            TextSize = 16,
+            TextColor3 = (PLATE[self.rarity] or PLATE.Common)[1],
+            TextSize = 25,
             ZIndex = 5,
-        }, pill)
-        textStroke(word, 2)
-        pill.Rotation = -3
+        }, root)
+        textStroke(word, 3.2)
+        if RarityText then
+            RarityText.Apply(word, self.rarity)
+        end
+        word.Rotation = -2
         TweenService:Create(
-            pill,
+            word,
             TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-            { Rotation = 3 }
+            { Rotation = 2 }
         ):Play()
     end
-    -- 2026-11-08: mutated eggs get a moving mutation tag over the top edge of the plate (ReplicatedStorage.MutationStyle)
-    local mutation = self.egg and self.egg:GetAttribute("Mutation")
+    -- mutated eggs keep their moving mutation tag in the top-right corner (ReplicatedStorage.MutationStyle)
     if mutation then
-        -- 2026-11-09: the mutation's colour shading sweeps over the plate (ReplicatedStorage.MutationShade)
-        local plateFrame = root:FindFirstChild("Plate")
-        local okShade, Shade = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("MutationShade", 5))
-        if okShade and Shade and plateFrame then
-            Shade.Apply(plateFrame, mutation, plateFrame.ZIndex)
-        end
         local okMS, MS = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("MutationStyle", 5))
         if okMS and MS then
-            -- top-right corner of the plate (the label is a CanvasGroup, so it must stay inside its bounds)
             local tag = MS.Badge(root, mutation, { size = 14, z = 6 })
             tag.AnchorPoint = Vector2.new(1, 0)
-            tag.Position = UDim2.fromOffset(guiWidth - 4, 2)
+            tag.Position = UDim2.fromOffset(guiWidth - 4, 0)
             tag.Rotation = 5
             TweenService:Create(
                 tag,
@@ -450,7 +378,7 @@ local function build(self)
         end
     end
     local priceHolder
-    self.price, priceHolder = textRow("Price", 67, 26, 23, Config.PriceOk, EggLabel.FormatPrice(self.priceValue))
+    self.price, priceHolder = textRow("Price", 66, 30, 27, Config.PriceOk, EggLabel.FormatPrice(self.priceValue))
     self.emph = make("UIScale", { Name = "Emph" }, priceHolder)
     self:_updatePrice()
     -- Collect hint (custom ProximityPrompt UI, sits under the price)

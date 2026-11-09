@@ -83,6 +83,9 @@ local function art(parent, name, a, cx, cy, size, z, tr)
 end
 local function shadow(parent, name, x, y, w, h, r, z)
 	local f = rect(parent, name .. "Shadow", x, y + 6, w, h, r, z, BLACK); f.BackgroundTransparency = 0.55
+	-- round 2: a wide soft halo under the hard shadow, so cards sit deeper
+	local soft = new("Frame", { Name = "Soft", BackgroundColor3 = BLACK, BackgroundTransparency = 0.86, Position = UDim2.fromOffset(-6, -1), Size = UDim2.new(1, 12, 1, 9), ZIndex = z or 2 }, f)
+	if r then round(soft, r + 5) end
 	return f
 end
 -- art with a black outline and a drop shadow: black copies underneath, in a holder that can float
@@ -105,7 +108,16 @@ end
 -- Built as real instances with attributes, so they can be edited in Studio; M.live only animates them.
 M.SOUNDS = { hover = "rbxassetid://139800881181209", click = "rbxassetid://88442833509532" }   -- AmbientSorcery ui-simple-button hover / click (free)
 -- a light band that sweeps across a small box now and then. It sits under the box's icon and words
+-- round 2: a still glass highlight on the top half of every vivid box (buttons, cards, slabs, toasts, hotbar)
+local function gloss(f, r, z)
+	if f:FindFirstChild("Gloss") then return end
+	local g = new("Frame", { Name = "Gloss", BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.fromOffset(4, 3), Size = UDim2.new(1, -8, 0.5, 0), ZIndex = z or f.ZIndex }, f)
+	if r then new("UICorner", { CornerRadius = r == "circle" and UDim.new(0.5, 0) or UDim.new(0, math.floor(math.max(r - 3, 2) * M.CORNER + 0.5)) }, g) end
+	new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.7), NumberSequenceKeypoint.new(0.55, 0.88), NumberSequenceKeypoint.new(1, 1) }) }, g)
+	return g
+end
 local function shine(f, r, z)
+	gloss(f, r, z)
 	local s = new("Frame", { Name = "Shine", BackgroundColor3 = WHITE, Size = UDim2.fromScale(1, 1), ZIndex = z or f.ZIndex }, f)
 	if r then new("UICorner", { CornerRadius = r == "circle" and UDim.new(0.5, 0) or UDim.new(0, math.floor(r * M.CORNER + 0.5)) }, s) end
 	new("UIGradient", { Rotation = 25, Offset = Vector2.new(-1, 0), Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.36, 1),
@@ -1250,7 +1262,7 @@ local function dealTag(parent, str, cx, cy, pal, z, size)
 end
 
 M.H = { new = new, round = round, ink = ink, grad = grad, rect = rect, studs = studs, text = text, art = art, shadow = shadow, sticker = sticker,
-	rays = rays, beams = beams, dress = dress, shine = shine, gleam = gleam, fall = fall, lift = lift, button = button, closeButton = closeButton, circle = circle,
+	rays = rays, beams = beams, dress = dress, shine = shine, gloss = gloss, gleam = gleam, fall = fall, lift = lift, button = button, closeButton = closeButton, circle = circle,
 	sparkle = sparkle, crazy = crazy, neon = neon, dealTag = dealTag, medallion = medallion, streaks = streaks, highlight = highlight, hex = hex, WHITE = WHITE, BLACK = BLACK }
 -- extra colours for the game's own screens, { face top, face bottom, lip }: softer candy tones next to the burning ones
 M.COLOR.coral = { hex("FF5A6E"), hex("F0284A"), hex("8F1229") }

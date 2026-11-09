@@ -96,7 +96,7 @@ local function card(parent, name, x, y, w, h, pal, z, shine)
 	H.grad(f, pal[1], pal[2])
 	H.ink(f, 4)
 	H.studs(f, Vector2.new(48, 48), 0.84, 18, z + 1)
-	if shine then H.shine(f, 18, z + 1) end
+	if shine then H.shine(f, 18, z + 1) elseif H.gloss then H.gloss(f, 18, z + 1) end
 	return f
 end
 -- a pressable button; off = the darkest slab with the reason, no lip, no click (MAX, LOCKED, ...)
