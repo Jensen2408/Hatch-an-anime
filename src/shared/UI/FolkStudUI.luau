@@ -1172,9 +1172,86 @@ local function dress(b, pal, r, o)
 	b:SetAttribute("Pressable", true)
 	return face
 end
+------------------------------------------------------------------ HaA "crazy" window (2026-11-09, owner: make every screen crazy cool)
+-- Turns a white sheet into a colour window of its own: tone gradient, a darker header band with falling sparkles and a
+-- light sweep, a running-light ring round the outline (rainbow if o.rainbow), a soft pulsing glow, twinkles on the edge,
+-- and an X that turns under the mouse. Call it right after the sheet's outline and before its studs.
+--   o: pal = { top, bottom, lip }, w, h, z, band (header height, 58), rainbow
+local CK = ColorSequenceKeypoint.new
+local RAINBOW = ColorSequence.new({ CK(0, hex("FF2D2D")), CK(0.17, hex("FFA51F")), CK(0.33, hex("FFE81F")), CK(0.5, hex("2BF05A")), CK(0.67, hex("1FD1FF")), CK(0.83, hex("FF2DD1")), CK(1, hex("FF2D2D")) })
+M.RAINBOW = RAINBOW
+local function crazy(canvas, sheet, o)
+	local pal, w, h, z, r = o.pal, o.w, o.h, o.z or 10, o.r or 26
+	sheet.BackgroundColor3 = WHITE
+	new("UIGradient", { Name = "Tone", Rotation = 90, Color = ColorSequence.new(pal[1], pal[2]) }, sheet)
+	for i, g in ipairs({ { 34, 0.84 }, { 20, 0.7 } }) do
+		local f = rect(canvas, "Glow" .. i, -g[1], -g[1], w + 2 * g[1], h + 2 * g[1], r + g[1] * 3, z - 3, o.rainbow and hex("FFE81F") or pal[1])
+		f.BackgroundTransparency = g[2]; f:SetAttribute("Pulse", g[2])
+	end
+	local ring = rect(canvas, "Ring", -11, -11, w + 22, h + 22, r + 22, z - 2, WHITE)
+	new("UIGradient", { Name = "Run", Color = o.rainbow and RAINBOW or ColorSequence.new({ CK(0, pal[2]), CK(0.3, pal[1]), CK(0.5, WHITE), CK(0.7, pal[1]), CK(1, pal[2]) }) }, ring):SetAttribute("Orbit", true)
+	ink(ring, 4)
+	local bh = o.band or 58
+	local band = new("Frame", { Name = "Band", BackgroundColor3 = pal[3], BackgroundTransparency = 0.3, Size = UDim2.new(1, 0, 0, bh), ZIndex = z - 1, ClipsDescendants = true }, sheet)
+	round(band, r)
+	fall(band, { M.ART.sparkle, M.ART.star }, 14, z - 1, 0, 0.5)
+	shine(band, nil, z - 1)
+	rect(sheet, "BandLine", 0, bh - 2, w, 4, nil, z - 1, BLACK)
+	for i, at in ipairs({ { w - 120, -10 }, { -8, h * 0.42 }, { w + 8, h * 0.63 }, { w * 0.28, h + 8 }, { w * 0.74, h + 6 } }) do
+		sparkle(canvas, "Twinkle" .. i, at[1], at[2], 38, z + 8, i * 1.3)
+	end
+	task.defer(function()
+		local x = canvas:FindFirstChild("CloseArt")
+		if not x or GuiService.ReducedMotionEnabled then return end
+		x.Rotation = -180
+		TS:Create(x, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Rotation = 0 }):Play()
+		x.MouseEnter:Connect(function() TS:Create(x, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Rotation = 90 }):Play() end)
+		x.MouseLeave:Connect(function() TS:Create(x, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Rotation = 0 }):Play() end)
+	end)
+	return band
+end
+-- a running-light outline with a soft pulse behind any frame: neon(frame, pal) - no pal = rainbow. It follows the frame's own size
+local function neon(frame, pal, pad)
+	pad = pad or 7
+	local c = frame:FindFirstChildOfClass("UICorner")
+	local layers = {}
+	local function layer(name, d, col)
+		local f = new("Frame", { Name = name, BackgroundColor3 = col, ZIndex = frame.ZIndex - 1 }, frame.Parent)
+		new("UICorner", { CornerRadius = c and UDim.new(c.CornerRadius.Scale, c.CornerRadius.Offset + d) or UDim.new(0, d) }, f)
+		layers[f] = d
+		return f
+	end
+	local glow = layer("NeonGlow", pad + 12, pal and pal[1] or hex("FFE81F"))
+	glow.BackgroundTransparency = 0.78; glow:SetAttribute("Pulse", 0.78)
+	local ring = layer("Neon", pad, WHITE)
+	new("UIGradient", { Name = "Run", Color = pal and ColorSequence.new({ CK(0, pal[2]), CK(0.3, pal[1]), CK(0.5, WHITE), CK(0.7, pal[1]), CK(1, pal[2]) }) or RAINBOW }, ring):SetAttribute("Orbit", true)
+	ink(ring, 3)
+	-- the ring follows its frame: sheets that fold, slide or hide take it with them
+	local function follow()
+		local p, s, a = frame.Position, frame.Size, frame.AnchorPoint
+		for f, d in layers do
+			f.AnchorPoint = a; f.Visible = frame.Visible
+			f.Position = UDim2.new(p.X.Scale, p.X.Offset - d * (1 - 2 * a.X), p.Y.Scale, p.Y.Offset - d * (1 - 2 * a.Y))
+			f.Size = UDim2.new(s.X.Scale, s.X.Offset + 2 * d, s.Y.Scale, s.Y.Offset + 2 * d)
+		end
+	end
+	follow()
+	for _, prop in { "Position", "Size", "AnchorPoint", "Visible" } do frame:GetPropertyChangedSignal(prop):Connect(follow) end
+	return ring
+end
+-- a wiggling sticker tag ("BEST DEAL!") that hangs over a card's corner
+local function dealTag(parent, str, cx, cy, pal, z, size)
+	local t = text(parent, "Tag", str, cx, cy, size or 22, z, WHITE)
+	local f = new("Frame", { Name = "DealTag", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(cx, cy), Size = UDim2.fromOffset(#str * (size or 22) * 0.72 + 22, (size or 22) + 16), Rotation = -8, ZIndex = z }, parent)
+	round(f, 10); grad(f, pal[1], pal[2]); ink(f, 3)
+	t.Parent = f; t.AnchorPoint = Vector2.new(0.5, 0.5); t.Position = UDim2.fromScale(0.5, 0.5)
+	f:SetAttribute("Wiggle", -8)
+	return f
+end
+
 M.H = { new = new, round = round, ink = ink, grad = grad, rect = rect, studs = studs, text = text, art = art, shadow = shadow, sticker = sticker,
 	rays = rays, beams = beams, dress = dress, shine = shine, gleam = gleam, fall = fall, lift = lift, button = button, closeButton = closeButton, circle = circle,
-	sparkle = sparkle, medallion = medallion, streaks = streaks, highlight = highlight, hex = hex, WHITE = WHITE, BLACK = BLACK }
+	sparkle = sparkle, crazy = crazy, neon = neon, dealTag = dealTag, medallion = medallion, streaks = streaks, highlight = highlight, hex = hex, WHITE = WHITE, BLACK = BLACK }
 -- extra colours for the game's own screens, { face top, face bottom, lip }: softer candy tones next to the burning ones
 M.COLOR.coral = { hex("FF5A6E"), hex("F0284A"), hex("8F1229") }
 M.COLOR.azure = { hex("35A8FF"), hex("1B6BF5"), hex("0C3A99") }
@@ -1186,7 +1263,7 @@ M.COLOR.leaf = { hex("8CF56A"), hex("3CCB3A"), hex("1A6E1E") }
 M.COLOR.aqua = { hex("5BEBFF"), hex("16B8E6"), hex("0A5F80") }
 M.COLOR.ink = { hex("3A3150"), hex("241D35"), hex("120E1C") }
 
-local REG = { spin = {}, float = {}, wiggle = {}, glint = {}, turn = {}, slide = {}, shine = {}, gleam = {}, twinkle = {}, fall = {} }
+local REG = { spin = {}, float = {}, wiggle = {}, glint = {}, turn = {}, slide = {}, shine = {}, gleam = {}, twinkle = {}, fall = {}, pulse = {}, orbit = {} }
 local regN, gleamOwner, nGleam, wired = 0, setmetatable({}, { __mode = "k" }), 0, setmetatable({}, { __mode = "k" })
 local stepConn
 local function regAdd(o)
@@ -1201,6 +1278,8 @@ local function regAdd(o)
 		end
 	end
 	if o:GetAttribute("FallSpeed") then put(REG.fall) end
+	if o:GetAttribute("Pulse") then put(REG.pulse) end
+	if o:GetAttribute("Orbit") then put(REG.orbit) end
 	if o:GetAttribute("Spin") then put(REG.spin) end
 	if o:GetAttribute("Float") then put(REG.float) end
 	if o:GetAttribute("Wiggle") then put(REG.wiggle) end
@@ -1218,6 +1297,8 @@ local function step()
 	local GOLD = hex("FFE600")
 	for set, f in pairs({
 		[REG.spin] = function(o) o.Rotation = (t * 22) % 360 end,
+		[REG.pulse] = function(o, i) o.BackgroundTransparency = o:GetAttribute("Pulse") + math.sin(t * 2.6 + i) * 0.07 end,
+		[REG.orbit] = function(g) g.Rotation = (t * 80) % 360 end,
 		[REG.turn] = function(o) o.Rotation = (t * 60) % 360 end,
 		[REG.float] = function(o, i) o.Position = UDim2.new(o.Position.X.Scale, o.Position.X.Offset, o.Position.Y.Scale, o:GetAttribute("Float") + math.sin(t * 2 + i) * 4) end,
 		[REG.wiggle] = function(o, i) o.Rotation = o:GetAttribute("Wiggle") + math.sin(t * 3 + i) * 4 end,

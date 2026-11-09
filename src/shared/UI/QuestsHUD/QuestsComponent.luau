@@ -72,6 +72,7 @@ function QuestsComponent.new(parent)
 	local sheet = H.new("Frame", { Name = "HeaderImage", BackgroundColor3 = H.WHITE, Position = UDim2.fromOffset(0, TOP), Size = UDim2.new(1, 0, 1, -TOP), ZIndex = 2 }, root)
 	H.round(sheet, 16)
 	H.ink(sheet, 4)
+	H.neon(sheet, M.COLOR.mint, 5)
 	H.studs(sheet, Vector2.new(50, 46), 0.8, 16, 2)
 
 	-- cards live below the header; this clip frame's height is what collapses

@@ -86,6 +86,7 @@ gui.IgnoreGuiInset = true
 gui.DisplayOrder = 12
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = player:WaitForChild("PlayerGui")
+task.spawn(function() require(ReplicatedStorage:WaitForChild("FolkStudUI")).animate(gui, { sounds = false }) end)
 local row = Instance.new("Frame")
 row.Name = "Row"
 row.BackgroundTransparency = 1
@@ -137,6 +138,13 @@ local function makePill(entry, order)
     outline.Thickness = 3
     outline.Color = INK
     outline.Parent = frame
+    -- a light that runs round the outline (FolkStudUI's Orbit turns it)
+    local run = Instance.new("UIGradient")
+    run.Name = "Run"
+    run.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, INK), ColorSequenceKeypoint.new(0.42, INK), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 232, 31)), ColorSequenceKeypoint.new(0.58, INK), ColorSequenceKeypoint.new(1, INK) })
+    run:SetAttribute("Orbit", true)
+    outline.Color = Color3.new(1, 1, 1)
+    run.Parent = outline
     local pad = Instance.new("UIPadding")
     pad.PaddingLeft = UDim.new(0, 12)
     pad.PaddingRight = UDim.new(0, 12)

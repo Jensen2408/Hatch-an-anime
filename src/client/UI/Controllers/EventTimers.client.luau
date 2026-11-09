@@ -105,6 +105,7 @@ for _, event in EVENTS do
 	H.ink(bar, 4)
 	H.studs(bar, Vector2.new(48, 48), 0.78, 14, 2)
 	H.shine(bar, 14, 3)
+	H.neon(bar, nil, 5) -- running rainbow outline: the event countdown is the loudest thing on the HUD
 
 	local text = H.new("TextLabel", { Name = "Time", BackgroundTransparency = 1, FontFace = M.FONT, TextSize = 26, TextColor3 = WHITE, Text = "",
 		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.fromOffset(36, 0), Size = UDim2.new(1, -44, 1, -4), ZIndex = 5 }, bar)

@@ -253,6 +253,7 @@ local function skinInventory(inv)
 	local sh = H.rect(chrome, "Shadow", 0, 8, INV_W, INV_H, 14, 19, BLACK); sh.BackgroundTransparency = 0.55
 	local sheet = H.rect(chrome, "Sheet", 0, 0, INV_W, INV_H, 14, 20, WHITE)
 	H.ink(sheet, 5)
+	H.neon(sheet, M.COLOR.azure)
 	H.studs(sheet, Vector2.new(50, 46), 0.8, 14, 20)
 	local well = H.rect(chrome, "Well", 14, 126, INV_W - 28, 268, 10, 20, H.hex("EDE8FA"))
 	H.ink(well, 3)
