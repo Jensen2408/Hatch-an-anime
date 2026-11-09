@@ -300,6 +300,13 @@ local function build(self)
         RarityText = nil
     end
     local mutation = self.egg and self.egg:GetAttribute("Mutation")
+    -- 2026-11-10: a mutated egg gets its own row on top (gem icon + tier word, MutationStyle.Tag) and every
+    -- other row moves down by `lift`, so the tag never sits on the name, the rarity or a neighbour's price.
+    local lift = mutation and 24 or 0
+    self.guiHeight = guiHeight + lift
+    guiHeight = self.guiHeight
+    gui.Size = UDim2.fromOffset(guiWidth, guiHeight)
+    root.Size = UDim2.fromOffset(guiWidth, guiHeight)
 
     -- One text row: a holder Frame at offsetY (height px) containing a scaled "Fill" TextLabel.
     -- Returns fillLabel, holder.
@@ -334,7 +341,7 @@ local function build(self)
         holder.ZIndex = 4
         return makeLabel("Fill", color, Vector2.zero, 2), holder
     end
-    local nameLabel = textRow("Name", 2, 32, 30, Color3.new(1, 1, 1), self.name)
+    local nameLabel = textRow("Name", 2 + lift, 32, 30, Color3.new(1, 1, 1), self.name)
     if RarityText and mutation then
         RarityText.Apply(nameLabel, mutation)
     end
@@ -342,7 +349,7 @@ local function build(self)
         local word = make("TextLabel", {
             Name = "Rarity",
             AnchorPoint = Vector2.new(0.5, 0),
-            Position = UDim2.fromOffset(guiWidth / 2, 34),
+            Position = UDim2.fromOffset(guiWidth / 2, 34 + lift),
             Size = UDim2.fromOffset(guiWidth - 10, 30),
             BackgroundTransparency = 1,
             Font = Config.Font,
@@ -362,30 +369,23 @@ local function build(self)
             { Rotation = 2 }
         ):Play()
     end
-    -- mutated eggs keep their moving mutation tag in the top-right corner (ReplicatedStorage.MutationStyle)
     if mutation then
         local okMS, MS = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("MutationStyle", 5))
-        if okMS and MS then
-            local tag = MS.Badge(root, mutation, { size = 14, z = 6 })
-            tag.AnchorPoint = Vector2.new(1, 0)
-            tag.Position = UDim2.fromOffset(guiWidth - 4, 0)
-            tag.Rotation = 5
-            TweenService:Create(
-                tag,
-                TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-                { Rotation = 9 }
-            ):Play()
+        if okMS and MS and MS.Tag then
+            local tag = MS.Tag(root, mutation, { size = 19, z = 6 })
+            tag.AnchorPoint = Vector2.new(0.5, 0)
+            tag.Position = UDim2.fromOffset(guiWidth / 2, 0)
         end
     end
     local priceHolder
-    self.price, priceHolder = textRow("Price", 66, 30, 27, Config.PriceOk, EggLabel.FormatPrice(self.priceValue))
+    self.price, priceHolder = textRow("Price", 66 + lift, 30, 27, Config.PriceOk, EggLabel.FormatPrice(self.priceValue))
     self.emph = make("UIScale", { Name = "Emph" }, priceHolder)
     self:_updatePrice()
     -- Collect hint (custom ProximityPrompt UI, sits under the price)
     local hint = make("Frame", {
         Name = "Hint",
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 116),
+        Position = UDim2.new(0.5, 0, 0, 116 + lift),
         Size = UDim2.fromOffset(0, 28),
         AutomaticSize = Enum.AutomaticSize.X,
         BackgroundColor3 = Color3.new(1, 1, 1),
@@ -431,7 +431,7 @@ local function build(self)
     self.tap = make("TextButton", {
         Name = "TapTarget",
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 112),
+        Position = UDim2.new(0.5, 0, 0, 112 + lift),
         Size = UDim2.fromOffset(190, 36),
         BackgroundTransparency = 1,
         Text = "",
@@ -631,7 +631,7 @@ function EggLabel:_tick(camPos, charPos, viewportScale)
     local targetScale = (0.82 + 0.18 * blend) * viewportScale
     local newScale = self.fit.Scale + (targetScale - self.fit.Scale) * 0.35
     self.fit.Scale = newScale
-    self.gui.Size = UDim2.fromOffset(Config.GuiSize.X * newScale, Config.GuiSize.Y * newScale)
+    self.gui.Size = UDim2.fromOffset(Config.GuiSize.X * newScale, (self.guiHeight or Config.GuiSize.Y) * newScale)
     if not self.prompt and charPos and self.collectible then
         self:SetNear((charPos - pos).Magnitude <= Config.NearFallbackDistance)
     end

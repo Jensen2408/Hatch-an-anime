@@ -3431,6 +3431,7 @@
       "RarityText": {"$path": "src/shared/UI/RarityText.luau"},
       "UpcomingConfig": {"$path": "src/shared/Config/UpcomingConfig.luau"},
       "FolkStudUI": {"$path": "src/shared/UI/FolkStudUI.luau"},
+      "EventUI": {"$path": "src/shared/UI/EventUI.luau"},
       "ItemIcons": {"$path": "src/shared/Inventory/ItemIcons.luau"},
       "MangaUI": {"$path": "src/shared/UI/MangaUI.luau"},
       "MutationSurfaceFinishes": {
@@ -3537,6 +3538,9 @@
         },
         "StudPanel": {
           "$path": "src/shared/Admin/OwnerPanel/StudPanel.luau"
+        },
+        "AdminPanelV2": {
+          "$path": "src/shared/Admin/OwnerPanel/AdminPanelV2.luau"
         }
       },
       "Construction": {

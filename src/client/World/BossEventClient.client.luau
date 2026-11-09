@@ -86,108 +86,110 @@ local function label(parent, props)
     return make("TextLabel", base, parent)
 end
 
+-- The look comes from ReplicatedStorage.EventUI, shared with the event pills, timers and banners.
+-- Fighting: boss sticker + name, timer chip, health bar, then the reward and top-damage lines (flat text).
+-- Before it rises: one strip with the countdown. The panel sits in EventUI's top-centre column ("boss" slot).
+local EventUI = require(ReplicatedStorage:WaitForChild("EventUI"))
+local HUD_W, HUD_H, WARN_H = 520, 124, 40
+local HP_TOP, HP_BOTTOM = Color3.fromRGB(255, 90, 61), Color3.fromRGB(229, 10, 31)
+local HP_LOW_TOP, HP_LOW_BOTTOM = Color3.fromRGB(255, 196, 61), Color3.fromRGB(255, 122, 0)
+
 local panel = make("Frame", {
     Name = "Panel",
+    BackgroundTransparency = 1,
     AnchorPoint = Vector2.new(0.5, 0),
     Position = UDim2.new(0.5, 0, 0, 6),
-    Size = UDim2.new(0.92, 0, 0, 104),
-    BackgroundColor3 = THEME.lacquer,
+    Size = UDim2.fromOffset(HUD_W, HUD_H),
     Visible = false,
 }, gui)
-make("UISizeConstraint", { MaxSize = Vector2.new(520, 104) }, panel)
-make("UICorner", { CornerRadius = UDim.new(0, 10) }, panel)
-make("UIStroke", { Color = THEME.gold, Thickness = 2 }, panel)
-make("UIPadding", {
-    PaddingLeft = UDim.new(0, 12),
-    PaddingRight = UDim.new(0, 12),
-    PaddingTop = UDim.new(0, 6),
-    PaddingBottom = UDim.new(0, 6),
-}, panel)
-local titleLabel = label(panel, {
-    Size = UDim2.new(1, -70, 0, 24),
+local panelFit = make("UIScale", { Name = "Fit" }, panel)
+local fight = make("Frame", { Name = "Fight", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, panel)
+EventUI.icon(fight, "Icon", EventUI.ICON.boss, 22, 18, 42, 4)
+EventUI.label(fight, {
+    Name = "Title",
     Text = "RIVER BOSS",
-    TextSize = 22,
-    TextColor3 = THEME.gold,
+    TextSize = 26,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Position = UDim2.fromOffset(50, 0),
+    Size = UDim2.fromOffset(HUD_W - 50 - 110, 36),
 })
-make("UIStroke", { Color = THEME.post, Thickness = 1.5 }, titleLabel)
-local timerLabel = label(panel, {
-    AnchorPoint = Vector2.new(1, 0),
-    Position = UDim2.new(1, 0, 0, 0),
-    Size = UDim2.new(0, 70, 0, 24),
-    Text = "",
-    TextSize = 20,
-    TextXAlignment = Enum.TextXAlignment.Right,
+local timerChip = EventUI.chip(fight, { name = "Timer", theme = "boss", width = 96, height = 32, textSize = 21 })
+timerChip.frame.Position = UDim2.fromOffset(HUD_W - 96, 2)
+local hpBar = EventUI.bar(fight, { name = "Health", width = HUD_W, height = 30, textSize = 18, top = HP_TOP, bottom = HP_BOTTOM })
+hpBar.frame.Position = UDim2.fromOffset(0, 44)
+local infoText = "Guarding a " .. Config.RewardMutation .. " " .. Config.RewardEggType .. " Egg  •  Swing your bat to attack!"
+EventUI.label(fight, {
+    Name = "Info",
+    Text = infoText,
+    TextSize = math.clamp(math.floor(16 * HUD_W / EventUI.measure(infoText, 16)), 12, 16),
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    Position = UDim2.fromOffset(0, 82),
+    Size = UDim2.fromOffset(HUD_W, 20),
 })
-local barBack = make("Frame", {
-    Position = UDim2.new(0, 0, 0, 28),
-    Size = UDim2.new(1, 0, 0, 22),
-    BackgroundColor3 = THEME.post,
-}, panel)
-make("UICorner", { CornerRadius = UDim.new(0, 6) }, barBack)
-local barFill = make("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = THEME.hp }, barBack)
-make("UICorner", { CornerRadius = UDim.new(0, 6) }, barFill)
-local hpLabel = label(barBack, {
-    Size = UDim2.new(1, 0, 1, 0),
-    Text = "",
+local topLabel = EventUI.label(fight, {
+    Name = "Top",
     TextSize = 16,
-    TextXAlignment = Enum.TextXAlignment.Center,
-    ZIndex = 2,
-})
-make("UIStroke", { Color = THEME.post, Thickness = 1.5 }, hpLabel)
-local infoLabel = label(panel, {
-    Position = UDim2.new(0, 0, 0, 54),
-    Size = UDim2.new(1, 0, 0, 18),
-    Text = "Guarding a " .. Config.RewardMutation .. " " .. Config.RewardEggType .. " Egg  •  Swing your bat to attack!",
-    TextSize = 14,
+    TextColor3 = EventUI.HOT,
     TextTruncate = Enum.TextTruncate.AtEnd,
+    Position = UDim2.fromOffset(0, 103),
+    Size = UDim2.fromOffset(HUD_W, 20),
 })
-local topLabel = label(panel, {
-    Position = UDim2.new(0, 0, 0, 74),
-    Size = UDim2.new(1, 0, 0, 18),
-    Text = "",
-    TextSize = 14,
-    TextColor3 = THEME.gold,
-    TextTruncate = Enum.TextTruncate.AtEnd,
-})
-local stunLabel = label(gui, {
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.new(0.5, 0, 0.32, 0),
-    Size = UDim2.new(0, 300, 0, 50),
-    Text = "STUNNED!",
-    TextSize = 40,
-    TextColor3 = THEME.hpLow,
-    TextXAlignment = Enum.TextXAlignment.Center,
-    Visible = false,
-})
-make("UIStroke", { Color = THEME.post, Thickness = 3 }, stunLabel)
+local warnPill = EventUI.pill(panel, { name = "Warn", theme = "boss", height = WARN_H, nameSize = 21, timeSize = 23, timeWidth = EventUI.measure("0:00", 23), iconSize = 38, shadow = true })
+warnPill.frame.AnchorPoint = Vector2.new(0.5, 0)
+warnPill.frame.Position = UDim2.fromScale(0.5, 0)
+warnPill.setName("RIVER BOSS RISES IN")
+local stunToast = EventUI.toast(gui, 0.32, { name = "Stun", textSize = 40 })
 
 local function formatTime(seconds)
     seconds = math.max(0, math.ceil(seconds))
     return string.format("%d:%02d", seconds // 60, seconds % 60)
 end
 
+local hudMode, hpLow = nil, false
+local glideY = EventUI.glider(14)
+local function placePanel(mode, height)
+    local changed = mode ~= hudMode
+    hudMode = mode
+    local scale = EventUI.fitTop(gui.AbsoluteSize, HUD_W + 8)
+    panelFit.Scale = scale
+    panel.Size = UDim2.fromOffset(HUD_W, height)
+    panel.Position = UDim2.new(0.5, 0, 0, glideY(EventUI.stackTop("boss") - EventUI.originY(gui), changed))
+    EventUI.stackSet("boss", height * scale)
+    fight.Visible = mode == "fight"
+    warnPill.frame.Visible = mode == "warn"
+    panel.Visible = true
+    return changed
+end
 local function refreshHud(now)
     local active = workspace:GetAttribute("BossActive") == true
     local state = workspace:GetAttribute("BossState")
     local nextAt = workspace:GetAttribute("BossNextAt")
     if active and state == "Walking" then
-        panel.Visible = true
-        panel.Size = UDim2.new(0.92, 0, 0, 104)
-        titleLabel.Text = "RIVER BOSS"
         local hp, maxHp = workspace:GetAttribute("BossHP") or 0, workspace:GetAttribute("BossMaxHP") or 1
-        barBack.Visible, infoLabel.Visible, topLabel.Visible = true, true, true
-        barFill.Size = UDim2.new(math.clamp(hp / maxHp, 0, 1), 0, 1, 0)
-        barFill.BackgroundColor3 = hp / maxHp < 0.25 and THEME.hpLow or THEME.hp
-        hpLabel.Text = hp .. " / " .. maxHp .. " HP"
-        timerLabel.Text = formatTime((workspace:GetAttribute("BossEndsAt") or now) - now)
+        local fraction = math.clamp(hp / maxHp, 0, 1)
+        if placePanel("fight", HUD_H) then
+            hpBar.reset(fraction)
+            warnPill.setUrgent(false)
+        end
+        local low = hp / maxHp < 0.25
+        if low ~= hpLow then
+            hpLow = low
+            hpBar.setColors(low and HP_LOW_TOP or HP_TOP, low and HP_LOW_BOTTOM or HP_BOTTOM)
+        end
+        hpBar.set(fraction, hp .. " / " .. maxHp .. " HP")
+        local left = (workspace:GetAttribute("BossEndsAt") or now) - now
+        timerChip.set(formatTime(left), left <= 10)
     elseif not active and nextAt and nextAt - now <= Config.WarnSeconds then
-        panel.Visible = true
-        panel.Size = UDim2.new(0.92, 0, 0, 38)
-        titleLabel.Text = "RIVER BOSS RISES IN"
-        barBack.Visible, infoLabel.Visible, topLabel.Visible = false, false, false
-        timerLabel.Text = formatTime(nextAt - now)
-    else
+        if placePanel("warn", WARN_H) then
+            warnPill.popIn()
+        end
+        warnPill.setTime(formatTime(nextAt - now))
+        warnPill.setUrgent(nextAt - now <= 10)
+    elseif hudMode ~= nil then
+        hudMode = nil
         panel.Visible = false
+        warnPill.setUrgent(false)
+        EventUI.stackSet("boss", 0)
     end
 end
 local function refreshTop()
@@ -287,7 +289,8 @@ local function floatText(position, text, color)
         TextColor3 = color,
         TextXAlignment = Enum.TextXAlignment.Center,
     })
-    make("UIStroke", { Color = THEME.post, Thickness = 2 }, text_)
+    local textStroke = make("UIStroke", { Name = "UIStroke", Color = Color3.new(0, 0, 0), Thickness = 3.7, LineJoinMode = Enum.LineJoinMode.Bevel }, text_)
+    TweenService:Create(textStroke, TweenInfo.new(0.8), { Transparency = 1 }):Play()
     TweenService:Create(anchor, TweenInfo.new(0.8), { Position = position + Vector3.new(0, 5, 0) }):Play()
     TweenService:Create(text_, TweenInfo.new(0.8), { TextTransparency = 1 }):Play()
     Debris:AddItem(anchor, 0.9)
@@ -719,8 +722,7 @@ fxEvent.OnClientEvent:Connect(function(kind, data)
         floatText(data.position, "-" .. tostring(data.damage), Color3.fromRGB(255, 120, 90))
         playSound(SOUND_HIT, data.position, 0.6, 0.8)
     elseif kind == "SlamHit" then
-        stunLabel.Visible = true
-        task.delay(Config.StunSeconds, function() stunLabel.Visible = false end)
+        stunToast.show("STUNNED!", Color3.fromRGB(255, 143, 31), math.max(0.3, Config.StunSeconds - 0.4))
     elseif kind == "Defeated" then
         explode(type(data) == "table" and data.winnerId or nil)
     end

@@ -380,6 +380,14 @@ announcementEvent.OnClientEvent:Connect(function(data)
     if type(data) ~= "table" then
         return
     end
+    -- event banners (boss, tide, staff shouts) use the shared EventUI look
+    if data.style ~= "chat" and not data.isUpdate then
+        local okUI, EventUI = pcall(require, ReplicatedStorage:WaitForChild("EventUI", 5))
+        if okUI and EventUI then
+            EventUI.announce(data)
+            return
+        end
+    end
     -- /update countdown: refresh the banner that is already showing
     if data.isUpdate and currentBanner and currentBanner.update then
         currentBanner.body.Text = tostring(data.text or "")

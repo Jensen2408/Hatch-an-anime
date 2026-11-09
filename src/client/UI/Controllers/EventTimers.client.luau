@@ -8,20 +8,22 @@ Reads only the workspace attributes the event services publish (BossNextAt / Bos
 VolcanoNextAt / VolcanoStart) and server time, so every player sees the same clock. Before the server has published a
 time it falls back to the event's own config schedule. The soonest event is always the top row.
 Icons: FOLK Icon Pack (Brain note "FOLK icon pack"). Looks: ReplicatedStorage.FolkStudUI.
-Old version: ServerStorage._ARCHIVE.EventTimers_BeforeStud_2026-11-07 ]]
+Old version: ServerStorage._ARCHIVE.EventTimers_BeforeStud_2026-11-07
+2026-11-10: the row is an EventUI.pill (ReplicatedStorage.EventUI), the same slab as the live event pills and banners:
+icon + event name + a right-aligned countdown ("04:32", "LIVE!", "JOIN!"), soft pulse in the last 10 seconds. ]]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local GuiService = game:GetService("GuiService")
 local M = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
+local EventUI = require(ReplicatedStorage:WaitForChild("EventUI"))
 local HudScale = require(ReplicatedStorage:WaitForChild("HudScale"))
 local H = M.H
 
 local player = Players.LocalPlayer
 
 local WHITE = Color3.new(1, 1, 1)
-local SOON = Color3.fromRGB(255, 225, 77) -- the last minute
-local LIVE = Color3.fromRGB(140, 245, 106)
+local SOON = EventUI.HOT -- the last minute
+local LIVE = EventUI.LIVE
 
 local function config(folderName, moduleName)
 	local folder = ReplicatedStorage:WaitForChild(folderName, 10)
@@ -33,8 +35,9 @@ end
 local EVENTS = {
 	{
 		key = "Boss",
+		name = "BOSS",
 		icon = "rbxassetid://79711631278660", -- angry face with horns
-		color = M.COLOR.lilac,
+		theme = EventUI.THEMES.boss,
 		config = config("BossEvent", "BossConfig"),
 		live = function()
 			return workspace:GetAttribute("BossActive") == true and "LIVE!" or nil
@@ -42,8 +45,9 @@ local EVENTS = {
 	},
 	{
 		key = "Arena",
+		name = "ARENA",
 		icon = "rbxassetid://79302902202299", -- sword
-		color = M.COLOR.azure,
+		theme = EventUI.THEMES.arena,
 		config = config("ArenaEvent", "ArenaConfig"),
 		live = function()
 			local phase = workspace:GetAttribute("ArenaPhase")
@@ -57,8 +61,9 @@ local EVENTS = {
 	},
 	{
 		key = "Volcano",
+		name = "VOLCANO",
 		icon = "rbxassetid://106124079616526", -- fire
-		color = M.COLOR.coral,
+		theme = EventUI.THEMES.volcano,
 		config = config("VolcanoEvent", "VolcanoConfig"),
 		live = function(now, cfg)
 			local started = workspace:GetAttribute("VolcanoStart")
@@ -95,27 +100,31 @@ list.VerticalAlignment = Enum.VerticalAlignment.Bottom
 list.SortOrder = Enum.SortOrder.LayoutOrder
 list.Parent = holder
 
+local PILL_H = 40
 for _, event in EVENTS do
 	local row = H.new("Frame", { Name = event.key, Size = UDim2.fromOffset(ROW_W, ROW_H), BackgroundTransparency = 1 }, holder)
-	-- the slab: read only, so no lip
-	local SX, SY, SW, SH = 26, 3, ROW_W - 28, ROW_H - 10
-	H.shadow(row, "Bar", SX, SY, SW, SH, 14, 1)
-	local bar = H.rect(row, "Bar", SX, SY, SW, SH, 14, 2, WHITE)
-	H.grad(bar, event.color[1], event.color[2])
-	H.ink(bar, 4)
-	H.studs(bar, Vector2.new(48, 48), 0.78, 14, 2)
-	H.shine(bar, 14, 3)
-	H.neon(bar, nil, 5) -- running rainbow outline: the event countdown is the loudest thing on the HUD
-
-	local text = H.new("TextLabel", { Name = "Time", BackgroundTransparency = 1, FontFace = M.FONT, TextSize = 26, TextColor3 = WHITE, Text = "",
-		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.fromOffset(36, 0), Size = UDim2.new(1, -44, 1, -4), ZIndex = 5 }, bar)
-	H.new("UIStroke", { Name = "UIStroke", Thickness = 3.5, Color = Color3.new(0, 0, 0), LineJoinMode = Enum.LineJoinMode.Bevel }, text)
+	-- the slab: read only, so no lip. The icon hangs over its left end.
+	local pill = EventUI.pill(row, {
+		name = "Bar",
+		top = event.theme.top,
+		bottom = event.theme.bottom,
+		icon = event.icon,
+		width = ROW_W,
+		height = PILL_H,
+		nameSize = 22,
+		timeSize = 24,
+		iconSize = 56,
+		breakout = true,
+		shadow = true,
+	})
+	pill.frame.Position = UDim2.fromOffset(0, (ROW_H - PILL_H) / 2 - 2)
+	pill.setName(event.name)
 
 	if event.key == "Arena" then
 		local join = H.new("TextButton", {
 			Name = "JoinArena", Text = "", BackgroundTransparency = 1,
-			Size = UDim2.fromScale(1, 1), ZIndex = 7, Visible = false,
-		}, bar)
+			Size = UDim2.fromScale(1, 1), ZIndex = 9, Visible = false,
+		}, pill.slab)
 		join.Activated:Connect(function()
 			local arena = game:GetService("ReplicatedStorage"):FindFirstChild("ArenaEvent")
 			local remote = arena and arena:FindFirstChild("Join")
@@ -126,18 +135,11 @@ for _, event in EVENTS do
 		event.join = join
 	end
 
-	local icon = H.new("ImageLabel", { Name = "Icon", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(28, ROW_H / 2 - 3), Size = UDim2.fromOffset(58, 58),
-		BackgroundTransparency = 1, Image = event.icon, ZIndex = 6 }, row)
-	icon:SetAttribute("Wiggle", 0)
-	local pop = Instance.new("UIScale")
-	pop.Parent = icon
-
 	local rowPop = Instance.new("UIScale") -- the pop when this event becomes the shown one
 	rowPop.Parent = row
 	row.Visible = false
-	event.row, event.text, event.pop, event.rowPop = row, text, pop, rowPop
+	event.row, event.pill, event.pop, event.rowPop = row, pill, pill.iconPop, rowPop
 end
-M.animate(holder, { sounds = false })
 
 -- Same size rule as the rest of the HUD (ReplicatedStorage.HudScale).
 local function refit()
@@ -164,7 +166,7 @@ local function setPulsing(event, on)
 	end
 	if on then
 		event.pulse = TweenService:Create(event.pop, pulse, { Scale = 1.12 })
-		if not GuiService.ReducedMotionEnabled then
+		if not EventUI.reduced() then
 			event.pulse:Play()
 		end
 	else
@@ -185,7 +187,7 @@ local function show(event)
 	end
 	shown = event
 	event.row.Visible = true
-	if GuiService.ReducedMotionEnabled then
+	if EventUI.reduced() then
 		event.rowPop.Scale = 1
 	else
 		event.rowPop.Scale = 0.6
@@ -206,19 +208,17 @@ while true do
 		if event.join then
 			event.join.Visible = liveText == "JOIN!" and typeof(player:GetAttribute("ArenaPortalCFrame")) == "CFrame"
 		end
-		local text, color
+		local text, color, lastSeconds
 		if liveText then
-			text, color = liveText, LIVE
+			text, color, lastSeconds = liveText, LIVE, false
 		elseif typeof(nextAt) == "number" then
 			local left = nextAt - now
-			text, color = "In: " .. format(left), left <= 60 and SOON or WHITE
+			text, color, lastSeconds = format(left), left <= 60 and SOON or WHITE, left <= 10
 		else
-			text, color = "In: --:--", WHITE
+			text, color, lastSeconds = "--:--", WHITE, false
 		end
-		if event.text.Text ~= text then
-			event.text.Text = text
-		end
-		event.text.TextColor3 = color
+		event.pill.setTime(text, color)
+		event.pill.setUrgent(lastSeconds)
 		setPulsing(event, liveText ~= nil)
 		-- live events first, then the soonest
 		local order = liveText and 0 or (typeof(nextAt) == "number" and math.clamp(math.floor(nextAt - now), 1, 1e6) or 1e6)

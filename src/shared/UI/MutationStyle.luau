@@ -147,4 +147,105 @@ function MS.Badge(parent, tier, p)
     return pill, word
 end
 
+-- 2026-11-10: the plate-free mutation tag used on egg and character labels: a small gem icon in the tier's
+-- moving metal colours, then the tier word carrying its colour flow (ReplicatedStorage.RarityText).
+-- Nothing sits behind it, so it never covers the text next to it. p (optional): { size = text size (16), z = ZIndex }
+-- Returns the row Frame (AutomaticSize X; centre it with AnchorPoint 0.5). MS.SetTag(row, tier) re-themes it.
+function MS.Tag(parent, tier, p)
+    p = p or {}
+    local size = p.size or 16
+    local z = p.z or 4
+    local row = Instance.new("Frame")
+    row.Name = "MutationTag"
+    row.BackgroundTransparency = 1
+    row.BorderSizePixel = 0
+    row.Size = UDim2.fromOffset(0, size + 6)
+    row.AutomaticSize = Enum.AutomaticSize.X
+    row.ZIndex = z
+    local list = Instance.new("UIListLayout")
+    list.FillDirection = Enum.FillDirection.Horizontal
+    list.VerticalAlignment = Enum.VerticalAlignment.Center
+    list.Padding = UDim.new(0, math.floor(size * 0.3))
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    list.Parent = row
+    local slot = Instance.new("Frame") -- unrotated box, so the list measures the icon correctly
+    slot.Name = "Icon"
+    slot.BackgroundTransparency = 1
+    slot.Size = UDim2.fromOffset(size, size)
+    slot.LayoutOrder = 1
+    slot.ZIndex = z
+    slot.Parent = row
+    local gem = Instance.new("Frame")
+    gem.Name = "Gem"
+    gem.AnchorPoint = Vector2.new(0.5, 0.5)
+    gem.Position = UDim2.fromScale(0.5, 0.5)
+    gem.Size = UDim2.fromScale(0.64, 0.64)
+    gem.Rotation = 45
+    gem.BorderSizePixel = 0
+    gem.ZIndex = z
+    local gemCorner = Instance.new("UICorner")
+    gemCorner.CornerRadius = UDim.new(0.18, 0)
+    gemCorner.Parent = gem
+    local gemInk = Instance.new("UIStroke")
+    gemInk.Name = "Outline"
+    gemInk.Thickness = math.max(2, size * 0.14)
+    gemInk.Color = Color3.new(0, 0, 0)
+    gemInk.LineJoinMode = Enum.LineJoinMode.Round
+    gemInk.Parent = gem
+    local glint = Instance.new("Frame")
+    glint.Name = "Glint"
+    glint.AnchorPoint = Vector2.new(0.5, 0.5)
+    glint.Position = UDim2.fromScale(0.3, 0.5)
+    glint.Size = UDim2.fromScale(0.22, 0.5)
+    glint.BackgroundColor3 = Color3.new(1, 1, 1)
+    glint.BackgroundTransparency = 0.25
+    glint.BorderSizePixel = 0
+    glint.ZIndex = z + 1
+    local glintCorner = Instance.new("UICorner")
+    glintCorner.CornerRadius = UDim.new(1, 0)
+    glintCorner.Parent = glint
+    glint.Parent = gem
+    gem.Parent = slot
+    local word = Instance.new("TextLabel")
+    word.Name = "Word"
+    word.BackgroundTransparency = 1
+    word.Size = UDim2.fromScale(0, 1)
+    word.AutomaticSize = Enum.AutomaticSize.X
+    word.FontFace = p.font or Font.new("rbxasset://fonts/families/FredokaOne.json")
+    word.TextSize = size
+    word.TextColor3 = Color3.new(1, 1, 1)
+    word.LayoutOrder = 2
+    word.ZIndex = z + 1
+    local st = Instance.new("UIStroke")
+    st.Name = "UIStroke"
+    st.Thickness = math.max(2.5, size * 0.17)
+    st.Color = Color3.new(0, 0, 0)
+    st.LineJoinMode = Enum.LineJoinMode.Bevel
+    st.Parent = word
+    word.Parent = row
+    row.Parent = parent
+    MS.SetTag(row, tier)
+    return row, word
+end
+
+function MS.SetTag(row, tier)
+    local word = row:FindFirstChild("Word")
+    local slot = row:FindFirstChild("Icon")
+    local gem = slot and slot:FindFirstChild("Gem")
+    if not (word and gem) then return end
+    if row:GetAttribute("Tier") == tier then return end
+    row:SetAttribute("Tier", tier)
+    word.Text = string.upper(tostring(tier or ""))
+    MS.Paint(gem, tier)
+    local flowed = false
+    local module = game:GetService("ReplicatedStorage"):FindFirstChild("RarityText")
+    if module then
+        local ok, RarityText = pcall(require, module)
+        flowed = ok and RarityText and RarityText.Apply(word, tier, false) == true
+    end
+    if not flowed then
+        word.TextColor3 = MS.Color(tier)
+    end
+end
+
 return MS

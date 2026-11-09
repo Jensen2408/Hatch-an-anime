@@ -1880,95 +1880,77 @@ do
         Rainbow = Color3.fromRGB(255, 90, 200),
         Molten = Color3.fromRGB(255, 105, 34),
     }
-    local RAINBOW_GRADIENT = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80, 80)),
-        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 230, 60)),
-        ColorSequenceKeypoint.new(0.66, Color3.fromRGB(80, 230, 120)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 150, 255)),
-    })
     local activeTab, rarityIndex, mutationIndex, searchQuery, sellMode, armedItem = "All", 1, 1, "", false, nil
-    -- the window art (ReplicatedStorage.MenuArt): background with the header, title, chips and grid face; tab /
-    -- cell / sell pieces drawn on top. Every rect is in pixels of the 660 x 402 art.
+    -- 2026-11-10: the Folk Stud look (ReplicatedStorage.FolkStudUI), drawn in code: a sky-blue studded sheet with a
+    -- black outline and a darker header band, pressable buttons with a lip, studs and a hover / press scale, a gold
+    -- outline on the chosen tab, and item cards in their rarity colour. Every rect is in pixels of the 660 x 402
+    -- panel; rects of pressable things are without their 4 px outline, so neighbours sit 14 px apart.
     local ART = {
-        Tabs = { All = { 223, 17, 125, 35 }, Eggs = { 352, 17, 124, 35 }, Characters = { 481, 17, 120, 35 } },
-        Count = { 190, 17, 30, 35 },
-        Close = { 607, 17, 38, 35 },
-        Search = { 23, 68, 199, 33 },
-        Rarity = { 234, 68, 142, 33 },
-        Mutation = { 384, 68, 116, 33 },
-        Sell = { 507, 68, 131, 33 },
-        Grid = { 20, 112, 626, 282 },
+        Tabs = { All = { 244, 12, 106, 34 }, Eggs = { 364, 12, 106, 34 }, Characters = { 484, 12, 106, 34 } },
+        Count = { 176, 15, 48, 28 },
+        Close = { 604, 12, 40, 34 },
+        Search = { 16, 67, 150, 32 },
+        Rarity = { 180, 67, 164, 32 },
+        Mutation = { 358, 67, 132, 32 },
+        Sell = { 504, 67, 140, 32 },
+        Summary = { 22, 111, 470, 28 },
+        ViewPlot = { 512, 112, 132, 26 },
+        Grid = { 17, 113, 626, 270 },
         Cell = Vector2.new(118, 94),
         CellGap = Vector2.new(6, 7),
     }
-    -- 2026-11-08: Roblox's own backpack look, drawn in code (was the MenuArt image): a dark see-through panel above
-    -- the hotbar, dark pills for the controls, a blue selected tab and dark rounded cells. The rects (ART below) are
-    -- the same as before, so the rest of this section is unchanged. Old art: ServerStorage MenuArt "Inventory".
-    local MenuArt = {}
-    local PILL = Color3.fromRGB(58, 58, 64)
-    local ROBLOX_BLUE = Color3.fromRGB(0, 162, 255)
-    local GOTHAM = Font.fromEnum(Enum.Font.GothamBold)
-    local function roundBox(parent, name, r, color, transparency, z, corner)
-        local frame = create("Frame", {
-            Name = name,
-            Position = UDim2.fromOffset(r[1], r[2]),
-            Size = UDim2.fromOffset(r[3], r[4]),
-            BackgroundColor3 = color,
-            BackgroundTransparency = transparency,
-            BorderSizePixel = 0,
-            ZIndex = z,
-        }, parent)
-        create("UICorner", { CornerRadius = UDim.new(0, corner or 8) }, frame)
-        return frame
-    end
-    function MenuArt.setPiece(frame, kind)
-        if kind == "InvTabOn" then
-            frame.BackgroundColor3, frame.BackgroundTransparency = ROBLOX_BLUE, 0
-        elseif kind == "SellRed" then
-            frame.BackgroundColor3, frame.BackgroundTransparency = Color3.fromRGB(226, 50, 44), 0
-        elseif kind == "Cell" then
-            frame.BackgroundColor3, frame.BackgroundTransparency = Color3.fromRGB(28, 28, 32), 0.2
-        else
-            frame.BackgroundColor3, frame.BackgroundTransparency = PILL, 0.1
-        end
-    end
-    function MenuArt.piece(parent, name, kind, r, z, corner)
-        local frame = roundBox(parent, name, r, PILL, 0.1, z, corner and math.min(corner, 10) or 8)
-        MenuArt.setPiece(frame, kind)
-        return frame
-    end
-    function MenuArt.background(parent, _name, _art, z)
-        local panel = create("Frame", {
-            Name = "Backdrop",
-            Size = UDim2.fromScale(1, 1),
-            BackgroundColor3 = Color3.new(0, 0, 0),
-            BackgroundTransparency = 0.3,
-            BorderSizePixel = 0,
-            ZIndex = z,
-        }, parent)
-        create("UICorner", { CornerRadius = UDim.new(0, 12) }, panel)
-        create("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.82, Thickness = 1.5 }, panel)
-        create("TextLabel", {
-            Name = "Title",
-            Position = UDim2.fromOffset(22, 17),
-            Size = UDim2.fromOffset(160, 35),
-            BackgroundTransparency = 1,
-            Text = "Backpack",
-            FontFace = GOTHAM,
-            TextSize = 22,
-            TextColor3 = Color3.new(1, 1, 1),
-            TextXAlignment = Enum.TextXAlignment.Left,
-            ZIndex = z + 1,
-        }, parent)
-        for _, key in { "Search", "Rarity", "Mutation" } do
-            roundBox(parent, key .. "Pill", ART[key], PILL, 0.1, z + 1)
-        end
-        roundBox(parent, "SellPill", ART.Sell, Color3.fromRGB(0, 176, 111), 0, z + 1)
-        roundBox(parent, "ClosePill", ART.Close, PILL, 0.1, z + 1)
-        roundBox(parent, "GridWell", ART.Grid, Color3.new(0, 0, 0), 0.5, z, 10)
-        return panel
-    end
     local PANEL_WIDTH, PANEL_HEIGHT = 660, 402
+    local Kit = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
+    local H, PAL = Kit.H, Kit.COLOR
+    local MenuArt = { GOLD = H.hex("FFE600"), WHITE = Color3.new(1, 1, 1) }
+    -- SharpUI squares corners and forces every outline in GameHUD to black with mitred joins, except on pieces that
+    -- carry the NoSkin attribute (on themselves or their parent). Pieces are built unparented, sealed, then parented.
+    function MenuArt.seal(root)
+        root:SetAttribute("NoSkin", true)
+        for _, descendant in root:GetDescendants() do
+            if descendant:IsA("GuiObject") then
+                descendant:SetAttribute("NoSkin", true)
+            end
+        end
+        return root
+    end
+    -- the house text outline: black, bevelled, 3.7 px (thinner on small text so the letters stay open)
+    function MenuArt.outline(label, textSize)
+        return create("UIStroke", {
+            Name = "UIStroke",
+            Thickness = math.clamp(textSize * 0.2, 2.5, 3.7),
+            Color = BLACK,
+            LineJoinMode = Enum.LineJoinMode.Bevel,
+        }, label)
+    end
+    -- a plain label / text box (class) with the house outline; props must carry TextSize
+    function MenuArt.text(class, props, parent)
+        local label = create(class, props)
+        label.BackgroundTransparency = 1
+        label.BorderSizePixel = 0
+        label.FontFace = FONT
+        label:SetAttribute("NoSkin", true)
+        MenuArt.outline(label, props.TextSize)
+        label.Parent = parent
+        return label
+    end
+    -- recolours a pressable built by MenuArt.button: pal = { face top, face bottom, lip }
+    function MenuArt.paint(button, pal)
+        button.BackgroundColor3 = pal[3]
+        local face = button:FindFirstChild("Face")
+        local gradient = face and face:FindFirstChildOfClass("UIGradient")
+        if gradient then
+            gradient.Color = ColorSequence.new(pal[1], pal[2])
+        end
+    end
+    -- thick gold outline = chosen / open, black = not
+    function MenuArt.pick(button, on)
+        local outline = button:FindFirstChild("Outline")
+        if outline then
+            outline.Color = on and MenuArt.GOLD or BLACK
+            outline.Thickness = on and 5 or 4
+        end
+    end
     local inventoryFrame = create("Frame", {
         Name = "Inventory",
         Active = true,
@@ -1980,7 +1962,37 @@ do
         Visible = false,
         ZIndex = 20,
     }, gui)
-    MenuArt.background(inventoryFrame, "Inventory", nil, 20)
+    inventoryFrame:SetAttribute("NoSkin", true)
+    -- the sheet, header band, title, count pill, search field and the well the item grid sits in (none pressable)
+    do
+        local chrome = create("Frame", {
+            Name = "Chrome",
+            Size = UDim2.fromScale(1, 1),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 20,
+        })
+        H.shadow(chrome, "Sheet", 0, 0, PANEL_WIDTH, PANEL_HEIGHT, 16, 20)
+        local sheet = H.rect(chrome, "Sheet", 0, 0, PANEL_WIDTH, PANEL_HEIGHT, 16, 20, PAL.sky[3])
+        H.ink(sheet, 4)
+        local face = H.rect(sheet, "Face", 0, 0, PANEL_WIDTH, PANEL_HEIGHT - 6, 15, 20)
+        H.grad(face, PAL.sky[1], PAL.sky[2])
+        H.studs(face, Vector2.new(48, 48), 0.8, 15, 20)
+        H.rect(face, "Header", 0, 0, PANEL_WIDTH, 55, 15, 20, PAL.blue[3]).BackgroundTransparency = 0.35
+        H.rect(face, "HeaderLine", 0, 55, PANEL_WIDTH, 3, nil, 20, BLACK)
+        H.gleam(H.text(chrome, "Title", "BACKPACK", 18, 29, 24, 22, MenuArt.WHITE, "left"))
+        local r = ART.Count
+        local countPill = H.rect(chrome, "CountPill", r[1], r[2], r[3], r[4], 10, 21)
+        H.grad(countPill, PAL.gold[1], PAL.gold[2])
+        H.ink(countPill, 3)
+        r = ART.Search
+        H.ink(H.rect(chrome, "SearchPill", r[1], r[2], r[3], r[4], 10, 21, PAL.blue[3]), 3)
+        r = ART.Grid
+        MenuArt.well = H.rect(chrome, "GridWell", r[1] - 1, r[2] - 1, r[3] + 2, r[4] + 2, 12, 20, PAL.blue[3])
+        H.ink(MenuArt.well, 4)
+        MenuArt.seal(chrome).Parent = inventoryFrame
+        Kit.animate(chrome, { sounds = false }) -- the light sweep on the title
+    end
     local inventoryScale = create("UIScale", {}, inventoryFrame)
     local function fitScale()
         local screenSize = gui.AbsoluteSize
@@ -1994,108 +2006,112 @@ do
             inventoryScale.Scale = fitScale()
         end
     end)
-    -- a transparent button over the art with a centred label
-    local function artButton(r, textSize)
+    -- a pressable: lip colour behind, black outline, gradient face with studs and a light sweep, centre anchored so
+    -- the kit's hover / press scale ("Pop") keeps its middle still. Its words sit on a child "Label" that follows
+    -- button.Text / TextColor3 and shrinks only when a longer word would not fit.
+    local function artButton(name, r, pal, textSize, text, plain)
         local button = create("TextButton", {
-            Position = UDim2.fromOffset(r[1], r[2]),
+            Name = name,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromOffset(r[1] + r[3] / 2, r[2] + r[4] / 2),
             Size = UDim2.fromOffset(r[3], r[4]),
-            BackgroundTransparency = 1,
-            Text = "",
+            BorderSizePixel = 0,
+            Text = text,
             FontFace = FONT,
             TextSize = textSize,
-            TextColor3 = Color3.new(1, 1, 1),
+            TextColor3 = MenuArt.WHITE,
             AutoButtonColor = false,
-            ZIndex = 23,
-        }, inventoryFrame)
-        addStroke(button, 2, BLACK).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+            ZIndex = 22,
+        })
+        H.dress(button, pal, 10, { lip = 4, studs = 0.7, plain = plain })
+        local label = button:FindFirstChild("Label")
+        if label then
+            label.TextScaled = true
+            label.TextTruncate = Enum.TextTruncate.None
+            create("UITextSizeConstraint", { MaxTextSize = textSize, MinTextSize = 7 }, label)
+            local outline = label:FindFirstChild("UIStroke")
+            if outline then
+                outline.Thickness = math.clamp(textSize * 0.2, 2.5, 3.7)
+            end
+        end
+        MenuArt.seal(button).Parent = inventoryFrame
+        Kit.animate(button, { sounds = false }) -- hover / press scale + the light sweep (sounds stay UISound's)
         return button
     end
-    local countLabel = create("TextLabel", {
-        Position = UDim2.fromOffset(ART.Count[1], ART.Count[2]),
-        Size = UDim2.fromOffset(ART.Count[3], ART.Count[4]),
-        BackgroundTransparency = 1,
+    local countLabel = MenuArt.text("TextLabel", {
+        Name = "Count",
+        Position = UDim2.fromOffset(ART.Count[1] + 3, ART.Count[2]),
+        Size = UDim2.fromOffset(ART.Count[3] - 6, ART.Count[4]),
         Text = "",
-        FontFace = FONT,
-        TextSize = 18,
-        TextColor3 = CREAM,
+        TextScaled = true,
+        TextSize = 16,
+        TextColor3 = MenuArt.WHITE,
         ZIndex = 22,
     }, inventoryFrame)
-    addStroke(countLabel, 2, BLACK).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-    local tabButtons, tabArt = {}, {}
-    for _, tabName in { "All", "Eggs", "Characters" } do
-        local r = ART.Tabs[tabName]
-        tabArt[tabName] = MenuArt.piece(inventoryFrame, "TabArt" .. tabName, "InvTabOff", r, 21)
-        local tabButton = artButton(r, 15)
-        tabButton.Text = string.upper(tabName)
-        tabButtons[tabName] = tabButton
+    create("UITextSizeConstraint", { MaxTextSize = 16, MinTextSize = 8 }, countLabel)
+    local tabButtons = {}
+    for _, tab in { { "All", PAL.pink }, { "Eggs", PAL.orange }, { "Characters", PAL.green } } do
+        tabButtons[tab[1]] = artButton("Tab" .. tab[1], ART.Tabs[tab[1]], tab[2], 13, string.upper(tab[1]))
     end
-    local closeButton = artButton(ART.Close, 20)
-    closeButton.Text = "X"
-    local searchBox = create("TextBox", {
+    local closeButton = artButton("Close", ART.Close, PAL.red, 20, "X", true)
+    local searchBox = MenuArt.text("TextBox", {
+        Name = "Search",
         Position = UDim2.fromOffset(ART.Search[1] + 10, ART.Search[2]),
         Size = UDim2.fromOffset(ART.Search[3] - 20, ART.Search[4]),
-        BackgroundTransparency = 1,
         PlaceholderText = "Search…",
         Text = "",
         ClearTextOnFocus = false,
-        FontFace = FONT,
-        TextSize = 15,
-        TextColor3 = Color3.new(1, 1, 1),
-        PlaceholderColor3 = Color3.fromRGB(150, 160, 185),
+        TextSize = 14,
+        TextColor3 = MenuArt.WHITE,
+        PlaceholderColor3 = Color3.fromRGB(170, 215, 255),
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 23,
     }, inventoryFrame)
-    local rarityButton = artButton(ART.Rarity, 14)
-    rarityButton.TextColor3 = CREAM
-    local mutationButton = artButton(ART.Mutation, 14)
-    mutationButton.TextColor3 = CREAM
-    local sellArt = MenuArt.piece(inventoryFrame, "SellArt", "SellRed", ART.Sell, 21)
-    sellArt.Visible = false
-    local sellModeButton = artButton(ART.Sell, 14)
+    local rarityButton = artButton("Rarity", ART.Rarity, PAL.purple, 12, "RARITY: ALL")
+    local mutationButton = artButton("Mutation", ART.Mutation, PAL.purple, 12, "MUTATION: ANY")
+    local sellModeButton = artButton("Sell", ART.Sell, PAL.lime, 12, "SELL ITEMS")
     local itemGrid = create("ScrollingFrame", {
+        Name = "Items",
         Position = UDim2.fromOffset(ART.Grid[1], ART.Grid[2]),
         Size = UDim2.fromOffset(ART.Grid[3], ART.Grid[4]),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ScrollBarThickness = 6,
-        ScrollBarImageColor3 = GOLD,
+        ScrollBarImageColor3 = MenuArt.GOLD,
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         CanvasSize = UDim2.new(),
         ZIndex = 21,
     }, inventoryFrame)
+    itemGrid:SetAttribute("NoSkin", true)
     create("UIGridLayout", {
         CellSize = UDim2.fromOffset(ART.Cell.X, ART.Cell.Y),
         CellPadding = UDim2.fromOffset(ART.CellGap.X, ART.CellGap.Y),
         SortOrder = Enum.SortOrder.LayoutOrder,
     }, itemGrid)
-    create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 4) }, itemGrid)
-    local emptyLabel = create("TextLabel", {
-        Position = UDim2.fromOffset(ART.Grid[1], ART.Grid[2]),
-        Size = UDim2.fromOffset(ART.Grid[3], ART.Grid[4]),
-        BackgroundTransparency = 1,
+    -- top: room for a mutation badge that hangs over the first row's top edge; left: centres the five columns
+    create("UIPadding", { PaddingTop = UDim.new(0, 12), PaddingLeft = UDim.new(0, 3), PaddingBottom = UDim.new(0, 6) }, itemGrid)
+    local emptyLabel = MenuArt.text("TextLabel", {
+        Name = "Empty",
+        Position = UDim2.fromOffset(ART.Grid[1] + 20, ART.Grid[2]),
+        Size = UDim2.fromOffset(ART.Grid[3] - 40, ART.Grid[4]),
         Text = "",
-        FontFace = FONT,
+        TextWrapped = true,
         TextSize = 20,
-        TextColor3 = Color3.fromRGB(200, 195, 225),
-        ZIndex = 21,
+        TextColor3 = MenuArt.WHITE,
+        ZIndex = 22,
     }, inventoryFrame)
-    addStroke(emptyLabel, 2, BLACK).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-    local characterSummary = create("TextLabel", {
+    local characterSummary = MenuArt.text("TextLabel", {
         Name = "CharacterSummary",
-        Position = UDim2.fromOffset(24, 105),
-        Size = UDim2.fromOffset(438, 26),
-        BackgroundTransparency = 1,
-        FontFace = FONT,
-        TextSize = 17,
-        TextColor3 = CREAM,
+        Position = UDim2.fromOffset(ART.Summary[1], ART.Summary[2]),
+        Size = UDim2.fromOffset(ART.Summary[3], ART.Summary[4]),
+        Text = "",
+        TextSize = 15,
+        TextColor3 = MenuArt.WHITE,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 22,
         Visible = false,
     }, inventoryFrame)
-    addStroke(characterSummary, 2, BLACK)
-    local viewPlot = artButton({ 492, 103, 142, 31 }, 17)
-    viewPlot.Name = "ViewPlot"
-    viewPlot.Text = "VIEW PLOT"
+    local viewPlot = artButton("ViewPlot", ART.ViewPlot, PAL.gold, 13, "VIEW PLOT")
     viewPlot.Visible = false
     -- tab + rarity + mutation ("Mutated" = any) + case-insensitive plain-text search on "<mutation> <name>"
     local function matchesFilters(tool)
@@ -2127,18 +2143,17 @@ do
         end
         return true
     end
-    -- tab highlight + rarity / mutation / SELL chip labels and colours
+    -- chosen tab (gold outline) + rarity / mutation / SELL button words and colours
     local function refreshControls()
         for tabName, tabButton in tabButtons do
-            MenuArt.setPiece(tabArt[tabName], tabName == activeTab and "InvTabOn" or "InvTabOff")
-            tabButton.TextColor3 = Color3.new(1, 1, 1)
+            MenuArt.pick(tabButton, tabName == activeTab)
         end
         rarityButton.Text = "RARITY: " .. string.upper(RARITY_FILTERS[rarityIndex])
         mutationButton.Text = MUTATION_FILTERS[mutationIndex] == "Any" and "MUTATION: ANY"
             or string.upper(MUTATION_FILTERS[mutationIndex])
-        mutationButton.TextColor3 = INVENTORY_MUTATION_COLORS[MUTATION_FILTERS[mutationIndex]] or CREAM
-        sellModeButton.Text = sellMode and "SELLING: TAP x2" or "SELL ITEMS"
-        sellArt.Visible = sellMode -- the red piece over the art's green SELL button
+        mutationButton.TextColor3 = INVENTORY_MUTATION_COLORS[MUTATION_FILTERS[mutationIndex]] or MenuArt.WHITE
+        sellModeButton.Text = sellMode and "SELL: TAP x2" or "SELL ITEMS"
+        MenuArt.paint(sellModeButton, sellMode and PAL.red or PAL.lime) -- red while selling
     end
     -- ── Mutation look on backpack cards (2026-11-09) ──
     -- A mutated item's card gets its mutation colour shading over it, a bright shine band sweeping across, and a
@@ -2281,89 +2296,101 @@ do
             info.ring.Visible = tool == held
         end
     end
-    -- One inventory cell: rarity strip, icon, name, mutation tag + animated edge, held highlight, SELL-mode price
-    -- and the input handlers (drag / tap to hold, or tap twice within 3 s to sell in SELL mode).
+    -- One inventory cell: a card in its rarity colour (black outline, lip, studs) with the icon, the name under it,
+    -- the mutation badge hanging over the top-right edge, the hotbar number top-left, a thick gold ring when held,
+    -- the SELL-mode price, and the input handlers (drag / tap to hold, or tap twice within 3 s to sell in SELL mode).
+    -- The cell is built unparented and sealed (NoSkin) so SharpUI leaves its outlines alone; the grid sizes the cell,
+    -- the card inside it is centre anchored and scales a little on hover / press.
     local function buildCell(index, tool)
         local name, rarity = describeTool(tool)
         local rarityColor = RARITY_COLORS[rarity] or Color3.fromRGB(150, 140, 160)
         local mutation = tool:GetAttribute("Mutation")
-        local cell = create("Frame", { LayoutOrder = index, BackgroundTransparency = 1, ZIndex = 22 }, itemGrid)
-        MenuArt.piece(cell, "Art", "Cell", { 0, 0, ART.Cell.X, ART.Cell.Y }, 22, 10)
-        -- the art has no outline of its own around a cell's edge: the stroke only shows for mutated / held items
-        local cellStroke = addStroke(cell, 2.5, BLACK)
-        cellStroke.Transparency = 1
-        create("Frame", {
-            Position = UDim2.fromOffset(9, ART.Cell.Y - 10),
-            Size = UDim2.new(1, -18, 0, 3),
-            BackgroundColor3 = rarityColor,
+        local cell = create("Frame", { LayoutOrder = index, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 22 })
+        local card = create("Frame", {
+            Name = "Card",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(1, -6, 1, -6), -- 3 px each side for the outline
+            BackgroundColor3 = rarityColor:Lerp(BLACK, 0.55), -- the lip
             BorderSizePixel = 0,
-            ZIndex = 24,
+            ZIndex = 22,
         }, cell)
+        H.round(card, 12)
+        H.ink(card, 3)
+        local cardScale = create("UIScale", { Name = "Pop" }, card)
+        local face = create("Frame", {
+            Name = "Face",
+            Size = UDim2.new(1, 0, 1, -4),
+            BorderSizePixel = 0,
+            ZIndex = 22,
+        }, card)
+        H.round(face, 11)
+        H.grad(face, rarityColor, rarityColor:Lerp(BLACK, 0.18))
+        H.studs(face, Vector2.new(48, 48), 0.8, 11, 22)
         if mutation then
-            addMutationLook(cell, mutation, 23)
+            -- the moving mutation shading and edge glint cover the face, not the lip
+            local look = create("Frame", {
+                Name = "MutationLook",
+                Size = UDim2.new(1, 0, 1, -4),
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                ZIndex = 23,
+            }, card)
+            addMutationLook(look, mutation, 23)
         end
         local iconFrame = create("Frame", {
-            Position = UDim2.fromOffset(6, 4),
-            Size = UDim2.new(1, -12, 0, 60),
+            Name = "Icon",
+            Position = UDim2.fromOffset(6, 5),
+            Size = UDim2.new(1, -12, 0, 50),
             BackgroundTransparency = 1,
+            BorderSizePixel = 0,
             ZIndex = 23,
-        }, cell)
-        buildPreview(tool, iconFrame)
-        local nameLabel = create("TextLabel", {
-            Position = UDim2.fromOffset(8, 64),
-            Size = UDim2.new(1, -16, 0, 17),
-            BackgroundTransparency = 1,
+        }, card)
+        local nameLabel = MenuArt.text("TextLabel", {
+            Name = "ItemName",
+            Position = UDim2.fromOffset(6, 60),
+            Size = UDim2.new(1, -12, 0, 20),
             Text = string.upper(name),
-            FontFace = FONT,
             TextScaled = true,
-            TextColor3 = Color3.new(1, 1, 1),
+            TextSize = 12,
+            TextColor3 = MenuArt.WHITE,
             ZIndex = 24,
-        }, cell)
-        create("UITextSizeConstraint", { MaxTextSize = 12 }, nameLabel)
-        addStroke(nameLabel, 1.5, BLACK)
+        }, card)
+        create("UITextSizeConstraint", { MaxTextSize = 12, MinTextSize = 7 }, nameLabel)
         if mutation then
-            local mutationTag = create("TextLabel", {
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.new(0.5, 0, 0, 0),
-                Size = UDim2.fromOffset(0, 14),
-                AutomaticSize = Enum.AutomaticSize.X,
-                BackgroundColor3 = INVENTORY_MUTATION_COLORS[mutation] or Color3.new(1, 1, 1),
-                Text = " " .. string.upper(mutation) .. " ",
-                FontFace = FONT,
-                TextSize = 11,
-                TextColor3 = BLACK,
-                ZIndex = 26,
-            }, cell)
-            create(
-                "UIStroke",
-                { Color = BLACK, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-                mutationTag
-            )
-            if mutation == "Rainbow" then
-                create("UIGradient", { Color = RAINBOW_GRADIENT }, mutationTag)
+            -- the game's one mutation tag; it hangs over the top edge on the right, clear of the name below and
+            -- the hotbar number on the left
+            local badge = MutationStyle.Badge(card, mutation, { size = 10, z = 26, font = FONT })
+            badge.AnchorPoint = Vector2.new(1, 0.5)
+            badge.Position = UDim2.new(1, -2, 0, 1)
+            local badgePadding = badge:FindFirstChildOfClass("UIPadding")
+            if badgePadding then
+                badgePadding.PaddingLeft = UDim.new(0, 5)
+                badgePadding.PaddingRight = UDim.new(0, 5)
             end
         end
-        -- held highlight: a plain bright gold ring just outside the cell (over the animated mutation edge)
+        -- held highlight: a thick gold ring over the card's black outline
         local heldRing = create("Frame", {
             Name = "HeldRing",
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
-            Size = UDim2.new(1, 2, 1, 2),
+            Size = UDim2.new(1, 8, 1, 8),
             BackgroundTransparency = 1,
+            BorderSizePixel = 0,
             Visible = getEquippedTool() == tool,
             ZIndex = 29,
-        }, cell)
+        }, card)
         -- four solid gold bars (a UIStroke here did not always draw inside the scrolling grid)
         for _, bar in {
-            { UDim2.fromScale(0, 0), UDim2.new(1, 0, 0, 4) },
-            { UDim2.new(0, 0, 1, -4), UDim2.new(1, 0, 0, 4) },
-            { UDim2.fromScale(0, 0), UDim2.new(0, 4, 1, 0) },
-            { UDim2.new(1, -4, 0, 0), UDim2.new(0, 4, 1, 0) },
+            { UDim2.fromScale(0, 0), UDim2.new(1, 0, 0, 5) },
+            { UDim2.new(0, 0, 1, -5), UDim2.new(1, 0, 0, 5) },
+            { UDim2.fromScale(0, 0), UDim2.new(0, 5, 1, 0) },
+            { UDim2.new(1, -5, 0, 0), UDim2.new(0, 5, 1, 0) },
         } do
             create("Frame", {
                 Position = bar[1],
                 Size = bar[2],
-                BackgroundColor3 = Color3.fromRGB(255, 214, 40),
+                BackgroundColor3 = MenuArt.GOLD,
                 BorderSizePixel = 0,
                 ZIndex = 29,
             }, heldRing)
@@ -2372,42 +2399,76 @@ do
         -- hotbar slot number (top-left), like the number on the hotbar itself
         local barSlot = barSlotOf(tool)
         if barSlot then
-            local slotBadge = create("TextLabel", {
+            local slotBadge = create("Frame", {
                 Name = "HotbarSlot",
-                Position = UDim2.fromOffset(3, 2),
-                Size = UDim2.fromOffset(18, 18),
-                BackgroundColor3 = GOLD,
-                Text = tostring(barSlot),
-                FontFace = FONT,
-                TextSize = 13,
-                TextColor3 = INK,
+                Position = UDim2.fromOffset(5, 5),
+                Size = UDim2.fromOffset(20, 20),
+                BorderSizePixel = 0,
                 ZIndex = 26,
-            }, cell)
-            create("UICorner", { CornerRadius = UDim.new(0, 4) }, slotBadge)
-            addStroke(slotBadge, 1.5, BLACK)
+            }, card)
+            H.round(slotBadge, 8)
+            H.grad(slotBadge, PAL.gold[1], PAL.gold[2])
+            H.ink(slotBadge, 2.5)
+            MenuArt.text("TextLabel", {
+                Name = "Number",
+                Size = UDim2.fromScale(1, 1),
+                Text = tostring(barSlot),
+                TextSize = 13,
+                TextColor3 = MenuArt.WHITE,
+                ZIndex = 27,
+            }, slotBadge)
         end
         if sellMode then
             local quoteValue = getSellQuote(tool)
-            local priceLabel = create("TextLabel", {
+            local armed = armedItem == tool
+            local pricePal = armed and PAL.red or PAL.lime
+            local pricePill = create("Frame", {
+                Name = "Price",
                 AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromScale(0.5, 0.4),
-                Size = UDim2.fromOffset(80, 22),
-                BackgroundColor3 = armedItem == tool and Color3.fromRGB(226, 50, 44) or Color3.fromRGB(92, 192, 70),
-                Text = (armedItem == tool and "CONFIRM " or "") .. (type(quoteValue) == "number" and formatMoney(
+                Position = UDim2.new(0.5, 0, 0, 30),
+                Size = UDim2.fromOffset(96, 24),
+                BorderSizePixel = 0,
+                ZIndex = 27,
+            }, card)
+            H.round(pricePill, 10)
+            H.grad(pricePill, pricePal[1], pricePal[2])
+            H.ink(pricePill, 3)
+            local priceLabel = MenuArt.text("TextLabel", {
+                Name = "Amount",
+                Position = UDim2.fromOffset(4, 0),
+                Size = UDim2.new(1, -8, 1, 0),
+                Text = (armed and "CONFIRM " or "") .. (type(quoteValue) == "number" and formatMoney(
                     quoteValue
                 ) or (quoteValue == false and "CAN'T" or "…")),
-                FontFace = FONT,
+                TextScaled = true,
                 TextSize = 13,
-                TextColor3 = Color3.new(1, 1, 1),
+                TextColor3 = MenuArt.WHITE,
                 ZIndex = 27,
-            }, cell)
-            addStroke(priceLabel, 2, BLACK)
+            }, pricePill)
+            create("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 7 }, priceLabel)
         end
         local cellButton = create(
             "TextButton",
             { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 28 },
             cell
         )
+        MenuArt.seal(cell)
+        iconFrame:SetAttribute("NoSkin", nil) -- the item picture keeps the look it has everywhere else
+        cell.Parent = itemGrid
+        buildPreview(tool, iconFrame)
+        -- hover / press feedback: the card grows and dips from its centre
+        cellButton.MouseEnter:Connect(function()
+            tween(cardScale, 0.12, { Scale = 1.05 })
+        end)
+        cellButton.MouseLeave:Connect(function()
+            tween(cardScale, 0.12, { Scale = 1 })
+        end)
+        cellButton.MouseButton1Down:Connect(function()
+            tween(cardScale, 0.08, { Scale = 0.95 })
+        end)
+        cellButton.MouseButton1Up:Connect(function()
+            tween(cardScale, 0.12, { Scale = 1 })
+        end)
         cellButton.InputBegan:Connect(function(input)
             if sellMode then
                 return
@@ -2506,9 +2567,11 @@ do
             characterSummary.Text = ("Backpack: %d   |   Placed on Plot: %s"):format(carried, plotCount)
         end
         viewPlot.Visible = isCharacters and capacity ~= nil and capacity.hasPlot
-        local inset = isCharacters and 25 or 0
+        local inset = isCharacters and 36 or 0 -- the Characters tab has a summary row above the grid
         itemGrid.Position = UDim2.fromOffset(ART.Grid[1], ART.Grid[2] + inset)
         itemGrid.Size = UDim2.fromOffset(ART.Grid[3], ART.Grid[4] - inset)
+        MenuArt.well.Position = UDim2.fromOffset(ART.Grid[1] - 1, ART.Grid[2] - 1 + inset)
+        MenuArt.well.Size = UDim2.fromOffset(ART.Grid[3] + 2, ART.Grid[4] + 2 - inset)
         emptyLabel.Visible = #items == 0
         emptyLabel.Text = isCharacters and (carried > 0 and "No characters match these filters"
                 or not characterLoaded and "Loading characters…"
@@ -2618,9 +2681,11 @@ do
         end
     end)
     inventoryPanel.setOpen = setInventoryOpen
-    -- Top bar backpack button (2026-11-08): a round dark button next to Roblox's own top bar (like other games),
-    -- with an "Inventory · Backquote" tooltip. Roblox's top bar only offers its backpack inside the menu on PC,
-    -- and games can't open Roblox's backpack from a script, so this opens the game's inventory panel.
+    -- Top bar backpack button (2026-11-08): a button next to Roblox's own top bar (like other games), with an
+    -- "Inventory · Backquote" tooltip. Roblox's top bar only offers its backpack inside the menu on PC, and games
+    -- can't open Roblox's backpack from a script, so this opens the game's inventory panel.
+    -- 2026-11-10: Folk Stud look: an orange studded button with a lip and a black outline (gold while the panel
+    -- is open), centre anchored so the kit's hover / press scale keeps it in place; the tooltip is a flat blue card.
     if USE_DEFAULT_BACKPACK then
         local GuiService = game:GetService("GuiService")
         local topGui = create("ScreenGui", {
@@ -2633,65 +2698,72 @@ do
         local button = create("ImageButton", {
             Name = "Backpack",
             AutoButtonColor = false,
-            BackgroundColor3 = Color3.fromRGB(18, 18, 21),
-            BackgroundTransparency = 0.08,
-            Size = UDim2.fromOffset(44, 44),
-            AnchorPoint = Vector2.new(0, 0.5),
+            BorderSizePixel = 0,
+            Size = UDim2.fromOffset(40, 40), -- 48 with its outline
+            AnchorPoint = Vector2.new(0.5, 0.5),
             Image = "",
         }, topGui)
-        create("UICorner", { CornerRadius = UDim.new(1, 0) }, button)
+        H.dress(button, PAL.orange, 12, { lip = 4, studs = 0.7 })
         local icon = create("ImageLabel", {
             Name = "Icon",
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromScale(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, -2),
             Size = UDim2.fromOffset(28, 28),
             Image = "rbxasset://textures/ui/TopBar/inventoryOff.png",
             ScaleType = Enum.ScaleType.Fit,
+            ZIndex = 3,
         }, button)
-        -- Roblox-style tooltip under the button
+        -- tooltip under the button
         local tip = create("Frame", {
             Name = "Tooltip",
-            BackgroundColor3 = Color3.fromRGB(18, 18, 21),
-            BackgroundTransparency = 0.08,
+            BorderSizePixel = 0,
             AnchorPoint = Vector2.new(0.5, 0),
-            Position = UDim2.new(0.5, 0, 1, 12),
-            Size = UDim2.fromOffset(120, 82),
+            Position = UDim2.new(0.5, 0, 1, 14),
+            Size = UDim2.fromOffset(128, 72),
             Visible = false,
+            ZIndex = 5,
         }, button)
-        create("UICorner", { CornerRadius = UDim.new(0, 8) }, tip)
-        create("TextLabel", {
-            BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(12, 10),
-            Size = UDim2.new(1, -24, 0, 22),
-            Font = Enum.Font.BuilderSans,
-            Text = "Inventory",
-            TextColor3 = Color3.new(1, 1, 1),
-            TextSize = 17,
-            TextXAlignment = Enum.TextXAlignment.Left,
+        H.round(tip, 12)
+        H.grad(tip, PAL.sky[1], PAL.sky[2])
+        H.ink(tip, 3)
+        MenuArt.text("TextLabel", {
+            Name = "Title",
+            Position = UDim2.fromOffset(8, 7),
+            Size = UDim2.new(1, -16, 0, 24),
+            Text = "INVENTORY",
+            TextSize = 15,
+            TextColor3 = MenuArt.WHITE,
+            ZIndex = 6,
         }, tip)
-        local key = create("TextLabel", {
-            BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(12, 40),
-            Size = UDim2.fromOffset(96, 30),
-            Font = Enum.Font.BuilderSans,
-            Text = "Backquote",
-            TextColor3 = Color3.fromRGB(200, 200, 205),
-            TextSize = 17,
+        local key = create("Frame", {
+            Name = "Key",
+            Position = UDim2.fromOffset(12, 37),
+            Size = UDim2.new(1, -24, 0, 24),
+            BorderSizePixel = 0,
+            ZIndex = 6,
         }, tip)
-        create("UICorner", { CornerRadius = UDim.new(0, 6) }, key)
-        create("UIStroke", { Color = Color3.fromRGB(120, 120, 128), Thickness = 1.5 }, key)
+        H.round(key, 8)
+        H.grad(key, PAL.gold[1], PAL.gold[2])
+        H.ink(key, 2.5)
+        MenuArt.text("TextLabel", {
+            Name = "Word",
+            Size = UDim2.fromScale(1, 1),
+            Text = "BACKQUOTE",
+            TextSize = 12,
+            TextColor3 = MenuArt.WHITE,
+            ZIndex = 7,
+        }, key)
         local function place()
             local inset = GuiService.TopbarInset
-            button.Position = UDim2.fromOffset(inset.Min.X + 12, inset.Min.Y + inset.Height / 2)
+            button.Position = UDim2.fromOffset(inset.Min.X + 32, inset.Min.Y + inset.Height / 2)
         end
         place()
         GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(place)
         local function refresh()
             local open = inventoryFrame.Visible
             icon.Image = open and "rbxasset://textures/ui/TopBar/inventoryOn.png" or "rbxasset://textures/ui/TopBar/inventoryOff.png"
-            button.BackgroundColor3 = open and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(18, 18, 21)
-            button.BackgroundTransparency = open and 0.85 or 0.08
+            MenuArt.pick(button, open)
         end
         inventoryFrame:GetPropertyChangedSignal("Visible"):Connect(refresh)
         button.MouseEnter:Connect(function()
@@ -2705,6 +2777,7 @@ do
             setInventoryOpen(not inventoryFrame.Visible)
         end)
         refresh()
+        Kit.animate(topGui, { sounds = false })
     end
     inventoryPanel.render = render
     inventoryPanel.frame = inventoryFrame -- drop target for hotbar slots (section 4)

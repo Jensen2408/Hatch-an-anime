@@ -1,5 +1,6 @@
---[[ StarterPlayerScripts.LiveEventsBar (LocalScript) - 2026-11-08
-A row of Folk Stud pills under the day / night bar showing every event and boost running in this server, with a
+--[[ StarterPlayerScripts.LiveEventsBar (LocalScript) - 2026-11-10
+A row of event pills (ReplicatedStorage.EventUI: the same slab as the event timers and banners, all one height,
+icon + name + countdown, a soft pulse in the last 10 seconds) under the day / night bar showing every event and boost running in this server, with a
 countdown: "10x CASH 4:32", "EGG RUSH 2:10", "RAPIDS 0:41" ... They stack side by side when several run at once.
 Reads only workspace attributes (no remotes):
   Boost<Target>Multiplier / Boost<Target>EndsAt           BoostService (admin panel Boost event)
@@ -10,21 +11,18 @@ Night, boss, arena and volcano already have their own HUD (NightBar, EventTimers
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 local GuiService = game:GetService("GuiService")
 
 local player = Players.LocalPlayer
-local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
-local INK = Color3.fromRGB(10, 10, 14)
-local function hex(s)
-    return Color3.fromHex(s)
-end
--- { id, label(x) -> text, top colour, bottom colour, read() -> multiplier?, endsAt? }
-local function boost(target, label, top, bottom)
+local EventUI = require(ReplicatedStorage:WaitForChild("EventUI"))
+local ICON, THEMES = EventUI.ICON, EventUI.THEMES
+local PILL_H = 36
+-- { id, theme (EventUI colours), icon, read() -> text?, endsAt? }
+local function boost(target, label, theme, icon)
     return {
         id = "Boost" .. target,
-        top = top,
-        bottom = bottom,
+        theme = theme,
+        icon = icon,
         read = function()
             local x = workspace:GetAttribute("Boost" .. target .. "Multiplier")
             if x then
@@ -33,11 +31,11 @@ local function boost(target, label, top, bottom)
         end,
     }
 end
-local function ownerEvent(kind, label, top, bottom)
+local function ownerEvent(kind, label, theme, icon)
     return {
         id = kind,
-        top = top,
-        bottom = bottom,
+        theme = theme,
+        icon = icon,
         read = function()
             local ends = workspace:GetAttribute("OwnerEvent_" .. kind .. "Ends")
             if ends and ends > workspace:GetServerTimeNow() then
@@ -47,18 +45,18 @@ local function ownerEvent(kind, label, top, bottom)
     }
 end
 local ENTRIES = {
-    boost("Cash", "CASH", hex("5BF37A"), hex("12A43A")),
-    boost("Luck", "LUCK", hex("FFE14A"), hex("F59A00")),
-    boost("Hatch", "HATCH SPEED", hex("C08CFF"), hex("7A2CE6")),
-    boost("Mutation", "MUTATION", hex("FF8AD0"), hex("E0249A")),
-    boost("RiverSpeed", "RIVER SPEED", hex("5EE8FF"), hex("1690E0")),
-    ownerEvent("DoubleCash", "2x CASH", hex("5BF37A"), hex("12A43A")),
-    ownerEvent("EggRush", "EGG RUSH", hex("FFB04A"), hex("F06A00")),
-    ownerEvent("GoldenHour", "GOLDEN HOUR", hex("FFE14A"), hex("F59A00")),
+    boost("Cash", "CASH", THEMES.cash, ICON.cash),
+    boost("Luck", "LUCK", THEMES.eggrush, ICON.star),
+    boost("Hatch", "HATCH SPEED", THEMES.fail, ICON.clock),
+    boost("Mutation", "MUTATION", THEMES.pink, ICON.sparkle),
+    boost("RiverSpeed", "RIVER SPEED", THEMES.info, ICON.bolt),
+    ownerEvent("DoubleCash", "2x CASH", THEMES.cash, ICON.cash),
+    ownerEvent("EggRush", "EGG RUSH", THEMES.eggrush, ICON.egg),
+    ownerEvent("GoldenHour", "GOLDEN HOUR", THEMES.eggrush, ICON.eggGold),
     {
         id = "Rapids",
-        top = hex("5EE8FF"),
-        bottom = hex("1690E0"),
+        theme = THEMES.tide,
+        icon = ICON.wave,
         read = function()
             if workspace:GetAttribute("HighTideActive") then
                 return "RAPIDS", workspace:GetAttribute("HighTideEndsAt")
@@ -67,8 +65,8 @@ local ENTRIES = {
     },
     {
         id = "Meteor",
-        top = hex("FF8AD0"),
-        bottom = hex("B01CFF"),
+        theme = THEMES.meteor,
+        icon = ICON.fire,
         read = function()
             local folder = ReplicatedStorage:FindFirstChild("MeteorEvent")
             local ends = folder and folder:GetAttribute("EndsAt") or 0
@@ -86,7 +84,6 @@ gui.IgnoreGuiInset = true
 gui.DisplayOrder = 12
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = player:WaitForChild("PlayerGui")
-task.spawn(function() require(ReplicatedStorage:WaitForChild("FolkStudUI")).animate(gui, { sounds = false }) end)
 local row = Instance.new("Frame")
 row.Name = "Row"
 row.BackgroundTransparency = 1
@@ -118,80 +115,21 @@ end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(place)
 place()
 
-local pills = {} -- [id] = { frame, label, time, shine, scale }
+local pills = {} -- [id] = EventUI.pill
 local function makePill(entry, order)
-    local frame = Instance.new("Frame")
-    frame.Name = entry.id
-    frame.LayoutOrder = order
-    frame.Size = UDim2.fromOffset(0, 34)
-    frame.AutomaticSize = Enum.AutomaticSize.X
-    frame.BackgroundColor3 = Color3.new(1, 1, 1)
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 12)
-    corner.Parent = frame
-    local gradient = Instance.new("UIGradient")
-    gradient.Rotation = 90
-    gradient.Color = ColorSequence.new(entry.top, entry.bottom)
-    gradient.Parent = frame
-    local outline = Instance.new("UIStroke")
-    outline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    outline.Thickness = 3
-    outline.Color = INK
-    outline.Parent = frame
-    -- a light that runs round the outline (FolkStudUI's Orbit turns it)
-    local run = Instance.new("UIGradient")
-    run.Name = "Run"
-    run.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, INK), ColorSequenceKeypoint.new(0.42, INK), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 232, 31)), ColorSequenceKeypoint.new(0.58, INK), ColorSequenceKeypoint.new(1, INK) })
-    run:SetAttribute("Orbit", true)
-    outline.Color = Color3.new(1, 1, 1)
-    run.Parent = outline
-    local pad = Instance.new("UIPadding")
-    pad.PaddingLeft = UDim.new(0, 12)
-    pad.PaddingRight = UDim.new(0, 12)
-    pad.Parent = frame
-    local list = Instance.new("UIListLayout")
-    list.FillDirection = Enum.FillDirection.Horizontal
-    list.VerticalAlignment = Enum.VerticalAlignment.Center
-    list.Padding = UDim.new(0, 10)
-    list.SortOrder = Enum.SortOrder.LayoutOrder
-    list.Parent = frame
-    local function text(name, size, color, layoutOrder)
-        local label = Instance.new("TextLabel")
-        label.Name = name
-        label.BackgroundTransparency = 1
-        label.Size = UDim2.fromOffset(0, 34)
-        label.AutomaticSize = Enum.AutomaticSize.X
-        label.FontFace = FONT
-        label.TextSize = size
-        label.TextColor3 = color
-        label.LayoutOrder = layoutOrder
-        local stroke = Instance.new("UIStroke")
-        stroke.Name = "UIStroke"
-        stroke.Thickness = 3.7
-        stroke.LineJoinMode = Enum.LineJoinMode.Bevel
-        stroke.Color = INK
-        stroke.Parent = label
-        label.Parent = frame
-        return label
-    end
-    local label = text("Label", 19, Color3.new(1, 1, 1), 1)
-    local time = text("Time", 17, Color3.fromRGB(255, 246, 190), 2)
-    -- a glint that runs along the outline now and then
-    local glint = Instance.new("UIGradient")
-    glint.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, INK),
-        ColorSequenceKeypoint.new(0.45, INK),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 240, 160)),
-        ColorSequenceKeypoint.new(0.55, INK),
-        ColorSequenceKeypoint.new(1, INK),
+    local pill = EventUI.pill(row, {
+        name = entry.id,
+        top = entry.theme.top,
+        bottom = entry.theme.bottom,
+        icon = entry.icon,
+        height = PILL_H,
+        nameSize = 19,
+        timeSize = 19,
+        iconSize = 28,
+        order = order,
     })
-    glint.Parent = outline
-    local scale = Instance.new("UIScale")
-    scale.Scale = 0.2
-    scale.Parent = frame
-    frame.Parent = row
-    TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back), { Scale = 1 }):Play()
-    return { frame = frame, label = label, time = time, glint = glint, scale = scale, seed = math.random() * 3 }
+    pill.popIn()
+    return pill
 end
 
 local function clockText(seconds)
@@ -202,24 +140,25 @@ local function clockText(seconds)
     return string.format("%d:%02d", seconds // 60, seconds % 60)
 end
 
+-- tells the shared top-centre column where the pills end, so the boss / arena HUD and banners sit under them
+local function reportStack()
+    if next(pills) == nil then
+        EventUI.stackSet("pills", 0)
+    else
+        EventUI.stackSet("pills", row.AbsoluteSize.Y, row.AbsolutePosition.Y)
+    end
+end
+row:GetPropertyChangedSignal("AbsoluteSize"):Connect(reportStack)
+row:GetPropertyChangedSignal("AbsolutePosition"):Connect(reportStack)
+
 local accumulator = 0
 RunService.RenderStepped:Connect(function(dt)
-    local now = workspace:GetServerTimeNow()
-    local t = os.clock()
-    local calm = GuiService.ReducedMotionEnabled
-    -- motion every frame: gentle breathing + the outline glint
-    for _, pill in pills do
-        if not calm then
-            pill.scale.Scale = 1 + math.max(0, math.sin((t + pill.seed) * 3)) * 0.03
-            local phase = ((t + pill.seed) % 3) / 0.9
-            pill.glint.Offset = Vector2.new(phase <= 1 and (phase * 2 - 1) or 1, 0)
-        end
-    end
     accumulator += dt
     if accumulator < 0.25 then
         return
     end
     accumulator = 0
+    local now = workspace:GetServerTimeNow()
     local seen = {}
     for order, entry in ENTRIES do
         local text, ends = entry.read()
@@ -230,19 +169,16 @@ RunService.RenderStepped:Connect(function(dt)
                 pill = makePill(entry, order)
                 pills[entry.id] = pill
             end
-            pill.label.Text = text
-            pill.time.Text = ends and clockText(ends - now) or ""
-            pill.time.Visible = ends ~= nil
+            pill.setName(text)
+            pill.setTime(ends and clockText(ends - now) or nil)
+            pill.setUrgent(ends ~= nil and ends - now <= 10)
         end
     end
     for id, pill in pills do
         if not seen[id] then
             pills[id] = nil
-            local frame = pill.frame
-            TweenService:Create(pill.scale, TweenInfo.new(0.2), { Scale = 0 }):Play()
-            task.delay(0.22, function()
-                frame:Destroy()
-            end)
+            pill.popOut()
         end
     end
+    reportStack()
 end)
