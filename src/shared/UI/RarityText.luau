@@ -24,7 +24,7 @@ RarityText.Themes = {
     Legendary = { colors = { c(255, 232, 50), c(255, 150, 0), c(255, 255, 215), c(255, 190, 10) }, speed = 0.36, span = 0.75, rot = 25, sparks = true },
     Mythic = { colors = { c(255, 50, 20), c(255, 150, 0), c(255, 244, 100), c(255, 95, 0), c(200, 10, 10) }, speed = 0.42, span = 0.8, rot = 60, sparks = true },
     Cosmic = { colors = { c(70, 255, 230), c(60, 130, 255), c(195, 90, 255), c(255, 100, 215), c(130, 255, 255) }, speed = 0.3, span = 0.9, rot = 0, spin = 45, sparks = true },
-    Secret = { colors = { c(255, 255, 255), c(60, 60, 72), c(255, 40, 60), c(60, 60, 72) }, speed = 0.5, span = 0.8, rot = 20, sparks = true },
+    Secret = { colors = { c(255, 255, 255), c(255, 25, 55), c(255, 110, 130), c(215, 0, 45) }, speed = 0.5, span = 0.8, rot = 20, sparks = true },
     -- mutations
     Silver = { colors = { c(255, 255, 255), c(170, 185, 210), c(240, 246, 255), c(120, 135, 160) }, speed = 0.4, span = 0.7, rot = 20, sparks = true },
     Gold = { colors = { c(255, 236, 90), c(255, 160, 0), c(255, 255, 220), c(225, 130, 0) }, speed = 0.4, span = 0.75, rot = 25, sparks = true },
