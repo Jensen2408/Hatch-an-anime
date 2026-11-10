@@ -230,6 +230,11 @@ function EventUI.icon(parent, name, icon, cx, cy, size, z)
             Size = UDim2.fromOffset(size, size),
             ZIndex = z,
         })
+        -- an emoji under the thick text outline turns into a blob, so glyph icons go without it
+        local glyphStroke = holder.Glyph:FindFirstChildOfClass("UIStroke")
+        if glyphStroke then
+            glyphStroke.Enabled = false
+        end
     end
     return holder
 end
@@ -723,11 +728,14 @@ local function playBanner(data)
         EventUI.label(stage, {
             Name = "Subtitle",
             Text = text,
-            TextSize = fitSize(text, 19, 14, textW),
+            -- long lines wrap onto a second row instead of being cut off
+            TextSize = measure(text, 19) <= textW and 19 or 15,
             TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            TextWrapped = true,
             TextTruncate = Enum.TextTruncate.AtEnd,
-            Position = UDim2.fromOffset(textX, 48),
-            Size = UDim2.fromOffset(textW, 26),
+            Position = UDim2.fromOffset(textX, measure(text, 19) <= textW and 50 or 46),
+            Size = UDim2.fromOffset(textW, 38),
             ZIndex = 7,
         })
     end

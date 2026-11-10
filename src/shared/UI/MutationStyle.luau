@@ -133,7 +133,7 @@ function MS.Badge(parent, tier, p)
     word.FontFace = p.font or Font.new("rbxasset://fonts/families/FredokaOne.json")
     word.TextSize = size
     word.TextColor3 = Color3.new(1, 1, 1)
-    word.Text = "✦ " .. string.upper(tostring(tier))
+    word.Text = string.upper(tostring(tier))
     word.ZIndex = (p.z or 4) + 1
     local st = Instance.new("UIStroke")
     st.Thickness = math.max(2, size * 0.14)
