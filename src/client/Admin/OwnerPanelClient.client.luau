@@ -1,6 +1,6 @@
 --[[ StarterPlayerScripts.OwnerPanelClient (LocalScript)
 Stud-style Owner / Admin panel. Opens with F8, /owner (owner) or /admin (any staff).
-UI lives in ReplicatedStorage.OwnerPanel.StudPanel. The server re-checks every action.
+UI lives in ReplicatedStorage.OwnerPanel.AdminPanelV2 (StudPanel is the old one, kept as a fallback). The server re-checks every action.
 The panel is (re)built from the "PanelRole" attribute (set by AdminRoles); non-staff never get a GUI. That attribute
 only hides UI: OwnerPanelServer checks AdminRoles on every OwnerPanel.Action invoke.
 Remotes: OwnerPanel.Action (via StudPanel's invoke callback), OwnerPanelOpen (server asks to open the panel).
@@ -11,7 +11,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 local panelFolder = ReplicatedStorage:WaitForChild("OwnerPanel")
 local actionRemote = panelFolder:WaitForChild("Action")
-local StudPanel = require(panelFolder:WaitForChild("StudPanel"))
+-- 2026-11-10: the new panel. StudPanel (the old one) stays in the folder as the "classic" fallback, opened from the Server page.
+local StudPanel = require(panelFolder:WaitForChild("AdminPanelV2"))
 local panelApi, panelGui
 -- Destroys any previous panel, then builds a fresh one if this player is staff.
 local function buildPanel()

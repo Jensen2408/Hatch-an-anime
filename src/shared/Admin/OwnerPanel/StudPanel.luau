@@ -25,7 +25,8 @@
                  StopEvent {}, StartNight {seconds = 60}
         Players  Bring {}, GoTo {}, SendHome {}, Respawn {}*, Kick {userId}*, Ban {userId}*,
                  SetAdmin {userId, on}, Unban {userId = typed id}*
-        Eggs     GiveEgg {itemId} / GiveCharacter {itemId} (* when scope is lobby), SpawnEgg {itemId, mutation?}
+        Spawn    GiveEgg / GiveCharacter {itemId, mutation?, amount} (* when scope is lobby),
+                 SpawnEgg {itemId, mutation?, amount} (river; every egg takes the next river slot)
         Money    GiveCash {amount} (* when lobby), SetCash {amount}*, GiveCash {amount, scope = "lobby"}*
         Temples  UpgradeTemple {}, UnlockSlot {}, AddIncubator {}, UpgradeIncubator {index},
                  ClearInventory {}*, ClearPlaced {}*, ResetSlots {}*
@@ -46,8 +47,19 @@
 -- ===== 1. Services, palette and fonts =====
 local TweenService = game:GetService("TweenService")
 local StudPanel = {}
+-- Black and white panel (2026-11-08): every colour becomes a grey with a little extra contrast, so the plates go
+-- near-black and the buttons light grey / white. Set MONOCHROME = false for the old colours.
+local MONOCHROME = true
+local function mono(color)
+    if not MONOCHROME then
+        return color
+    end
+    local l = 0.299 * color.R + 0.587 * color.G + 0.114 * color.B
+    l = math.clamp((l - 0.5) * 1.4 + 0.5, 0, 1)
+    return Color3.new(l, l, l)
+end
 local function rgb(r, g, b)
-    return Color3.fromRGB(r, g, b)
+    return mono(Color3.fromRGB(r, g, b))
 end
 -- Near-black used for text outlines and the panel's drop plate.
 local INK = rgb(8, 8, 10)
@@ -489,7 +501,43 @@ local function formatNumber(value)
 end
 
 -- ===== 5. Panel builder =====
+-- Greys out any colour set straight on an instance (not through rgb()), as it is added to the panel. Colours that
+-- are already grey (from rgb()) are left as they are, so the contrast isn't applied twice.
+local function monoOnce(color)
+    if math.abs(color.R - color.G) < 0.004 and math.abs(color.G - color.B) < 0.004 then
+        return color
+    end
+    return mono(color)
+end
+local function monoSequence(sequence)
+    local keys = {}
+    for _, key in sequence.Keypoints do
+        table.insert(keys, ColorSequenceKeypoint.new(key.Time, monoOnce(key.Value)))
+    end
+    return ColorSequence.new(keys)
+end
+local function monoInstance(instance)
+    if instance:IsA("GuiObject") then
+        instance.BackgroundColor3 = monoOnce(instance.BackgroundColor3)
+        if instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox") then
+            instance.TextColor3 = monoOnce(instance.TextColor3)
+        end
+    elseif instance:IsA("UIStroke") then
+        instance.Color = monoOnce(instance.Color)
+    elseif instance:IsA("UIGradient") then
+        instance.Color = monoSequence(instance.Color)
+    end
+end
 function StudPanel.Build(gui, context)
+    if MONOCHROME then
+        for _, descendant in gui:GetDescendants() do
+            monoInstance(descendant)
+        end
+        gui.DescendantAdded:Connect(function(descendant)
+            -- after the builder has set its properties
+            task.defer(monoInstance, descendant)
+        end)
+    end
     -- ----- 5.1 State -----
     -- snapshot: last Snapshot reply. logRows: newest-first activity log (max 50). scope: "me" | "selected" | "lobby".
     local isOwner = context.role == "Owner"
@@ -1087,123 +1135,327 @@ function StudPanel.Build(gui, context)
             end
         end
     end
+    -- ----- Spawn page (2026-11-08) -----
+    -- One place for every egg and character: pick EGGS or CHARACTERS, a rarity category (or search), click an item,
+    -- choose a mutation, where it goes (in hand / river) and how many, then SPAWN. The choices are remembered while
+    -- the panel is open. Who gets it is the top bar target (Me / Selected / Lobby).
+    local RARITY_ORDER = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Cosmic", "Limited" }
+    local MUTATION_OPTIONS = {
+        { "None", PALETTE.Purple },
+        { "Silver", rgb(170, 180, 200) },
+        { "Gold", PALETTE.Yellow },
+        { "Diamond", PALETTE.Teal },
+        { "Rainbow", PALETTE.Pink },
+        { "Molten", PALETTE.Orange },
+    }
+    local spawnState = { kind = "Egg", rarity = "All", search = "", mutation = "None", where = "Hand", amount = 1 }
+    local function rarityColor(rarity)
+        return RARITY_COLORS[rarity] or (rarity == "Limited" and PALETTE.Red) or PALETTE.Grey
+    end
+    local function shortMoney(value)
+        value = tonumber(value) or 0
+        for _, unit in ipairs({ { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }) do
+            if value >= unit[1] then
+                local scaled = value / unit[1]
+                return "$" .. (scaled >= 10 and string.format("%d", scaled) or string.format("%.1f", scaled):gsub("%.0$", "")) .. unit[2]
+            end
+        end
+        return value == 0 and "FREE" or ("$" .. math.floor(value))
+    end
+    -- a row of chip buttons; only the picked one is highlighted. Returns the buttons by value.
+    local function chipRow(parent, options, current, onPick, cellW)
+        local grid = makeGrid(parent, cellW or 128, 44)
+        local buttons = {}
+        for i, option in ipairs(options) do
+            local value, text, color, enabled = option[1], option[2] or option[1], option[3] or PALETTE.Purple, option[4]
+            buttons[value] = makeButton(grid, text, color, function()
+                if enabled == false then
+                    return
+                end
+                onPick(value)
+                for otherValue, otherButton in pairs(buttons) do
+                    otherButton.select(otherValue == value)
+                end
+            end, { h = 40, depth = 4, studs = 1, order = i, textSize = 15 })
+            buttons[value].select(value == current)
+            if enabled == false then
+                buttons[value].set(false)
+            end
+        end
+        return buttons
+    end
+    local function sectionLabel(parent, text)
+        makeLabel(parent, text, 14, PALETTE.Muted, FONT, { LayoutOrder = nextLayoutOrder() })
+    end
+
     pages.eggs = function()
-        addPageHeader(
-            isOwner and "Eggs & Characters" or "River Eggs",
-            isOwner and "Give items or drop eggs in the river" or "Drop any egg into the river for everyone"
-        )
-        local chosenItem
-        local selectedCard = makeCard(content, "Selected", PALETTE.Purple)
-        local chosenText = makeTitle(selectedCard, "Pick an item below", 22, { LayoutOrder = nextLayoutOrder() })
-        local actionGrid = makeGrid(selectedCard, 250, 62)
-        local giveEggButton, giveCharacterButton
-        if isOwner then
-            giveEggButton = makeButton(actionGrid, "Give egg", PALETTE.Green, function(buttonApi)
-                if chosenItem then
-                    local function giveChosen()
-                        sendAction("GiveEgg", { itemId = chosenItem.id }, "Give " .. chosenItem.name, buttonApi)
-                    end
-                    if scope == "lobby" then
-                        showConfirm("Give egg to everyone?", chosenItem.name, giveChosen)
-                    else
-                        giveChosen()
-                    end
-                end
-            end)
-            giveCharacterButton = makeButton(actionGrid, "Give character", PALETTE.Yellow, function(buttonApi)
-                if chosenItem then
-                    local function giveChosen()
-                        sendAction("GiveCharacter", { itemId = chosenItem.id }, "Give " .. chosenItem.name, buttonApi)
-                    end
-                    if scope == "lobby" then
-                        showConfirm("Give character to everyone?", chosenItem.name, giveChosen)
-                    else
-                        giveChosen()
-                    end
-                end
-            end)
-            giveEggButton.set(false)
-            giveCharacterButton.set(false)
-        end
-        local riverDropButton = makeButton(actionGrid, "Drop in river", PALETTE.Teal, function(buttonApi)
-            if chosenItem then
-                sendAction(
-                    "SpawnEgg",
-                    { itemId = chosenItem.id, mutation = riverMutation ~= "None" and riverMutation or nil },
-                    "River " .. (riverMutation ~= "None" and riverMutation .. " " or "") .. chosenItem.name,
-                    buttonApi
-                )
-            end
-        end)
-        riverDropButton.set(false)
-        if isOwner then
-            makeLabel(
-                selectedCard,
-                "River egg mutation (Halloween eggs)",
-                15,
-                PALETTE.Muted,
-                FONT_BODY,
-                { LayoutOrder = nextLayoutOrder() }
-            )
-            local mutationGrid = makeGrid(selectedCard, 130, 50)
-            local mutationButtons = {}
-            for _, mutation in ipairs({
-                { "None", PALETTE.Purple },
-                { "Silver", PALETTE.Grey },
-                { "Gold", PALETTE.Yellow },
-                { "Diamond", PALETTE.Teal },
-                { "Rainbow", PALETTE.Pink },
-            }) do
-                mutationButtons[mutation[1]] = makeButton(mutationGrid, mutation[1]:upper(), mutation[2], function()
-                    riverMutation = mutation[1]
-                    for mutationName, mutationButton in pairs(mutationButtons) do
-                        mutationButton.select(mutationName == riverMutation)
-                    end
-                end, { h = 40, studs = 1, textSize = 16 })
-            end
-            for mutationName, mutationButton in pairs(mutationButtons) do
-                mutationButton.select(mutationName == riverMutation)
-            end
-        end
-        if isOwner then
-            addHalloweenDropCard()
-        end
-        local catalogCard = makeCard(content, "Catalog", PALETTE.Blue, #snapshot.catalog .. " items")
-        local catalogGrid = makeGrid(catalogCard, 190, 84)
+        local S = spawnState
+        addPageHeader("Spawn", "Eggs and characters, in a hand or in the river")
+        -- items of the chosen kind (the Golden Pirate is both an egg and a character)
+        local all = {}
         for _, item in ipairs(snapshot.catalog) do
-            local rarityColor = RARITY_COLORS[item.rarity] or PALETTE.Grey
-            local _holder, face = makeBrick(catalogGrid, PALETTE.Inset, UDim2.fromOffset(190, 84), 5)
+            local kind = item.kind or (item.charAvailable and not item.eggAvailable and "Character" or "Egg")
+            if item.id == "Golden Pirate" or kind == S.kind then
+                table.insert(all, item)
+            end
+        end
+        if S.pick and not table.find(all, S.pick) then
+            S.pick = nil
+        end
+        local counts = {}
+        for _, item in ipairs(all) do
+            counts[item.rarity or "Common"] = (counts[item.rarity or "Common"] or 0) + 1
+        end
+
+        -- 1. WHAT: kind, category, search
+        local whatCard = makeCard(content, "1 · What", PALETTE.Blue, #all .. " " .. (S.kind == "Egg" and "eggs" or "characters"))
+        chipRow(whatCard, { { "Egg", "EGGS", PALETTE.Purple }, { "Character", "CHARACTERS", PALETTE.Yellow } }, S.kind, function(value)
+            S.kind = value
+            S.rarity = "All"
+            if value == "Character" then
+                S.where = "Hand"
+            end
+            render()
+        end, 220)
+        sectionLabel(whatCard, "CATEGORY")
+        local rarityOptions = { { "All", "ALL " .. #all, PALETTE.Purple } }
+        for _, rarity in ipairs(RARITY_ORDER) do
+            if counts[rarity] then
+                table.insert(rarityOptions, { rarity, rarity:upper() .. " " .. counts[rarity], rarityColor(rarity) })
+            end
+        end
+        chipRow(whatCard, rarityOptions, S.rarity, function(value)
+            S.rarity = value
+            render()
+        end, 138)
+        local searchBox = makeInput(whatCard, "🔍  Search by name (egg or character)...")
+        searchBox.Text = S.search
+
+        -- 2. HOW + WHERE + HOW MANY, and the SPAWN button
+        local howCard = makeCard(content, "2 · How and where", PALETTE.Purple)
+        sectionLabel(howCard, "MUTATION")
+        local summary, spawnButton
+        local function canRiver(item)
+            return S.kind == "Egg" and item and item.eggAvailable and not item.noRiver
+        end
+        local function updateSummary()
+            local item = S.pick
+            local whoText = scope == "lobby" and "everyone's hands"
+                or scope == "me" and "your hand"
+                or ((getSelectedPlayer() and getSelectedPlayer().name or "the selected player") .. "'s hand")
+            if not item then
+                summary.Text = "Click an item below"
+                spawnButton.set(false, "SPAWN")
+                return
+            end
+            local text = (S.amount > 1 and (S.amount .. "x ") or "")
+                .. (S.mutation ~= "None" and (S.mutation .. " ") or "")
+                .. item.name
+            summary.Text = text .. "  →  " .. (S.where == "River" and "the river (next egg down)" or whoText)
+            local ok = (S.where == "River" and canRiver(item))
+                or (S.where == "Hand" and (S.kind == "Egg" and item.eggAvailable or item.charAvailable))
+            spawnButton.set(ok and true or false, "SPAWN")
+        end
+        local mutationRows = {}
+        for _, m in ipairs(MUTATION_OPTIONS) do
+            table.insert(mutationRows, { m[1], m[1]:upper(), m[2] })
+        end
+        chipRow(howCard, mutationRows, S.mutation, function(value)
+            S.mutation = value
+            updateSummary()
+        end, 128)
+        sectionLabel(howCard, "WHERE")
+        local whereButtons
+        whereButtons = chipRow(howCard, {
+            { "Hand", "IN HAND", PALETTE.Green },
+            { "River", "RIVER", PALETTE.Teal, S.kind == "Egg" },
+        }, S.where, function(value)
+            S.where = value
+            updateSummary()
+        end, 200)
+        sectionLabel(howCard, "HOW MANY")
+        chipRow(howCard, { { 1, "1" }, { 3, "3" }, { 5, "5" }, { 10, "10" } }, S.amount, function(value)
+            S.amount = value
+            updateSummary()
+        end, 90)
+        local spawnRow = make("Frame", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 66),
+            LayoutOrder = nextLayoutOrder(),
+        }, howCard)
+        summary = makeTitle(spawnRow, "", 20, {
+            AnchorPoint = Vector2.new(0, 0.5),
+            Position = UDim2.new(0, 0, 0.5, 0),
+            AutomaticSize = Enum.AutomaticSize.None,
+            Size = UDim2.new(1, -250, 1, 0),
+            TextWrapped = true,
+        })
+        local spawnHolder = make("Frame", {
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, 0, 0, 0),
+            Size = UDim2.fromOffset(230, 66),
+        }, spawnRow)
+        spawnButton = makeButton(spawnHolder, "SPAWN", PALETTE.Green, function(buttonApi)
+            local item = S.pick
+            if not item then
+                return
+            end
+            local mutation = S.mutation ~= "None" and S.mutation or nil
+            local label = (S.amount > 1 and (S.amount .. "x ") or "") .. (mutation and (mutation .. " ") or "") .. item.name
+            if S.where == "River" then
+                sendAction("SpawnEgg", { itemId = item.id, mutation = mutation, amount = S.amount }, "River " .. label, buttonApi)
+            else
+                local action = S.kind == "Egg" and "GiveEgg" or "GiveCharacter"
+                local function give()
+                    sendAction(action, { itemId = item.id, mutation = mutation, amount = S.amount }, "Give " .. label, buttonApi)
+                end
+                if scope == "lobby" then
+                    showConfirm("Give to everyone?", label .. " for every player in this server.", give)
+                else
+                    give()
+                end
+            end
+        end, { h = 58, depth = 6, textSize = 26, size = UDim2.fromScale(1, 1) })
+
+        -- 3. the catalog, in categories: eggs by rarity, characters by the egg they hatch from
+        local cells = {}
+        local sections = {}
+        local function addSection(title, color, subtitle)
+            local card = makeCard(content, title, color, subtitle)
+            local grid = makeGrid(card, 208, 96)
+            local section = { card = card.Parent.Parent, grid = grid, cells = {} }
+            table.insert(sections, section)
+            return section
+        end
+        local function addCell(section, item)
+            local color = rarityColor(item.rarity)
+            local brickHolder, face = makeBrick(section.grid, PALETTE.Inset, UDim2.fromOffset(208, 96), 5)
             make("Frame", {
-                BackgroundColor3 = rarityColor,
+                BackgroundColor3 = color,
                 BorderSizePixel = 0,
                 Size = UDim2.new(0, 8, 1, -16),
                 Position = UDim2.fromOffset(8, 8),
             }, face)
-            makeTitle(face, item.name, 17, {
-                Position = UDim2.fromOffset(24, 12),
+            -- characters: the real name big (Gon), the in-game title (Green Hunter) on the last line
+            local title = item.name
+            if S.kind == "Character" and item.id and item.id ~= "Golden Pirate" then
+                title = item.id:gsub("(%l)(%u)", "%1 %2")
+            end
+            makeTitle(face, title, 17, {
+                Position = UDim2.fromOffset(24, 8),
                 AutomaticSize = Enum.AutomaticSize.None,
                 Size = UDim2.new(1, -30, 0, 24),
                 TextTruncate = Enum.TextTruncate.AtEnd,
             })
-            makeLabel(face, (item.rarity or ""):upper(), 14, rarityColor, FONT, { Position = UDim2.fromOffset(24, 42) })
-            local hitbox =
-                make("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, face)
+            local line2, line3
+            if S.kind == "Egg" then
+                line2 = (item.rarity or ""):upper() .. "  ·  " .. shortMoney(item.price)
+                line3 = item.characters and table.concat(item.characters, " · ") or ""
+            else
+                line2 = (item.rarity or ""):upper() .. "  ·  " .. (item.chance and (item.chance .. "%") or "")
+                line3 = (item.income and (shortMoney(item.income) .. "/s  ·  ") or "") .. (item.name or "")
+            end
+            makeLabel(face, line2, 14, color, FONT, { Position = UDim2.fromOffset(24, 36) })
+            makeLabel(face, line3, 13, PALETTE.Muted, FONT_BODY, {
+                Position = UDim2.fromOffset(24, 60),
+                AutomaticSize = Enum.AutomaticSize.None,
+                Size = UDim2.new(1, -30, 0, 20),
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            })
+            local stroke = face:FindFirstChildOfClass("UIStroke")
+            local hitbox = make("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, face)
+            local cell = { item = item, holder = brickHolder, stroke = stroke, section = section }
+            table.insert(cells, cell)
+            table.insert(section.cells, cell)
+            local function paint()
+                stroke.Color = (S.pick == item) and PALETTE.Yellow or INK
+                stroke.Thickness = (S.pick == item) and 5 or 3
+            end
+            cell.paint = paint
+            paint()
             hitbox.Activated:Connect(function()
-                chosenItem = item
-                chosenText.Text = item.name .. "  •  " .. (item.rarity or "")
-                if giveEggButton then
-                    giveEggButton.set(item.eggAvailable)
-                    giveCharacterButton.set(item.charAvailable)
-                end
-                riverDropButton.set(item.eggAvailable and not item.noRiver)
-                for _, cell in ipairs(catalogGrid:GetChildren()) do
-                    local cellFace = cell:FindFirstChild("Face")
-                    if cellFace then
-                        cellFace:FindFirstChildOfClass("UIStroke").Color = INK
+                S.pick = item
+                if S.where == "River" and not canRiver(item) then
+                    S.where = "Hand"
+                    for value, button in pairs(whereButtons) do
+                        button.select(value == "Hand")
                     end
                 end
-                face:FindFirstChildOfClass("UIStroke").Color = PALETTE.White
+                for _, other in ipairs(cells) do
+                    other.paint()
+                end
+                updateSummary()
             end)
+        end
+        local function wanted(item)
+            return S.rarity == "All" or item.rarity == S.rarity
+        end
+        if S.kind == "Egg" then
+            for _, rarity in ipairs(RARITY_ORDER) do
+                local list = {}
+                for _, item in ipairs(all) do
+                    if item.rarity == rarity and wanted(item) then
+                        table.insert(list, item)
+                    end
+                end
+                if #list > 0 then
+                    table.sort(list, function(a, b)
+                        return (a.order or 0) < (b.order or 0)
+                    end)
+                    local section = addSection(rarity .. " eggs", rarityColor(rarity), #list .. " eggs")
+                    for _, item in ipairs(list) do
+                        addCell(section, item)
+                    end
+                end
+            end
+        else
+            local byEgg, eggOrder = {}, {}
+            for _, item in ipairs(all) do
+                if wanted(item) then
+                    local eggId = item.egg or item.name
+                    if not byEgg[eggId] then
+                        byEgg[eggId] = { rarity = item.rarity, order = item.order or 0, items = {} }
+                        table.insert(eggOrder, eggId)
+                    end
+                    table.insert(byEgg[eggId].items, item)
+                end
+            end
+            table.sort(eggOrder, function(a, b)
+                return byEgg[a].order < byEgg[b].order
+            end)
+            for _, eggId in ipairs(eggOrder) do
+                local group = byEgg[eggId]
+                local section = addSection(eggId .. " Egg", rarityColor(group.rarity), (group.rarity or ""):upper())
+                for _, item in ipairs(group.items) do
+                    addCell(section, item)
+                end
+            end
+        end
+        -- search filters the cells in place (no rebuild, so the text box keeps its focus)
+        local function applySearch()
+            local query = string.lower(S.search)
+            for _, section in ipairs(sections) do
+                local any = false
+                for _, cell in ipairs(section.cells) do
+                    local item = cell.item
+                    local hay = string.lower((item.name or "") .. " " .. (item.id or "") .. " " .. (item.egg or "") .. " "
+                        .. (item.characters and table.concat(item.characters, " ") or ""))
+                    local show = query == "" or string.find(hay, query, 1, true) ~= nil
+                    cell.holder.Visible = show
+                    any = any or show
+                end
+                section.card.Visible = any
+            end
+        end
+        searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+            S.search = searchBox.Text
+            applySearch()
+        end)
+        applySearch()
+        updateSummary()
+        if isOwner then
+            addHalloweenDropCard()
         end
     end
     pages.money = function()
@@ -1304,90 +1556,229 @@ function StudPanel.Build(gui, context)
             end)
         end)
     end
-    -- Event length in seconds picked on the Events page (5 / 10 / 30 min).
+    -- ===== Events page (2026-11-08): every event starts and stops on its own, so they stack =====
+    -- "Running now" lists what is on (time left + STOP each, STOP EVERYTHING); one tile per event with START / STOP;
+    -- the Boost builder starts any multiplier for cash / luck / hatch speed / mutation chance / river speed.
     local eventDuration = 300
+    local boostState = { targets = { Cash = true }, x = 2, seconds = 600 }
+    local EVENT_DEFS = {
+        { id = "rush", name = "EGG RUSH", blurb = "Eggs spawn 2x faster", color = PALETTE.Orange, start = "StartEvent", stop = "StopEvent", timed = true },
+        { id = "cash", name = "DOUBLE CASH", blurb = "All income x2", color = PALETTE.Green, start = "StartEvent", stop = "StopEvent", timed = true },
+        { id = "gold", name = "GOLDEN HOUR", blurb = "Golden sunset sky", color = PALETTE.Yellow, start = "StartEvent", stop = "StopEvent", timed = true },
+        { id = "night", name = "NIGHTTIME", blurb = "3x cash, 5x hatch, 3x luck", color = PALETTE.Purple, start = "StartNight", stop = "StopNight", timed = true, max = 600 },
+        { id = "rapids", name = "RAPIDS", blurb = "Huge waves, eggs every second", color = PALETTE.Teal, start = "StartHighTide", stop = "StopHighTide", timed = true, max = 600 },
+        { id = "boss", name = "RIVER BOSS", blurb = "Beat it for a mutated egg", color = PALETTE.Red, start = "StartBoss", stop = "StopBoss" },
+        { id = "arena", name = "ARENA BRAWL", blurb = "PvP round, last one wins", color = PALETTE.Orange, start = "StartArena", stop = "StopArena" },
+        { id = "volcano", name = "VOLCANO", blurb = "Eruption, Molten 10x likelier", color = PALETTE.Red, start = "StartVolcano", stop = "StopVolcano" },
+        { id = "meteor", name = "METEOR SHOWER", blurb = "Rare eggs in meteor debris", color = PALETTE.Pink, start = "StartMeteor", stop = "StopMeteor" },
+    }
+    local BOOST_TARGETS = {
+        { "Cash", "CASH", PALETTE.Green },
+        { "Luck", "LUCK", PALETTE.Yellow },
+        { "Hatch", "HATCH SPEED", PALETTE.Purple },
+        { "Mutation", "MUTATION", PALETTE.Pink },
+        { "RiverSpeed", "RIVER SPEED", PALETTE.Teal },
+    }
+    local function clockText(seconds)
+        seconds = math.max(0, math.floor(seconds))
+        if seconds >= 3600 then
+            return string.format("%d:%02d:%02d", seconds // 3600, (seconds % 3600) // 60, seconds % 60)
+        end
+        return string.format("%d:%02d", seconds // 60, seconds % 60)
+    end
+    -- re-render without jumping back to the top of the page
+    local function rerenderEvents()
+        local keep = content.CanvasPosition
+        refreshSnapshot()
+        render()
+        task.defer(function()
+            content.CanvasPosition = keep
+        end)
+    end
+    -- a label that counts down to a server time while it is on screen
+    local function liveTimer(label, prefix, ends)
+        if not ends then
+            return
+        end
+        task.spawn(function()
+            while label.Parent do
+                local left = ends - workspace:GetServerTimeNow()
+                label.Text = left > 0 and (prefix .. clockText(left)) or (prefix == "Next in " and "Starting..." or "ENDING")
+                task.wait(0.5)
+            end
+        end)
+    end
     pages.events = function()
-        addPageHeader("Events", "Start server events for everyone")
-        local durationCard = makeCard(content, "How long?", PALETTE.Purple)
-        local durationGrid = makeGrid(durationCard, 150, 58)
-        for _, option in ipairs({ { "5 min", 300 }, { "10 min", 600 }, { "30 min", 1800 } }) do
-            local durationButton = makeButton(durationGrid, option[1], PALETTE.Purple, function()
-                eventDuration = option[2]
-                render()
-            end, { h = 46, studs = 1 })
-            durationButton.select(eventDuration == option[2])
+        addPageHeader("Events", "Start, stop and stack events in this server")
+        local live = snapshot.liveEvents or {}
+        local boosts = live.boosts or {}
+        -- ── Running now ──
+        local runningRows = {}
+        for _, def in ipairs(EVENT_DEFS) do
+            local state = live[def.id]
+            if state and state.on then
+                table.insert(runningRows, { name = def.name, color = def.color, ends = state.ends, stop = function(button)
+                    sendAction(def.stop, def.stop == "StopEvent" and { eventId = def.id } or {}, "Stop " .. def.name, button)
+                    rerenderEvents()
+                end })
+            end
         end
-        local eventCard = makeCard(
-            content,
-            "Events",
-            PALETTE.Orange,
-            (snapshot.event and snapshot.event ~= "None") and ("Running: " .. snapshot.event) or "Nothing running"
-        )
-        local eventGrid = makeGrid(eventCard, 250, 110)
-        for _, eventDef in ipairs({
-            { "rush", "EGG RUSH", "Eggs spawn 2x faster", PALETTE.Orange },
-            { "cash", "DOUBLE CASH", "All income doubled", PALETTE.Green },
-            { "gold", "GOLDEN HOUR", "Golden sunset", PALETTE.Yellow },
-        }) do
-            local eventHolder =
-                make("Frame", { BackgroundTransparency = 1, LayoutOrder = nextLayoutOrder() }, eventGrid)
-            addVerticalList(eventHolder, 4)
-            makeButton(eventHolder, eventDef[2], eventDef[4], function(buttonApi)
-                sendAction(
-                    "StartEvent",
-                    { eventId = eventDef[1], seconds = eventDuration },
-                    "Start " .. eventDef[2],
-                    buttonApi
-                )
-                refreshSnapshot()
-            end, { h = 56 })
-            makeLabel(
-                eventHolder,
-                eventDef[3] .. "  •  " .. math.floor(eventDuration / 60) .. " min",
-                14,
-                PALETTE.Muted,
-                FONT_BODY,
-                { LayoutOrder = nextLayoutOrder() }
-            )
+        for _, target in ipairs(BOOST_TARGETS) do
+            local boost = boosts[target[1]]
+            if boost then
+                table.insert(runningRows, { name = tostring(boost.x) .. "x " .. target[2] .. " BOOST", color = target[3], ends = boost.ends, stop = function(button)
+                    sendAction("StopBoost", { target = target[1] }, "Stop " .. target[2] .. " boost", button)
+                    rerenderEvents()
+                end })
+            end
         end
-        local extraGrid = makeGrid(eventCard, 250, 62)
-        makeButton(extraGrid, "EGG SHOWER", PALETTE.Teal, function(buttonApi)
-            sendAction("EggShower", { amount = 8 }, "Egg Shower", buttonApi)
+        local runningCard = makeCard(content, "Running now", PALETTE.Green, #runningRows == 0 and "Nothing running" or (#runningRows .. " running"))
+        if #runningRows == 0 then
+            makeLabel(runningCard, "Nothing is running. Start an event or a boost below; you can run as many as you want at once.", 16, PALETTE.Muted, FONT_BODY, { LayoutOrder = nextLayoutOrder(), TextWrapped = true, Size = UDim2.new(1, 0, 0, 40), AutomaticSize = Enum.AutomaticSize.None })
+        end
+        for _, row in ipairs(runningRows) do
+            local line = make("Frame", { BackgroundColor3 = PALETTE.Inset, BackgroundTransparency = 0.4, Size = UDim2.new(1, 0, 0, 58), LayoutOrder = nextLayoutOrder() }, runningCard)
+            addCorner(line, 6)
+            local pip = make("Frame", { Position = UDim2.fromOffset(14, 21), Size = UDim2.fromOffset(16, 16) }, line)
+            addCorner(pip, 8)
+            applyGradient(pip, row.color)
+            addStroke(pip, 2, INK)
+            makeTitle(line, row.name, 20, { Position = UDim2.fromOffset(42, 16) })
+            local timeLabel = makeLabel(line, "", 18, PALETTE.Yellow, FONT, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -150, 0, 18) })
+            liveTimer(timeLabel, "", row.ends)
+            local stopSlot = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(120, 44) }, line)
+            makeButton(stopSlot, "STOP", PALETTE.Red, function(button)
+                row.stop(button)
+            end, { h = 40, depth = 4, studs = 1, textSize = 16 })
+        end
+        if #runningRows > 0 then
+            makeButton(runningCard, "STOP EVERYTHING", PALETTE.Red, function(button)
+                showConfirm("Stop every event?", "Stops all events and boosts in this server. The normal schedules keep running.", function()
+                    sendAction("StopAllEvents", {}, "Stop everything", button)
+                    rerenderEvents()
+                end)
+            end, { h = 48 })
+        end
+        -- ── How long ──
+        local lengthCard = makeCard(content, "How long?", PALETTE.Purple, "For Egg Rush, Double Cash, Golden Hour, Night, Rapids")
+        chipRow(lengthCard, {
+            { 60, "1 MIN" }, { 300, "5 MIN" }, { 600, "10 MIN" }, { 1800, "30 MIN" }, { 3600, "1 HOUR" },
+        }, eventDuration, function(value)
+            eventDuration = value
+        end, 128)
+        -- ── Event tiles ──
+        local tilesCard = makeCard(content, "Events", PALETTE.Orange, "Tap START. Running ones show STOP")
+        local tiles = makeGrid(tilesCard, 236, 168)
+        for _, def in ipairs(EVENT_DEFS) do
+            local state = live[def.id] or {}
+            local tile = make("Frame", { LayoutOrder = nextLayoutOrder() }, tiles)
+            addCorner(tile, 8)
+            addStroke(tile, state.on and 4 or 3, state.on and PALETTE.Yellow or INK)
+            applyGradient(tile, state.on and darken(def.color, 0.35) or PALETTE.Plate2, 0.35)
+            local strip = make("Frame", { Size = UDim2.new(1, 0, 0, 8), BorderSizePixel = 0 }, tile)
+            addCorner(strip, 4)
+            applyGradient(strip, def.color)
+            makeTitle(tile, def.name, 20, { Position = UDim2.fromOffset(14, 16) })
+            makeLabel(tile, def.blurb, 14, PALETTE.Muted, FONT_BODY, { Position = UDim2.fromOffset(14, 44), Size = UDim2.new(1, -28, 0, 34), AutomaticSize = Enum.AutomaticSize.None, TextWrapped = true })
+            local status = makeLabel(tile, "", 15, state.on and PALETTE.Yellow or PALETTE.Muted, FONT, { Position = UDim2.fromOffset(14, 80) })
+            if state.on then
+                if state.ends then
+                    liveTimer(status, "RUNNING  ", state.ends)
+                else
+                    status.Text = "RUNNING"
+                end
+            elseif state.next then
+                liveTimer(status, "Next in ", state.next)
+            else
+                status.Text = def.timed and ("Lasts " .. math.floor(math.min(eventDuration, def.max or 7200) / 60) .. " min") or "Ready"
+            end
+            local buttonHolder = make("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 12, 1, -62), Size = UDim2.new(1, -24, 0, 52) }, tile)
+            if state.on then
+                makeButton(buttonHolder, "STOP", PALETTE.Red, function(button)
+                    sendAction(def.stop, def.stop == "StopEvent" and { eventId = def.id } or {}, "Stop " .. def.name, button)
+                    rerenderEvents()
+                end, { h = 44, depth = 4, studs = 1, textSize = 18 })
+            else
+                makeButton(buttonHolder, "START", def.color, function(button)
+                    local secs = math.min(eventDuration, def.max or 7200)
+                    sendAction(def.start, { eventId = def.id, seconds = secs }, "Start " .. def.name, button)
+                    rerenderEvents()
+                end, { h = 44, depth = 4, studs = 1, textSize = 18 })
+            end
+        end
+        local showerGrid = makeGrid(tilesCard, 236, 58)
+        makeButton(showerGrid, "EGG SHOWER (8 EGGS)", PALETTE.Teal, function(button)
+            sendAction("EggShower", { amount = 8 }, "Egg Shower", button)
+        end, { h = 46, studs = 1, textSize = 16 })
+        -- ── Boost builder ──
+        local boostCard = makeCard(content, "Boost event", PALETTE.Yellow, "Your own multiplier, stacks with everything")
+        sectionLabel(boostCard, "1. WHAT TO BOOST (pick one or more)")
+        local targetGrid = makeGrid(boostCard, 150, 44)
+        local summary
+        local function summaryText()
+            local names = {}
+            for _, target in ipairs(BOOST_TARGETS) do
+                if boostState.targets[target[1]] then
+                    table.insert(names, target[2])
+                end
+            end
+            if #names == 0 then
+                return "Pick what to boost"
+            end
+            return tostring(boostState.x) .. "x " .. table.concat(names, " + ") .. "  ·  " .. clockText(boostState.seconds)
+        end
+        for i, target in ipairs(BOOST_TARGETS) do
+            local button
+            button = makeButton(targetGrid, target[2], target[3], function()
+                boostState.targets[target[1]] = not boostState.targets[target[1]] or nil
+                button.select(boostState.targets[target[1]] == true)
+                summary.Text = summaryText()
+            end, { h = 40, depth = 4, studs = 1, order = i, textSize = 15 })
+            button.select(boostState.targets[target[1]] == true)
+        end
+        sectionLabel(boostCard, "2. HOW STRONG")
+        local xButtons
+        local customBox
+        xButtons = chipRow(boostCard, {
+            { 2, "2x" }, { 3, "3x" }, { 4, "4x" }, { 5, "5x" }, { 10, "10x" }, { 25, "25x" }, { 50, "50x" },
+        }, boostState.x, function(value)
+            boostState.x = value
+            customBox.Text = ""
+            summary.Text = summaryText()
+        end, 96)
+        customBox = makeInput(boostCard, "Or type your own, like 7 or 1.5 (up to 100)", false)
+        customBox:GetPropertyChangedSignal("Text"):Connect(function()
+            local value = tonumber(customBox.Text)
+            if value and value >= 1.1 and value <= 100 then
+                boostState.x = math.floor(value * 10 + 0.5) / 10
+                for _, button in pairs(xButtons) do
+                    button.select(false)
+                end
+                summary.Text = summaryText()
+            end
         end)
-        makeButton(extraGrid, "Stop event", PALETTE.Red, function(buttonApi)
-            sendAction("StopEvent", {}, "Stop event", buttonApi)
-            refreshSnapshot()
-        end)
-        makeButton(extraGrid, "SPAWN RIVER BOSS", PALETTE.Red, function(buttonApi)
-            sendAction("StartBoss", {}, "Spawn River Boss", buttonApi)
-        end)
-        makeButton(extraGrid, "End River Boss", PALETTE.Grey, function(buttonApi)
-            sendAction("StopBoss", {}, "End River Boss", buttonApi)
-        end)
-        makeButton(extraGrid, "START ARENA BRAWL", PALETTE.Orange, function(buttonApi)
-            sendAction("StartArena", {}, "Start Arena Brawl", buttonApi)
-        end)
-        makeButton(extraGrid, "End Arena Brawl", PALETTE.Grey, function(buttonApi)
-            sendAction("StopArena", {}, "End Arena Brawl", buttonApi)
-        end)
-        makeButton(extraGrid, "ERUPT VOLCANO", PALETTE.Red, function(buttonApi)
-            sendAction("StartVolcano", {}, "Erupt Volcano", buttonApi)
-        end)
-        makeButton(extraGrid, "End Eruption", PALETTE.Grey, function(buttonApi)
-            sendAction("StopVolcano", {}, "End Eruption", buttonApi)
-        end)
-        makeButton(extraGrid, "START NIGHTTIME", PALETTE.Purple, function(buttonApi)
-            sendAction("StartNight", { seconds = eventDuration }, "Start Nighttime", buttonApi)
-        end)
-        makeButton(extraGrid, "End Nighttime", PALETTE.Grey, function(buttonApi)
-            sendAction("StopNight", {}, "End Nighttime", buttonApi)
-        end)
-        makeButton(extraGrid, "START RAPIDS", PALETTE.Teal, function(buttonApi)
-            sendAction("StartHighTide", { seconds = 50 }, "Start Rapids", buttonApi)
-        end)
-        makeButton(extraGrid, "End Rapids", PALETTE.Grey, function(buttonApi)
-            sendAction("StopHighTide", {}, "End Rapids", buttonApi)
-        end)
+        sectionLabel(boostCard, "3. HOW LONG")
+        chipRow(boostCard, {
+            { 300, "5 MIN" }, { 600, "10 MIN" }, { 1800, "30 MIN" }, { 3600, "1 HOUR" }, { 7200, "2 HOURS" },
+        }, boostState.seconds, function(value)
+            boostState.seconds = value
+            summary.Text = summaryText()
+        end, 128)
+        summary = makeTitle(boostCard, summaryText(), 22, { LayoutOrder = nextLayoutOrder(), TextColor3 = PALETTE.Yellow })
+        makeButton(boostCard, "START BOOST", PALETTE.Yellow, function(button)
+            local targets = {}
+            for _, target in ipairs(BOOST_TARGETS) do
+                if boostState.targets[target[1]] then
+                    table.insert(targets, target[1])
+                end
+            end
+            if #targets == 0 then
+                showToast(false, "Pick what to boost first")
+                return
+            end
+            sendAction("StartBoost", { targets = targets, multiplier = boostState.x, seconds = boostState.seconds }, "Start boost", button)
+            rerenderEvents()
+        end, { h = 56, textSize = 22 })
         local announceCard = makeCard(content, "Announcement", PALETTE.Pink, "Shows a banner to players")
         local messageBox = makeInput(announceCard, "Write a message (optional for update)...", false)
         local announceGrid = makeGrid(announceCard, 250, 62)
@@ -1726,7 +2117,7 @@ function StudPanel.Build(gui, context)
             and {
                 { "home", "Home", PALETTE.Red },
                 { "players", "Players", PALETTE.Blue },
-                { "eggs", "Eggs", PALETTE.Purple },
+                { "eggs", "Spawn", PALETTE.Purple },
                 { "money", "Money", PALETTE.Green },
                 { "temple", "Temples", PALETTE.Orange },
                 { "events", "Events", PALETTE.Yellow },
@@ -1738,7 +2129,7 @@ function StudPanel.Build(gui, context)
         or {
             { "home", "Home", PALETTE.Blue },
             { "players", "Players", PALETTE.Purple },
-            { "eggs", "River Eggs", PALETTE.Teal },
+            { "eggs", "Spawn", PALETTE.Teal },
             { "events", "Events", PALETTE.Yellow },
             { "log", "Activity", PALETTE.Grey },
         }

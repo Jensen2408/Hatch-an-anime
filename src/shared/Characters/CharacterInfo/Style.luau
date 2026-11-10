@@ -197,6 +197,7 @@ function Style.Card(parent, dims)
     local shadow = Style.make("Frame", {
         Name = "Shadow",
         BackgroundColor3 = Color3.new(0, 0, 0),
+        BackgroundTransparency = 1, -- round 2: no plate, the text floats on its own
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(6, 20),
         Size = UDim2.new(1, -12, 1, -22),
@@ -206,24 +207,18 @@ function Style.Card(parent, dims)
     local plate = Style.make("Frame", {
         Name = "Plate",
         BackgroundColor3 = Color3.new(1, 1, 1),
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(6, 14),
         Size = UDim2.new(1, -12, 1, -22),
         ZIndex = 2,
-        ClipsDescendants = true,
     }, root)
     Style.corner(plate, 12)
     local stripGradient = verticalGradient(plate, Style.Plate.Common[1], Style.Plate.Common[2])
-    studs(plate, 0.5)
-    Style.make(
-        "UIStroke",
-        { Color = Color3.new(1, 1, 1), Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-        plate
-    )
     local gloss = Style.make("Frame", {
         Name = "Gloss",
         BackgroundColor3 = Color3.new(1, 1, 1),
-        BackgroundTransparency = 0.82,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(8, 5),
         Size = UDim2.new(1, -16, 0, 5),
@@ -236,28 +231,23 @@ function Style.Card(parent, dims)
         AnchorPoint = Vector2.new(0.5, 0),
         Position = UDim2.new(0.5, 0, 0, 2),
         AutomaticSize = Enum.AutomaticSize.X,
-        Size = UDim2.fromOffset(0, 22),
-        BackgroundColor3 = Style.Ink,
+        Size = UDim2.fromOffset(0, 24),
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ZIndex = 6,
     }, root)
-    Style.corner(rarityTag, 7)
-    Style.make(
-        "UIStroke",
-        { Color = Color3.new(1, 1, 1), Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-        rarityTag
-    )
     Style.make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, rarityTag)
     local badge = Style.make("TextLabel", {
         BackgroundTransparency = 1,
         AutomaticSize = Enum.AutomaticSize.X,
         Size = UDim2.new(0, 0, 1, 0),
         Text = "",
-        TextSize = dims.rarSize or 13,
+        TextSize = (dims.rarSize or 13) + 5,
         TextColor3 = Color3.new(1, 1, 1),
         FontFace = Style.Font,
         ZIndex = 7,
     }, rarityTag)
+    Style.make("UIStroke", { Color = Style.Ink, Thickness = 3, LineJoinMode = Enum.LineJoinMode.Bevel }, badge)
     local name = text(
         plate,
         dims.nameSize + 2,
@@ -269,7 +259,7 @@ function Style.Card(parent, dims)
         Name = "Stats",
         AnchorPoint = Vector2.new(0.5, 1),
         BackgroundColor3 = Style.Ink,
-        BackgroundTransparency = 0.35,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.new(0.5, 0, 1, -7),
         Size = UDim2.new(1, -18, 0, dims.powerSize + 10),
@@ -312,29 +302,22 @@ function Style.Card(parent, dims)
         dims.stroke or 2.5,
         { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.new(0, 0, 1, 0), LayoutOrder = 2 }
     )
-    -- mutation badge in the top-right corner
-    local mutationBadge = Style.make("TextLabel", {
-        Name = "Mutation",
-        Visible = false,
-        AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -2, 0, 4),
-        Rotation = 6,
-        AutomaticSize = Enum.AutomaticSize.X,
-        Size = UDim2.fromOffset(0, 18),
-        BackgroundColor3 = Style.Mut.Gold,
-        Text = "",
-        TextSize = 12,
-        TextColor3 = Style.Ink,
-        FontFace = Style.Font,
-        ZIndex = 8,
-    }, root)
-    Style.corner(mutationBadge, 6)
-    Style.make(
-        "UIStroke",
-        { Color = Style.Ink, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-        mutationBadge
-    )
-    Style.make("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, mutationBadge)
+    -- 2026-11-10 mutation tag: its own row on top (gem icon + tier word, ReplicatedStorage.MutationStyle.Tag).
+    -- Apply() moves the rarity word and the name down while it shows, so nothing overlaps.
+    local mutationBadge
+    do
+        local okMS, MS = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("MutationStyle", 5))
+        if okMS and MS and MS.Tag then
+            mutationBadge = MS.Tag(root, "Gold", { size = 15, z = 8 })
+            mutationBadge.Name = "Mutation"
+            mutationBadge.AnchorPoint = Vector2.new(0.5, 0)
+            mutationBadge.Position = UDim2.new(0.5, 0, 0, 0)
+            mutationBadge.Size = UDim2.fromOffset(0, 18)
+        else
+            mutationBadge = Style.make("Frame", { Name = "Mutation", BackgroundTransparency = 1 }, root)
+        end
+        mutationBadge.Visible = false
+    end
     -- Four-point sparkle (two crossed bars), parented to the card's parent so it can sit outside the plate.
     local spark = Style.make("Frame", {
         Size = UDim2.fromOffset(14, 14),
@@ -361,6 +344,7 @@ function Style.Card(parent, dims)
         card = plate,
         name = name,
         badge = badge,
+        rarityTag = rarityTag,
         strip = stripGradient,
         mut = mutationBadge,
         power = power,
@@ -376,14 +360,33 @@ function Style.Apply(ui, data)
     local plateColors = Style.Plate[data.rarity] or Style.Plate.Common
     ui.strip.Color = ColorSequence.new(plateColors[1], plateColors[2])
     ui.badge.Text = string.upper(data.rarity)
-    local rarityTag = ui.badge.Parent
-    if rarityTag and rarityTag:IsA("Frame") then
-        rarityTag.BackgroundColor3 = (Style.Plate[data.rarity] or Style.Plate.Common)[2]
-    end
     ui.mut.Visible = data.mutation ~= nil
-    if data.mutation then
-        ui.mut.Text = "✦ " .. string.upper(data.mutation)
-        ui.mut.BackgroundColor3 = Style.Mut[data.mutation] or Style.Mut.Gold
+    -- round 2: the rarity word carries its moving rarity colours and a mutated character's name carries the
+    -- mutation's (ReplicatedStorage.RarityText); nothing sits behind the text any more
+    local key = data.rarity .. "|" .. (data.mutation or "")
+    if ui.card and ui.card:GetAttribute("FlowKey") ~= key then
+        ui.card:SetAttribute("FlowKey", key)
+        local ok, RarityText = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("RarityText", 5))
+        if ok and RarityText then
+            if not RarityText.Apply(ui.badge, data.rarity) then
+                ui.badge.TextColor3 = Style.RarityText[data.rarity] or Style.RarityText.Common
+            end
+            if not RarityText.Apply(ui.name, data.mutation) then
+                ui.name.TextColor3 = Color3.new(1, 1, 1)
+            end
+        end
+    end
+    -- a mutated character: tag row on top, rarity word and name each 14 px lower
+    local drop = data.mutation and 14 or 0
+    if ui.rarityTag then
+        ui.rarityTag.Position = UDim2.new(0.5, 0, 0, 2 + drop)
+    end
+    ui.name.Position = UDim2.fromOffset(6, 16 + drop)
+    if data.mutation and ui.mut:FindFirstChild("Word") then
+        local okMS, MS = pcall(require, game:GetService("ReplicatedStorage"):WaitForChild("MutationStyle", 5))
+        if okMS and MS and MS.SetTag then
+            MS.SetTag(ui.mut, data.mutation)
+        end
     end
     ui.power.Text = "⚡ " .. Style.Short(data.power)
     ui.power.TextColor3 = data.exceptional and Color3.new(1, 1, 1) or Style.Power

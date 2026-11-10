@@ -29,6 +29,7 @@
         "StudWorldSkin": {"$path": "src/client/UI/Controllers/StudWorldSkin.client.luau"},
         "TutorialSpotlight": {"$path": "src/client/Tutorial/TutorialSpotlight.client.luau"},
         "EventTimers": {"$path": "src/client/UI/Controllers/EventTimers.client.luau"},
+        "LiveEventsBar": {"$path": "src/client/UI/Controllers/LiveEventsBar.client.luau"},
         "UpcomingTeaser": {"$path": "src/client/UI/Controllers/UpcomingTeaser.client.luau"},
         "UpdateBoardClient": {"$path": "src/client/World/UpdateBoardClient.client.luau"},
         "$className": "StarterPlayerScripts",
@@ -3426,8 +3427,12 @@
     "ReplicatedStorage": {
       "ProjectedCoatingMeshes": {"$path": "assets/Studio/ProjectedCoatingMeshes.rbxm"},
       "MutationStyle": {"$path": "src/shared/UI/MutationStyle.luau"},
+      "MutationShade": {"$path": "src/shared/UI/MutationShade.luau"},
+      "RarityText": {"$path": "src/shared/UI/RarityText.luau"},
       "UpcomingConfig": {"$path": "src/shared/Config/UpcomingConfig.luau"},
       "FolkStudUI": {"$path": "src/shared/UI/FolkStudUI.luau"},
+      "EventUI": {"$path": "src/shared/UI/EventUI.luau"},
+      "ItemIcons": {"$path": "src/shared/Inventory/ItemIcons.luau"},
       "MangaUI": {"$path": "src/shared/UI/MangaUI.luau"},
       "MutationSurfaceFinishes": {
         "$path": "src/shared/Effects/MutationSurfaceFinishes.model.json"
@@ -3533,6 +3538,9 @@
         },
         "StudPanel": {
           "$path": "src/shared/Admin/OwnerPanel/StudPanel.luau"
+        },
+        "AdminPanelV2": {
+          "$path": "src/shared/Admin/OwnerPanel/AdminPanelV2.luau"
         }
       },
       "Construction": {
@@ -3926,6 +3934,7 @@
     "ServerScriptService": {
       "$className": "ServerScriptService",
       "$ignoreUnknownInstances": true,
+      "BoostService": {"$path": "src/server/Events/BoostService.luau"},
       "TempleOccupancy": {
         "$path": "src/server/Temple/TempleOccupancy.luau"
       },

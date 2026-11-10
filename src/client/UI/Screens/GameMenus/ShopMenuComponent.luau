@@ -256,7 +256,7 @@ function ShopMenuComponent:_weaponsPage()
 			H.beams(f, w / 2, 112, w * 1.05, Z + 2, WHITE, 0.35, 6)
 		end
 		self:_weaponModel(f, weapon.key, 10, 14, w - 20, 200, Z + 3, 0.9)
-		if weapon.special then pill(f, "Badge", "SPECIAL", 10, 10, 104, 30, Z + 4) end
+		if weapon.special then pill(f, "Badge", "SPECIAL", 10, 10, 104, 30, Z + 4); H.neon(f) end
 		H.gleam(txt(f, "Name", weapon.name, 8, 222, w - 16, 40, 32, Z + 4))
 		-- 2026-11-07 clean pass: stats as a two-column table in a white box (label left, value right)
 		local rows = {}
@@ -299,6 +299,7 @@ function ShopMenuComponent:_featured()
 	-- left: the hero card (a running limited deal, else the bat tiers)
 	local LW = 500
 	local hero = card(page, "Hero", PAGE.X, PAGE.Y, LW, PAGE.H - 8, C.bubblegum, Z)
+	H.neon(hero)
 	H.beams(hero, LW / 2, 145, 440, Z + 2, WHITE, 0.3, 8)
 	local limited = model.limited
 	if limited and limited.endsAt <= os.clock() then limited = nil end
@@ -327,6 +328,7 @@ function ShopMenuComponent:_featured()
 	local RX, RW = PAGE.X + LW + 16, PAGE.W - LW - 16
 	local vip = model.vip
 	local vipCard = card(page, "Vip", RX, PAGE.Y, RW, 150, C.gold, Z)
+	H.neon(vipCard, C.gold)
 	H.beams(vipCard, 70, 75, 170, Z + 2, WHITE, 0.35, 6)
 	icon(vipCard, "Crown", "IconCrown", 70, 72, 104, Z + 3):SetAttribute("Float", 72)
 	H.gleam(txt(vipCard, "Title", "VIP", 138, 10, 200, 56, 52, Z + 4, nil, Enum.TextXAlignment.Left))
@@ -399,6 +401,7 @@ function ShopMenuComponent:_passesPage()
 	local h = PAGE.H - 8
 	local vip = model.vip
 	local v = card(page, "Vip", PAGE.X, PAGE.Y, w, h, C.gold, Z)
+	H.neon(v)
 	H.beams(v, w / 2, 130, 330, Z + 2, WHITE, 0.3, 8)
 	icon(v, "Crown", "IconCrown", w / 2, 130, 190, Z + 3):SetAttribute("Float", 130)
 	H.gleam(txt(v, "VipTitle", "VIP", 20, 236, w - 40, 84, 84, Z + 4))
@@ -432,7 +435,7 @@ function ShopMenuComponent:_cashPage()
 		local big = i == #packs
 		H.beams(f, w / 2, 150, big and 330 or 250, Z + 2, WHITE, big and 0.25 or 0.4, big and 8 or 6)
 		icon(f, "Coins", "IconCoins", w / 2, 150, 110 + i * 30, Z + 3):SetAttribute("Float", 150)
-		if pack.badge then pill(f, "Badge", pack.badge, w / 2 - 70, 12, 140, 36, Z + 5, C.coral) end
+		if pack.badge then pill(f, "Badge", pack.badge, w / 2 - 70, 12, 140, 36, Z + 5, C.coral); H.neon(f) end
 		H.gleam(txt(f, "Amount", pack.amount, 14, 268, w - 28, 66, 60, Z + 4, GOLD_TEXT))
 		txt(f, "Text", pack.text, 14, 336, w - 28, 30, 22, Z + 4)
 		if big then f:SetAttribute("Glint", true) end
@@ -507,7 +510,7 @@ function ShopMenuComponent:_dailyPage()
 		elseif state == "locked" then
 			badge(f, "IconLock", cw - 27, 26, 36, Z + 5)
 		else
-			pill(f, "Today", "TODAY", cw - 106, 10, 96, 32, Z + 5, C.coral)
+			pill(f, "Today", "TODAY", cw - 106, 10, 96, 32, Z + 5, C.coral); H.neon(f)
 		end
 		local iconName = DAY_ICON[string.lower(tostring(day.kind or ""))] or "IconStar"
 		local iconY = isBig and ch * 0.42 or ch / 2 - 6
@@ -610,6 +613,7 @@ function ShopMenuComponent.new(panel, layer, model)
 	H.shadow(canvas, "Sheet", 0, 0, CW, CH, 26, Z - 2)
 	local sheet = H.rect(canvas, "Background", 0, 0, CW, CH, 26, Z - 1, WHITE)
 	H.ink(sheet, 5)
+	H.crazy(canvas, sheet, { pal = C.orange, w = CW, h = CH, z = Z, band = 132, rainbow = true })
 	H.studs(sheet, Vector2.new(50, 46), 0.8, 26, Z - 1)
 	-- the title sits on the top border, the crown hangs over the corner, the X over the other corner
 	H.beams(canvas, 52, 18, 190, Z + 1, hex("FFD000"), 0.35, 6)

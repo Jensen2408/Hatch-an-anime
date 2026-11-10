@@ -92,7 +92,7 @@ function OwnerGameActions.Run(owner, action, payload)
             interval and interval == interval and interval >= 1.5 and interval <= 30,
             "Spawn interval must be 1.5–30 seconds."
         )
-        assert(not workspace:GetAttribute("OwnerEventName"), "Stop the active event before changing spawn timing.")
+        assert(not workspace:GetAttribute("OwnerEvent_EggRushEnds"), "Stop Egg Rush before changing spawn timing.")
         workspace.PirateEggConveyor:SetAttribute("SpawnInterval", interval)
         return { Ok = true, Message = "River spawn interval: " .. interval .. " seconds." }
     end

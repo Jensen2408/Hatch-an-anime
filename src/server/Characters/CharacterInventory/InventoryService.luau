@@ -266,7 +266,7 @@ local function snapshot(player)
         capacity = capacityOf(plot),
         multiplier = (tonumber(workspace:GetAttribute("OwnerIncomeMultiplier")) or 1) * (workspace:GetAttribute(
             "NightCashMultiplier"
-        ) or 1) * (workspace:GetAttribute("AbuseCashMultiplier") or 1),
+        ) or 1) * (workspace:GetAttribute("AbuseCashMultiplier") or 1) * (workspace:GetAttribute("BoostCashMultiplier") or 1),
         allowStore = ServerConfig.AllowStore,
         serverTime = workspace:GetServerTimeNow(),
     }
@@ -944,7 +944,7 @@ function Service.Init()
         hookChamber(descendant)
     end
     plots.DescendantAdded:Connect(hookChamber)
-    for _, attribute in { "NightCashMultiplier", "OwnerIncomeMultiplier", "AbuseCashMultiplier" } do
+    for _, attribute in { "NightCashMultiplier", "OwnerIncomeMultiplier", "AbuseCashMultiplier", "BoostCashMultiplier" } do
         workspace:GetAttributeChangedSignal(attribute):Connect(function()
             for _, player in Players:GetPlayers() do
                 markDirty(player)

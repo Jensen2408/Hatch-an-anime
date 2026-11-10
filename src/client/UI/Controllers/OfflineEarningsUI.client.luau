@@ -204,6 +204,16 @@ local function flyCoins(fromObject, amount)
     UISound.Play("CoinRustle")
 end
 
+---------------------------------------------------------------- the window, in the Folk Stud look (2026-11-08)
+-- A white studded sheet with a black outline: "OFFLINE EARNINGS" on the top border with the cash stack hanging over the
+-- corner, the red X, a purple away pill, the cash stack floating on spinning gold rays, the amount in candy green and
+-- chunky studded COLLECT / 2x COLLECT buttons. Old look (MenuArt): ServerStorage._ARCHIVE.OfflineEarningsUI_BeforeStud_2026-11-08
+local FolkStud = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
+local H = FolkStud.H
+local CASH_ART = "rbxassetid://136807180106184" -- FOLK cash stack, same as the cash card
+local CLOCK_ART = "rbxassetid://112731802177209"
+local CASH_GREEN = H.hex("2BF08C")
+
 local hasShown = false
 local function showWindow()
     if hasShown then
@@ -216,84 +226,65 @@ local function showWindow()
     hasShown = true
     local awaySeconds = tonumber(player:GetAttribute("OfflineSeconds")) or 0
     local canDouble = (ShopConfig.Products.Offline2x or 0) ~= 0
+    local W, HT = 580, 456
 
-    -- 2026-11-08: Folk Stud look (white studded sheet, black outlines, title on the top border, kit buttons).
-    -- The old MenuArt window: ServerStorage._ARCHIVE.Scripts_BeforeStudJoinUI_2026-11-08.OfflineEarningsUI
-    local Kit = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
-    local H = Kit.H
-    local hex = Color3.fromHex
-    local W, HT = 560, 540 -- design size of the holder; the sheet sits inside it with room for the overhangs
-    local screenGui = create("ScreenGui", {
+    local screenGui = H.new("ScreenGui", {
         Name = "OfflineEarningsUI",
         ResetOnSpawn = false,
         IgnoreGuiInset = true,
         DisplayOrder = 80,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     }, player:WaitForChild("PlayerGui"))
-    local dimFrame = create(
-        "Frame",
-        { BackgroundColor3 = BLACK, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 1 },
-        screenGui
-    )
+    local dimFrame = H.new("Frame", { Name = "Dim", BackgroundColor3 = BLACK, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 0 }, screenGui)
     TweenService:Create(dimFrame, TweenInfo.new(0.3), { BackgroundTransparency = 0.45 }):Play()
-    -- two scales: Fit follows the screen, Pop is the open/close bounce (a pop that tweens a saved fit value can leave
-    -- the window invisible when the camera size is still 0 at Play start)
-    local holder = create("Frame", {
-        Name = "Root",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(W, HT),
-        BackgroundTransparency = 1,
-        ZIndex = 2,
-    }, screenGui)
-    local fitScale = create("UIScale", { Name = "Fit" }, holder)
+    -- two scales: Fit follows the screen size, Pop is only the open / close bounce
+    local root = H.new("Frame", { Name = "Root", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.54), Size = UDim2.fromOffset(W, HT) }, screenGui)
+    local fitScale = H.new("UIScale", { Name = "Fit" }, root)
+    local stage = H.new("Frame", { Name = "Stage", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, root)
+    local popScale = H.new("UIScale", { Name = "Pop", Scale = 0.6 }, stage)
     local function rescale()
-        local screenSize = screenGui.AbsoluteSize
-        return math.clamp(math.min(screenSize.X / 620, screenSize.Y / 600), 0.5, 1.15)
+        local size = screenGui.AbsoluteSize
+        if size.X < 10 then
+            return
+        end
+        fitScale.Scale = math.clamp(math.min(size.X / (W + 120), size.Y / (HT + 170)), 0.45, 1.1)
     end
-    fitScale.Scale = rescale()
-    screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-        fitScale.Scale = rescale()
-    end)
-    local window = create("Frame", { Name = "Stage", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 2 }, holder)
-    local popScale = create("UIScale", { Name = "Pop", Scale = 0.8 }, window)
-    TweenService:Create(popScale, TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+    rescale()
+    screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(rescale)
+    TweenService:Create(popScale, TweenInfo.new(0.35, Enum.EasingStyle.Back), { Scale = 1 }):Play()
 
-    -- the sheet: white, studs, thick black outline, hard shadow
-    local SX, SY, SW, SH = 20, 44, 520, 470
-    H.shadow(window, "Sheet", SX - 2, SY + 4, SW + 4, SH + 4, 16, 2)
-    local sheet = H.rect(window, "Sheet", SX, SY, SW, SH, 14, 3)
-    H.ink(sheet, 4)
-    H.studs(sheet, Vector2.new(50, 46), 0.8, 14, 3)
-    -- title centred on the top border, the coin icon hanging over the corner, the red X over the other corner
-    H.sticker(window, "Icon", COINS_IMAGE, SX + 22, SY - 2, 84, 9)
-    H.gleam(H.text(window, "Title", "WELCOME BACK!", SX + 70, SY - 2, 46, 9, WHITE, "left"))
-    local closeButton = H.closeButton(window, SX + SW - 42, SY - 26)
+    -- the sheet
+    H.shadow(stage, "Window", -2, 4, W + 4, HT + 4, 16, 1)
+    local win = H.rect(stage, "Window", 0, 0, W, HT, 14, 1)
+    H.ink(win, 4)
+    H.neon(win)
+    H.studs(win, Vector2.new(50, 46), 0.8, 12, 1)
+    H.sticker(stage, "Icon", CASH_ART, 18, -3, 84, 8)
+    H.gleam(H.text(stage, "Title", "OFFLINE EARNINGS", 66, -2, 46, 8, WHITE, "left"))
+    local closeButton = H.closeButton(stage, W - 42, -26)
 
-    -- away pill (only read, so flat: no studs, no lip)
-    local pill = H.rect(window, "AwayPill", 130, SY + 40, 300, 42, 12, 5)
-    H.ink(pill, 3)
-    H.grad(pill, hex("2FB8FF"), hex("0283FB"))
-    H.text(pill, "Away", "You were away for " .. formatAwayTime(awaySeconds), 150, 21, 22, 6, WHITE)
+    -- away pill: read only, so flat (no lip, no studs)
+    local PW, PH = 320, 46
+    local px = (W - PW) / 2
+    H.shadow(stage, "Away", px, 50, PW, PH, 12, 2)
+    local pill = H.rect(stage, "Away", px, 50, PW, PH, 12, 3)
+    H.ink(pill, 4)
+    H.grad(pill, FolkStud.COLOR.purple[1], FolkStud.COLOR.purple[2])
+    H.art(pill, "Clock", CLOCK_ART, 28, PH / 2, 30, 5)
+    H.text(pill, "Label", "You were away for " .. formatAwayTime(awaySeconds), PW / 2 + 16, PH / 2, 22, 5)
 
-    -- hero: spinning gold rays behind a floating coin pile, sparkles round it
-    local HX, HY = W / 2, SY + 158
-    H.beams(window, HX, HY, 340, 4, hex("FFC400"), 0.3, 8) -- drawn rays (the rays image does not load in this place)
-    local pile = { { 0, 18, 96 }, { -66, 34, 72 }, { 68, 32, 74 }, { -30, -10, 66 }, { 36, -12, 68 } }
-    for i, coin in pile do
-        local s = H.sticker(window, "Coin" .. i, COINS_IMAGE, HX + coin[1], HY + coin[2], coin[3], 5 + i, true)
-        s.Rotation = (i % 2 == 0 and -1 or 1) * (4 + i * 2)
-    end
-    H.sparkle(window, "Spark1", HX - 140, HY - 40, 34, 12, 0)
-    H.sparkle(window, "Spark2", HX + 146, HY - 18, 26, 12, 1.3)
-    H.sparkle(window, "Spark3", HX - 112, HY + 54, 22, 12, 2.4)
-    H.sparkle(window, "Spark4", HX + 118, HY + 60, 30, 12, 0.7)
+    -- hero: the cash stack floating on spinning gold rays, with twinkles
+    H.rays(stage, W / 2, 178, 330, 2, H.hex("FFD000"))
+    H.sticker(stage, "Cash", CASH_ART, W / 2, 176, 150, 6, true)
+    H.sparkle(stage, "Twinkle1", W / 2 - 118, 128, 30, 7, 0)
+    H.sparkle(stage, "Twinkle2", W / 2 + 122, 150, 24, 7, 0.4)
+    H.sparkle(stage, "Twinkle3", W / 2 + 92, 222, 20, 7, 0.75)
+    H.sparkle(stage, "Twinkle4", W / 2 - 98, 218, 18, 7, 0.2)
 
-    -- amount (counts up), green with a light sweep
-    local amountLabel = H.text(window, "Amount", "$0", HX, SY + 286, 76, 12, hex("12D67A"))
-    amountLabel:FindFirstChild("UIStroke").Thickness = 5
+    -- amount (counts up) and its line
+    local amountLabel = H.text(stage, "Amount", "$0", W / 2, 276, 72, 8, CASH_GREEN)
     H.gleam(amountLabel)
-    H.text(window, "Sub", "earned while you were away", HX, SY + 330, 22, 12, WHITE)
+    H.text(stage, "Sub", "earned while you were away", W / 2, 334, 22, 8)
     task.spawn(function()
         local startedAt = os.clock()
         while amountLabel.Parent do
@@ -307,7 +298,6 @@ local function showWindow()
         end
     end)
 
-    -- buttons
     local closing = false
     local function close()
         if closing then
@@ -315,11 +305,8 @@ local function showWindow()
         end
         closing = true
         UISound.Play("Close")
-        TweenService:Create(popScale, TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.In), { Scale = 0.8 }):Play()
+        TweenService:Create(popScale, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.6 }):Play()
         TweenService:Create(dimFrame, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
-        task.delay(0.16, function()
-            holder.Visible = false
-        end)
         task.delay(0.22, function()
             screenGui:Destroy()
         end)
@@ -336,44 +323,50 @@ local function showWindow()
     closeButton.Activated:Connect(function()
         collectAndClose()
     end)
-    -- a studded kit button with a big word and a small line under it; hover/press bounce comes from Kit.animate
-    local BY, BH = SY + 364, 88
-    local function makeButton(name, textValue, subtitle, pal, x, w, onClick)
-        local b = H.button(window, name, x, BY, w, BH, 16, pal, 8)
-        H.text(b, "Label", textValue, w / 2, subtitle and 30 or (BH - 4) / 2, subtitle and 34 or 40, 11)
+
+    -- studded candy buttons (centre anchored, lip + studs because they can be pressed)
+    local BY, BH = 366, 80
+    local function makeButton(name, label, subtitle, palette, x, w, onClick)
+        H.shadow(stage, name, x, BY, w, BH, 14, 2)
+        local b = H.button(stage, name, x, BY, w, BH, 14, palette, 4)
+        H.text(b, "Label", label, w / 2, subtitle and BH / 2 - 14 or BH / 2 - 3, 34, b.ZIndex + 2)
         if subtitle then
-            H.text(b, "Sub", subtitle, w / 2, 64, 19, 11)
+            H.text(b, "Sub", subtitle, w / 2, BH / 2 + 17, 19, b.ZIndex + 2)
         end
+        b.MouseEnter:Connect(function()
+            UISound.Play("Hover")
+        end)
         b.Activated:Connect(function()
+            UISound.Play("Click")
             onClick()
         end)
         return b
     end
     if canDouble then
-        makeButton("Collect", "COLLECT", formatShortCash(amount), Kit.COLOR.lime, SX + 30, 220, function()
+        makeButton("Collect", "COLLECT", formatShortCash(amount), FolkStud.COLOR.green, 34, 244, function()
             collectAndClose()
         end)
         local doubleButton = makeButton(
             "Double",
             "2× COLLECT",
             formatShortCash(amount * 2) .. "  ·  R$ " .. tostring(ShopConfig.Prices.Offline2x or 19),
-            Kit.COLOR.gold,
-            SX + SW - 30 - 220,
-            220,
+            FolkStud.COLOR.gold,
+            W - 34 - 244,
+            244,
             function()
                 pcall(function()
                     shopRemote:InvokeServer("Buy", "Offline2x")
                 end)
             end
         )
-        doubleButton:SetAttribute("Glint", true) -- the best deal's outline glints gold
-        -- red tag on the corner of the 2x button, wiggling
-        local badge = H.rect(doubleButton, "Badge", 134, -30, 104, 36, 10, 14)
-        H.ink(badge, 3)
-        H.grad(badge, Kit.COLOR.red[1], Kit.COLOR.red[2])
-        H.text(badge, "Label", "2× CASH!", 52, 17, 20, 15)
-        badge.Rotation = 6
-        badge:SetAttribute("Wiggle", 6)
+        doubleButton:SetAttribute("Beat", true)
+        -- the "2x CASH!" tag hanging off the 2x button's corner
+        local badge = H.rect(stage, "Badge", W - 34 - 84, BY - 34, 112, 38, 12, 9)
+        H.ink(badge, 4)
+        H.grad(badge, FolkStud.COLOR.red[1], FolkStud.COLOR.red[2])
+        badge.Rotation = -7
+        badge:SetAttribute("Wiggle", -7)
+        H.text(badge, "Label", "2× CASH!", 56, 18, 20, 10)
         player:GetAttributeChangedSignal("OfflineDoubled"):Connect(function()
             if not player:GetAttribute("OfflineDoubled") or not amountLabel.Parent then
                 return
@@ -390,7 +383,7 @@ local function showWindow()
                     task.wait()
                 end
             end)
-            local flash = H.rect(sheet, "Flash", 0, 0, SW, SH, 14, 30)
+            local flash = H.rect(stage, "Flash", 0, 0, W, HT, 14, 30, WHITE)
             flash.BackgroundTransparency = 0.2
             TweenService:Create(flash, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
             task.delay(1.8, function()
@@ -398,16 +391,11 @@ local function showWindow()
             end)
         end)
     else
-        makeButton("Collect", "AWESOME!", nil, Kit.COLOR.lime, W / 2 - 150, 300, function()
+        makeButton("Collect", "AWESOME!", nil, FolkStud.COLOR.green, (W - 300) / 2, 300, function()
             collectAndClose()
         end)
     end
-    -- the kit animates it all: rays spin, coins float, sparkles twinkle, words gleam, buttons bounce with the game's sounds
-    Kit.animate(screenGui, {
-        sound = function(kind)
-            UISound.Play(kind == "hover" and "Hover" or "Click")
-        end,
-    })
+    FolkStud.animate(root, { sounds = false })
     UISound.Play("Open")
 end
 

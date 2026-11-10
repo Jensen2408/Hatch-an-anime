@@ -83,7 +83,6 @@ local function stop()
         end
     end
     pcall(StarterGui.SetCoreGuiEnabled, StarterGui, Enum.CoreGuiType.All, true)
-    pcall(StarterGui.SetCoreGuiEnabled, StarterGui, Enum.CoreGuiType.Backpack, false)
     workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
     remote:FireServer("Stop")
 end

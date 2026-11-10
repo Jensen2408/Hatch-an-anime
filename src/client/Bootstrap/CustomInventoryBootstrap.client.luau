@@ -1,16 +1,18 @@
 --[[ ReplicatedFirst.CustomInventoryBootstrap  (LocalScript)
-Disables Roblox's tool slots (CoreGui Backpack): the game uses its own hotbar + Inventory (GameHUD).
-No remotes. The pcall covers SetCoreGuiEnabled failing before the CoreGui is ready.
+Since 2026-11-08 the game uses Roblox's default backpack (tool slots at the bottom, the backpack from the top bar).
+Tool pictures come from ServerScriptService.ToolIcons. This only makes sure the backpack is on at startup and after
+respawns; cinematics turn all CoreGui off and back on themselves. The pcall covers SetCoreGuiEnabled failing before
+the CoreGui is ready. (Before: this hid the backpack every frame for GameHUD's custom hotbar.)
 ]]
+local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
-local RunService = game:GetService("RunService")
-local function hideBackpack()
-    pcall(function()
-        if StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Backpack) then
-            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+local function showBackpack()
+    for _ = 1, 20 do
+        if pcall(StarterGui.SetCoreGuiEnabled, StarterGui, Enum.CoreGuiType.Backpack, true) then
+            return
         end
-    end)
+        task.wait(0.25)
+    end
 end
-hideBackpack()
--- Re-checked every frame: respawns and cinematics can restore all CoreGui.
-RunService:BindToRenderStep("CustomInventoryHideBackpack", Enum.RenderPriority.Last.Value, hideBackpack)
+showBackpack()
+Players.LocalPlayer.CharacterAdded:Connect(showBackpack)

@@ -53,7 +53,7 @@ end
 function Rewards.Tool(template, id, stats, mutation)
     stats = stats or Economy.Read(template, id) or Economy.Roll(id)
     if mutation == nil and not template:GetAttribute("Golden") then
-        mutation = Mutations.Roll()
+        mutation = Mutations.Roll(workspace:GetAttribute("BoostMutationMultiplier") or 1)
     end
     if mutation == false then
         mutation = nil

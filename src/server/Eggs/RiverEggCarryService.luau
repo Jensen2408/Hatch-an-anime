@@ -10,7 +10,7 @@ Public API
                                             the river and dropped-egg pickups refuse a new egg until it is secured)
 
 Ends (server decides, checked every Heartbeat):
-  "Secured"   root inside the player's own plot box (relative to TempleAnchor), after 0.5 s -> Tool re-enabled + equipped
+  "Secured"   root inside the capture square on the player's PlotSpawn pad, after 0.5 s -> Tool re-enabled + equipped
   "Cancelled" character changed / died, Tool gone, plot lost, or a new Begin
   "Dropped"   via Service.Drop
 While carrying, Humanoid.WalkSpeed is scaled by EggCarryConfig.CarryWalkSpeedMultiplier and restored on every end.
@@ -24,6 +24,9 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local CarryConfig = require(ReplicatedStorage:WaitForChild("EggCarryConfig"))
+local StealRules = require(ReplicatedStorage:WaitForChild("EggSteal"):WaitForChild("EggStealConfig")).Rules
+local CAPTURE_HALF = StealRules.CaptureHalfSize or 6
+local CAPTURE_HEIGHT = StealRules.CaptureHeight or 14
 local Service = {}
 local activeCarries = {} -- [Player] = { tool, enabled, plot, char, started, id, humanoid?, walkSpeed?, slowSpeed?, visual? }
 local carryStateEvent = ReplicatedStorage:WaitForChild("RiverEggCarryState")
@@ -132,10 +135,19 @@ RunService.Heartbeat:Connect(function()
         then
             finish(player, "Cancelled")
         elseif os.clock() - carry.started > 0.5 then
-            -- home box in TempleAnchor space: X -58..32, Z -32..48, Y -15..60
-            local rel = carry.plot.TempleAnchor.CFrame:PointToObjectSpace(root.Position)
-            if rel.X >= -58 and rel.X <= 32 and rel.Z >= -32 and rel.Z <= 48 and rel.Y >= -15 and rel.Y <= 60 then
-                finish(player, "Secured")
+            -- capture square on the plot's spawn pad (EggStealConfig CaptureHalfSize, drawn by StolenEggBanner);
+            -- plots without a PlotSpawn fall back to the old home box in TempleAnchor space
+            local spawnPad = carry.plot:FindFirstChild("PlotSpawn")
+            if spawnPad then
+                local pad = spawnPad.CFrame:PointToObjectSpace(root.Position)
+                if math.abs(pad.X) <= CAPTURE_HALF and math.abs(pad.Z) <= CAPTURE_HALF and pad.Y >= -4 and pad.Y <= CAPTURE_HEIGHT then
+                    finish(player, "Secured")
+                end
+            else
+                local rel = carry.plot.TempleAnchor.CFrame:PointToObjectSpace(root.Position)
+                if rel.X >= -58 and rel.X <= 32 and rel.Z >= -32 and rel.Z <= 48 and rel.Y >= -15 and rel.Y <= 60 then
+                    finish(player, "Secured")
+                end
             end
         end
     end

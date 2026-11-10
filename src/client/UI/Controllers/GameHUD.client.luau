@@ -51,6 +51,7 @@ Init order (top level, in file order - WaitForChild calls yield):
 -- ===== 1. Services, modules, palette, UI primitives =====
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local GuiService = game:GetService("GuiService")
 local _StarterGui = game:GetService("StarterGui")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -243,7 +244,10 @@ end
 local function buildPreviewModel(tool)
     local model = Instance.new("Model")
     local egg = tool:FindFirstChild("Egg")
-    local sourceModel = egg and egg:IsA("Model") and egg or tool
+    local characterModel = tool:FindFirstChild("Character")
+    local sourceModel = (egg and egg:IsA("Model") and egg)
+        or (characterModel and characterModel:IsA("Model") and characterModel)
+        or tool
     -- the egg Model's WorldPivot goes stale once its parts move with the welded Handle, so frame from the Handle
     -- (eggs are built with Handle and egg both at the origin, so Handle space = the egg's upright template space)
     local handle = tool:FindFirstChild("Handle")
@@ -307,7 +311,7 @@ end
 -- Fills `parent` with the tool's icon and returns it: catalog portrait for characters (with an animated aura
 -- for mutations), the tool's TextureId if set, else a ViewportFrame with a slowly turning copy of its parts.
 -- The spawned animation loops end on their own once the icon is unparented.
-local function buildPreview(tool, parent)
+local function buildPreviewRaw(tool, parent)
     -- characters: clean 2D portrait from the catalog (same art as the Index)
     local characterId = tool:GetAttribute("CharacterId") or tool:GetAttribute("BrainrotId")
     if characterId and CATALOG_IMAGES[characterId] then
@@ -320,17 +324,6 @@ local function buildPreview(tool, parent)
             ScaleType = Enum.ScaleType.Fit,
             ZIndex = parent.ZIndex,
         }, parent)
-        local mutation = tool:GetAttribute("Mutation")
-        if mutation == "Gold" then
-            portrait.ImageColor3 = Color3.fromRGB(255, 215, 110)
-        elseif mutation == "Diamond" then
-            portrait.ImageColor3 = Color3.fromRGB(150, 235, 255)
-        elseif mutation == "Silver" then
-            portrait.ImageColor3 = Color3.fromRGB(220, 225, 235)
-        end
-        if mutation then
-            addMutationAura(portrait, parent, mutation)
-        end
         -- disabled rainbow tint (dead code, kept as-is)
         if false then
             local rainbowGradient = create("UIGradient", {
@@ -351,7 +344,8 @@ local function buildPreview(tool, parent)
         end
         return portrait
     end
-    if tool.TextureId ~= "" and not tool:GetAttribute("EggType") then
+    -- the item picture (ServerScriptService.ToolIcons) when it has one; the mutation shows in the badge above it
+    if tool.TextureId ~= "" then
         return create("ImageLabel", {
             Size = UDim2.fromScale(1, 1),
             BackgroundTransparency = 1,
@@ -360,13 +354,15 @@ local function buildPreview(tool, parent)
             ZIndex = parent.ZIndex,
         }, parent)
     end
+    -- 2026-11-08 high quality pictures: the model faces the camera (eggs straight on, characters at a 3/4 angle),
+    -- fills the slot (32 degree lens, fitted to its height and width), bright studio light from the front-left.
     local viewport = create("ViewportFrame", {
         Size = UDim2.fromScale(1, 1),
         BackgroundTransparency = 1,
         ZIndex = parent.ZIndex,
-        LightColor = Color3.new(1, 1, 1),
-        Ambient = Color3.fromRGB(235, 235, 240),
-        LightDirection = Vector3.new(-0.3, -0.6, -1),
+        LightColor = Color3.fromRGB(255, 252, 245),
+        Ambient = Color3.fromRGB(165, 165, 175),
+        LightDirection = Vector3.new(-0.6, -0.9, -1),
     }, parent)
     local model
     if PREVIEW_CACHE[tool] then
@@ -376,23 +372,148 @@ local function buildPreview(tool, parent)
     end
     model.Parent = viewport
     local boxCFrame, boxSize = model:GetBoundingBox()
-    local camera = create("Camera", { FieldOfView = 20 }, viewport)
+    local FOV = 32
+    local camera = create("Camera", { FieldOfView = FOV }, viewport)
     viewport.CurrentCamera = camera
     local center = boxCFrame.Position
-    local distance = math.max(boxSize.X, boxSize.Y, boxSize.Z) / 2 / math.tan(math.rad(10)) * 1.05
-    local front = tool:GetAttribute("EggType") and Vector3.new(0, 0, -1) or Vector3.new(0.5, 0.2, -1).Unit
-    camera.CFrame = CFrame.lookAt(center + front * distance + Vector3.new(0, boxSize.Y * 0.05, 0), center)
-    -- slow turn so 3D eggs feel alive
+    local isEgg = tool:GetAttribute("EggType") ~= nil and not tool:GetAttribute("CharacterId")
+    -- models face -Z of their pivot; the preview model is built in that pivot space
+    local front = isEgg and Vector3.new(0, 0, -1) or CFrame.Angles(0, math.rad(-24), 0):VectorToWorldSpace(Vector3.new(0, 0, -1))
+    local up = Vector3.new(0, boxSize.Y * 0.06, 0)
+    local radius = math.max(boxSize.Y, math.max(boxSize.X, boxSize.Z) * 0.92) / 2
+    local distance = radius / math.tan(math.rad(FOV / 2)) * 0.9 + math.max(boxSize.X, boxSize.Z) * 0.3
+    camera.CFrame = CFrame.lookAt(center + front * distance + up, center)
+    -- light travels from the camera side into the model, slightly downward, so the face is lit
+    viewport.LightDirection = (-front + Vector3.new(0.45, -0.7, 0)).Unit
+    return viewport
+end
+-- Mutation look in the backpack (2026-11-08): a mutated item looks mutated and moves.
+--   the picture  gets a moving colour sheen (MutationStyle: metal shine sweeping across for Silver / Gold / Diamond /
+--                Molten, turning colours for Rainbow); the sheen multiplies the picture so it reads as that metal
+--   behind it   a soft glow in the mutation colour that breathes in and out
+--   around it   little sparkles that twinkle (embers rising for Molten)
+--   the item    floats gently up and down
+-- Every loop stops on its own once the picture leaves the screen; reduced motion keeps only the colours.
+local MutationStyle = require(ReplicatedStorage:WaitForChild("MutationStyle"))
+local ItemIcons = require(ReplicatedStorage:WaitForChild("ItemIcons"))
+local MUTATION_GLOW = {
+    Silver = Color3.fromRGB(225, 232, 245),
+    Gold = Color3.fromRGB(255, 200, 40),
+    Diamond = Color3.fromRGB(90, 215, 255),
+    Rainbow = Color3.fromRGB(255, 120, 230),
+    Molten = Color3.fromRGB(255, 96, 20),
+}
+local RAINBOW_STEPS = { Color3.fromRGB(255, 70, 90), Color3.fromRGB(255, 190, 40), Color3.fromRGB(90, 240, 120), Color3.fromRGB(70, 170, 255), Color3.fromRGB(200, 90, 255) }
+local function dressMutation(image, parent, mutation)
+    local glowColor = MUTATION_GLOW[mutation]
+    if not glowColor or not image or not image.Parent then
+        return
+    end
+    local baseZ = image.ZIndex
+    local calm = GuiService.ReducedMotionEnabled
+    -- glow behind the item
+    local glow = create("Frame", {
+        Name = "MutationGlow",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(0.8, 0.8),
+        BackgroundColor3 = glowColor,
+        BackgroundTransparency = 0.55,
+        BorderSizePixel = 0,
+        ZIndex = math.max(baseZ - 1, 1),
+    }, parent)
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }, glow)
+    create("UIGradient", {
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.5, 0.15),
+            NumberSequenceKeypoint.new(1, 1),
+        }),
+    }, glow)
+    -- the moving colour sheen on the picture itself: on the grey copy of the picture the tint reads as real gold /
+    -- silver / diamond / lava / rainbow (the colour picture would only be tinted)
+    if image:IsA("ImageLabel") and ItemIcons.Gray[image.Image] then
+        image.Image = ItemIcons.Gray[image.Image]
+    end
+    MutationStyle.Paint(image, mutation)
+    -- sparkles (embers for Molten)
+    local sparkles = {}
+    for i = 1, 3 do
+        local star = create("ImageLabel", {
+            Name = "MutationSparkle",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Size = UDim2.fromScale(0.22, 0.22),
+            Image = "rbxasset://textures/particles/sparkles_main.dds",
+            ImageColor3 = mutation == "Molten" and Color3.fromRGB(255, 170, 40) or glowColor:Lerp(Color3.new(1, 1, 1), 0.5),
+            ImageTransparency = 1,
+            ZIndex = baseZ + 2,
+        }, parent)
+        sparkles[i] = star
+    end
+    if calm then
+        glow.BackgroundTransparency = 0.45
+        return
+    end
+    local basePosition = image.Position
+    local seed = math.random() * 10
     task.spawn(function()
-        local angle = 0
-        while viewport.Parent do
-            angle += 0.012
-            local direction = CFrame.Angles(0, math.sin(angle) * 0.35, 0):VectorToWorldSpace(front)
-            camera.CFrame = CFrame.lookAt(center + direction * distance + Vector3.new(0, boxSize.Y * 0.05, 0), center)
-            task.wait(0.03)
+        local spots = {}
+        local function newSpot(i)
+            spots[i] = { x = 0.15 + math.random() * 0.7, y = 0.12 + math.random() * 0.6, born = os.clock(), life = 0.9 + math.random() * 0.6 }
+        end
+        for i = 1, #sparkles do
+            newSpot(i)
+            spots[i].born -= (i - 1) * 0.45
+        end
+        while image.Parent and parent.Parent do
+            local now = os.clock()
+            local t = now + seed
+            -- float and breathe
+            image.Position = basePosition + UDim2.fromScale(0, math.sin(t * 2.2) * 0.035)
+            local breath = (math.sin(t * 2.6) + 1) / 2
+            glow.Size = UDim2.fromScale(0.72 + breath * 0.2, 0.72 + breath * 0.2)
+            glow.BackgroundTransparency = 0.6 - breath * 0.25
+            if mutation == "Rainbow" then
+                local k = (t * 0.6) % #RAINBOW_STEPS
+                local a = RAINBOW_STEPS[math.floor(k) + 1]
+                local b = RAINBOW_STEPS[(math.floor(k) + 1) % #RAINBOW_STEPS + 1]
+                glow.BackgroundColor3 = a:Lerp(b, k % 1)
+            end
+            -- twinkle: each sparkle fades in, grows, fades out, then pops up somewhere else
+            for i, star in sparkles do
+                local spot = spots[i]
+                local age = (now - spot.born) / spot.life
+                if age >= 1 then
+                    newSpot(i)
+                    age = 0
+                    spot = spots[i]
+                end
+                local y = spot.y
+                if mutation == "Molten" then
+                    y -= age * 0.3 -- embers rise
+                end
+                star.Position = UDim2.fromScale(spot.x, y)
+                local pop = math.sin(math.clamp(age, 0, 1) * math.pi)
+                star.ImageTransparency = 1 - pop
+                star.Rotation = age * 90
+                local size = 0.16 + pop * 0.2
+                star.Size = UDim2.fromScale(size, size)
+                if mutation == "Rainbow" then
+                    star.ImageColor3 = RAINBOW_STEPS[(i + math.floor(t * 2)) % #RAINBOW_STEPS + 1]
+                end
+            end
+            task.wait()
         end
     end)
-    return viewport
+end
+local function buildPreview(tool, parent)
+    local image = buildPreviewRaw(tool, parent)
+    local mutation = tool:GetAttribute("Mutation")
+    if mutation and image then
+        dressMutation(image, parent, mutation)
+    end
+    return image
 end
 -- "Characters" | "Eggs" | nil (any other tool is ignored by the bag and the Inventory panel)
 local function getCategory(tool)
@@ -547,7 +668,7 @@ local function toggleEquip(tool)
         humanoid:EquipTool(tool)
     end
 end
-local USE_DEFAULT_BACKPACK = false -- false = this custom hotbar + the Inventory panel above it (Roblox's backpack stays hidden)
+local USE_DEFAULT_BACKPACK = true -- true (2026-11-08) = Roblox's own backpack + hotbar, with item pictures from ReplicatedStorage.ItemIcons; false = this custom hotbar
 local barGroups = {} -- [slot] = { tools = {...} } ; identical eggs stack into one slot ("x3"), like Roblox's hotbar
 local function stackKey(tool)
     if tool:GetAttribute("CharacterId") or tool:GetAttribute("BrainrotId") then
@@ -635,7 +756,7 @@ local MUTATION_COLORS = {
     Rainbow = Color3.fromRGB(255, 90, 200),
     Molten = Color3.fromRGB(255, 105, 34),
 }
-local SLOT_SIZE = 62
+local SLOT_SIZE = 70
 -- renderBar's cheap path: same slots, only re-highlight the one whose stack holds the equipped tool.
 local function restyleHeldSlots(groups)
     for i, holder in slots do
@@ -648,7 +769,7 @@ local function restyleHeldSlots(groups)
                     or (button:GetAttribute("EdgeColor") or Color3.fromRGB(0, 0, 0))
                 edge.Thickness = isHeld and 2.5 or 1.5
             end
-            button.BackgroundTransparency = isHeld and 0.15 or 0.35
+            button.BackgroundTransparency = isHeld and 0.05 or 0.22
         end
     end
 end
@@ -668,7 +789,7 @@ local function buildSlot(slotIndex, group, signatures)
         Name = "Button",
         Size = UDim2.fromScale(1, 1),
         BackgroundColor3 = Color3.fromRGB(20, 20, 24),
-        BackgroundTransparency = isHeld and 0.15 or 0.35,
+        BackgroundTransparency = isHeld and 0.05 or 0.22,
         BorderSizePixel = 0,
         Text = "",
         AutoButtonColor = false,
@@ -703,6 +824,20 @@ local function buildSlot(slotIndex, group, signatures)
     local previewImage = buildPreview(tool, icon)
     if previewImage then
         previewImage.ZIndex = 7
+    end
+    -- thin rarity bar along the bottom of the slot
+    local rarityColor = RARITY_COLORS[_rarity]
+    if rarityColor then
+        local bar = create("Frame", {
+            Name = "RarityBar",
+            AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.new(0.5, 0, 1, -3),
+            Size = UDim2.new(1, -16, 0, 3),
+            BackgroundColor3 = rarityColor,
+            BorderSizePixel = 0,
+            ZIndex = 8,
+        }, button)
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
     end
     -- slot number (top-left) and stack count (bottom-right), white with a thin outline like Roblox
     local slotNumberLabel = create("TextLabel", {
@@ -785,10 +920,10 @@ local function buildSlot(slotIndex, group, signatures)
         end
     end)
     button.MouseEnter:Connect(function()
-        tween(button, 0.08, { BackgroundTransparency = 0.1 })
+        tween(button, 0.08, { BackgroundTransparency = 0 })
     end)
     button.MouseLeave:Connect(function()
-        tween(button, 0.08, { BackgroundTransparency = groupHas(group, getEquippedTool()) and 0.15 or 0.35 })
+        tween(button, 0.08, { BackgroundTransparency = groupHas(group, getEquippedTool()) and 0.05 or 0.22 })
     end)
     holder:SetAttribute("ToolRef", tostring(tool))
     holder:SetAttribute("Sig", signatures[slotIndex])
@@ -1745,41 +1880,119 @@ do
         Rainbow = Color3.fromRGB(255, 90, 200),
         Molten = Color3.fromRGB(255, 105, 34),
     }
-    local RAINBOW_GRADIENT = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80, 80)),
-        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 230, 60)),
-        ColorSequenceKeypoint.new(0.66, Color3.fromRGB(80, 230, 120)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 150, 255)),
-    })
     local activeTab, rarityIndex, mutationIndex, searchQuery, sellMode, armedItem = "All", 1, 1, "", false, nil
-    -- the window art (ReplicatedStorage.MenuArt): background with the header, title, chips and grid face; tab /
-    -- cell / sell pieces drawn on top. Every rect is in pixels of the 660 x 402 art.
-    local MenuArt = require(ReplicatedStorage:WaitForChild("MenuArt"):WaitForChild("MenuArt"))
+    -- 2026-11-10: the Folk Stud look (ReplicatedStorage.FolkStudUI), drawn in code: a sky-blue studded sheet with a
+    -- black outline and a darker header band, pressable buttons with a lip, studs and a hover / press scale, a gold
+    -- outline on the chosen tab, and item cards in their rarity colour. Every rect is in pixels of the 660 x 402
+    -- panel; rects of pressable things are without their 4 px outline, so neighbours sit 14 px apart.
     local ART = {
-        Tabs = { All = { 223, 17, 125, 35 }, Eggs = { 352, 17, 124, 35 }, Characters = { 481, 17, 120, 35 } },
-        Count = { 190, 17, 30, 35 },
-        Close = { 607, 17, 38, 35 },
-        Search = { 23, 68, 199, 33 },
-        Rarity = { 234, 68, 142, 33 },
-        Mutation = { 384, 68, 116, 33 },
-        Sell = { 507, 68, 131, 33 },
-        Grid = { 20, 112, 626, 282 },
+        Tabs = { All = { 244, 12, 106, 34 }, Eggs = { 364, 12, 106, 34 }, Characters = { 484, 12, 106, 34 } },
+        Count = { 176, 15, 48, 28 },
+        Close = { 604, 12, 40, 34 },
+        Search = { 16, 67, 150, 32 },
+        Rarity = { 180, 67, 164, 32 },
+        Mutation = { 358, 67, 132, 32 },
+        Sell = { 504, 67, 140, 32 },
+        Summary = { 22, 111, 470, 28 },
+        ViewPlot = { 512, 112, 132, 26 },
+        Grid = { 17, 113, 626, 270 },
         Cell = Vector2.new(118, 94),
         CellGap = Vector2.new(6, 7),
     }
     local PANEL_WIDTH, PANEL_HEIGHT = 660, 402
+    local Kit = require(ReplicatedStorage:WaitForChild("FolkStudUI"))
+    local H, PAL = Kit.H, Kit.COLOR
+    local MenuArt = { GOLD = H.hex("FFE600"), WHITE = Color3.new(1, 1, 1) }
+    -- SharpUI squares corners and forces every outline in GameHUD to black with mitred joins, except on pieces that
+    -- carry the NoSkin attribute (on themselves or their parent). Pieces are built unparented, sealed, then parented.
+    function MenuArt.seal(root)
+        root:SetAttribute("NoSkin", true)
+        for _, descendant in root:GetDescendants() do
+            if descendant:IsA("GuiObject") then
+                descendant:SetAttribute("NoSkin", true)
+            end
+        end
+        return root
+    end
+    -- the house text outline: black, bevelled, 3.7 px (thinner on small text so the letters stay open)
+    function MenuArt.outline(label, textSize)
+        return create("UIStroke", {
+            Name = "UIStroke",
+            Thickness = math.clamp(textSize * 0.2, 2.5, 3.7),
+            Color = BLACK,
+            LineJoinMode = Enum.LineJoinMode.Bevel,
+        }, label)
+    end
+    -- a plain label / text box (class) with the house outline; props must carry TextSize
+    function MenuArt.text(class, props, parent)
+        local label = create(class, props)
+        label.BackgroundTransparency = 1
+        label.BorderSizePixel = 0
+        label.FontFace = FONT
+        label:SetAttribute("NoSkin", true)
+        MenuArt.outline(label, props.TextSize)
+        label.Parent = parent
+        return label
+    end
+    -- recolours a pressable built by MenuArt.button: pal = { face top, face bottom, lip }
+    function MenuArt.paint(button, pal)
+        button.BackgroundColor3 = pal[3]
+        local face = button:FindFirstChild("Face")
+        local gradient = face and face:FindFirstChildOfClass("UIGradient")
+        if gradient then
+            gradient.Color = ColorSequence.new(pal[1], pal[2])
+        end
+    end
+    -- thick gold outline = chosen / open, black = not
+    function MenuArt.pick(button, on)
+        local outline = button:FindFirstChild("Outline")
+        if outline then
+            outline.Color = on and MenuArt.GOLD or BLACK
+            outline.Thickness = on and 5 or 4
+        end
+    end
     local inventoryFrame = create("Frame", {
         Name = "Inventory",
         Active = true,
         AnchorPoint = Vector2.new(0.5, 1),
-        Position = UDim2.new(0.5, 0, 1, -122),
+        Position = UDim2.new(0.5, 0, 1, -130),
         Size = UDim2.fromOffset(PANEL_WIDTH, PANEL_HEIGHT),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Visible = false,
         ZIndex = 20,
     }, gui)
-    MenuArt.background(inventoryFrame, "Inventory", nil, 20)
+    inventoryFrame:SetAttribute("NoSkin", true)
+    -- the sheet, header band, title, count pill, search field and the well the item grid sits in (none pressable)
+    do
+        local chrome = create("Frame", {
+            Name = "Chrome",
+            Size = UDim2.fromScale(1, 1),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 20,
+        })
+        H.shadow(chrome, "Sheet", 0, 0, PANEL_WIDTH, PANEL_HEIGHT, 16, 20)
+        local sheet = H.rect(chrome, "Sheet", 0, 0, PANEL_WIDTH, PANEL_HEIGHT, 16, 20, PAL.sky[3])
+        H.ink(sheet, 4)
+        local face = H.rect(sheet, "Face", 0, 0, PANEL_WIDTH, PANEL_HEIGHT - 6, 15, 20)
+        H.grad(face, PAL.sky[1], PAL.sky[2])
+        H.studs(face, Vector2.new(48, 48), 0.8, 15, 20)
+        H.rect(face, "Header", 0, 0, PANEL_WIDTH, 55, 15, 20, PAL.blue[3]).BackgroundTransparency = 0.35
+        H.rect(face, "HeaderLine", 0, 55, PANEL_WIDTH, 3, nil, 20, BLACK)
+        H.gleam(H.text(chrome, "Title", "BACKPACK", 18, 29, 24, 22, MenuArt.WHITE, "left"))
+        local r = ART.Count
+        local countPill = H.rect(chrome, "CountPill", r[1], r[2], r[3], r[4], 10, 21)
+        H.grad(countPill, PAL.gold[1], PAL.gold[2])
+        H.ink(countPill, 3)
+        r = ART.Search
+        H.ink(H.rect(chrome, "SearchPill", r[1], r[2], r[3], r[4], 10, 21, PAL.blue[3]), 3)
+        r = ART.Grid
+        MenuArt.well = H.rect(chrome, "GridWell", r[1] - 1, r[2] - 1, r[3] + 2, r[4] + 2, 12, 20, PAL.blue[3])
+        H.ink(MenuArt.well, 4)
+        MenuArt.seal(chrome).Parent = inventoryFrame
+        Kit.animate(chrome, { sounds = false }) -- the light sweep on the title
+    end
     local inventoryScale = create("UIScale", {}, inventoryFrame)
     local function fitScale()
         local screenSize = gui.AbsoluteSize
@@ -1793,107 +2006,112 @@ do
             inventoryScale.Scale = fitScale()
         end
     end)
-    -- a transparent button over the art with a centred label
-    local function artButton(r, textSize)
+    -- a pressable: lip colour behind, black outline, gradient face with studs and a light sweep, centre anchored so
+    -- the kit's hover / press scale ("Pop") keeps its middle still. Its words sit on a child "Label" that follows
+    -- button.Text / TextColor3 and shrinks only when a longer word would not fit.
+    local function artButton(name, r, pal, textSize, text, plain)
         local button = create("TextButton", {
-            Position = UDim2.fromOffset(r[1], r[2]),
+            Name = name,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromOffset(r[1] + r[3] / 2, r[2] + r[4] / 2),
             Size = UDim2.fromOffset(r[3], r[4]),
-            BackgroundTransparency = 1,
-            Text = "",
+            BorderSizePixel = 0,
+            Text = text,
             FontFace = FONT,
             TextSize = textSize,
-            TextColor3 = Color3.new(1, 1, 1),
+            TextColor3 = MenuArt.WHITE,
             AutoButtonColor = false,
-            ZIndex = 23,
-        }, inventoryFrame)
-        addStroke(button, 2, BLACK).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+            ZIndex = 22,
+        })
+        H.dress(button, pal, 10, { lip = 4, studs = 0.7, plain = plain })
+        local label = button:FindFirstChild("Label")
+        if label then
+            label.TextScaled = true
+            label.TextTruncate = Enum.TextTruncate.None
+            create("UITextSizeConstraint", { MaxTextSize = textSize, MinTextSize = 7 }, label)
+            local outline = label:FindFirstChild("UIStroke")
+            if outline then
+                outline.Thickness = math.clamp(textSize * 0.2, 2.5, 3.7)
+            end
+        end
+        MenuArt.seal(button).Parent = inventoryFrame
+        Kit.animate(button, { sounds = false }) -- hover / press scale + the light sweep (sounds stay UISound's)
         return button
     end
-    local countLabel = create("TextLabel", {
-        Position = UDim2.fromOffset(ART.Count[1], ART.Count[2]),
-        Size = UDim2.fromOffset(ART.Count[3], ART.Count[4]),
-        BackgroundTransparency = 1,
+    local countLabel = MenuArt.text("TextLabel", {
+        Name = "Count",
+        Position = UDim2.fromOffset(ART.Count[1] + 3, ART.Count[2]),
+        Size = UDim2.fromOffset(ART.Count[3] - 6, ART.Count[4]),
         Text = "",
-        FontFace = FONT,
-        TextSize = 18,
-        TextColor3 = CREAM,
+        TextScaled = true,
+        TextSize = 16,
+        TextColor3 = MenuArt.WHITE,
         ZIndex = 22,
     }, inventoryFrame)
-    addStroke(countLabel, 2, BLACK).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-    local tabButtons, tabArt = {}, {}
-    for _, tabName in { "All", "Eggs", "Characters" } do
-        local r = ART.Tabs[tabName]
-        tabArt[tabName] = MenuArt.piece(inventoryFrame, "TabArt" .. tabName, "InvTabOff", r, 21)
-        local tabButton = artButton(r, 15)
-        tabButton.Text = string.upper(tabName)
-        tabButtons[tabName] = tabButton
+    create("UITextSizeConstraint", { MaxTextSize = 16, MinTextSize = 8 }, countLabel)
+    local tabButtons = {}
+    for _, tab in { { "All", PAL.pink }, { "Eggs", PAL.orange }, { "Characters", PAL.green } } do
+        tabButtons[tab[1]] = artButton("Tab" .. tab[1], ART.Tabs[tab[1]], tab[2], 13, string.upper(tab[1]))
     end
-    local closeButton = artButton(ART.Close, 20)
-    local searchBox = create("TextBox", {
+    local closeButton = artButton("Close", ART.Close, PAL.red, 20, "X", true)
+    local searchBox = MenuArt.text("TextBox", {
+        Name = "Search",
         Position = UDim2.fromOffset(ART.Search[1] + 10, ART.Search[2]),
         Size = UDim2.fromOffset(ART.Search[3] - 20, ART.Search[4]),
-        BackgroundTransparency = 1,
         PlaceholderText = "Search…",
         Text = "",
         ClearTextOnFocus = false,
-        FontFace = FONT,
-        TextSize = 15,
-        TextColor3 = Color3.new(1, 1, 1),
-        PlaceholderColor3 = Color3.fromRGB(150, 160, 185),
+        TextSize = 14,
+        TextColor3 = MenuArt.WHITE,
+        PlaceholderColor3 = Color3.fromRGB(170, 215, 255),
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 23,
     }, inventoryFrame)
-    local rarityButton = artButton(ART.Rarity, 14)
-    rarityButton.TextColor3 = CREAM
-    local mutationButton = artButton(ART.Mutation, 14)
-    mutationButton.TextColor3 = CREAM
-    local sellArt = MenuArt.piece(inventoryFrame, "SellArt", "SellRed", ART.Sell, 21)
-    sellArt.Visible = false
-    local sellModeButton = artButton(ART.Sell, 14)
+    local rarityButton = artButton("Rarity", ART.Rarity, PAL.purple, 12, "RARITY: ALL")
+    local mutationButton = artButton("Mutation", ART.Mutation, PAL.purple, 12, "MUTATION: ANY")
+    local sellModeButton = artButton("Sell", ART.Sell, PAL.lime, 12, "SELL ITEMS")
     local itemGrid = create("ScrollingFrame", {
+        Name = "Items",
         Position = UDim2.fromOffset(ART.Grid[1], ART.Grid[2]),
         Size = UDim2.fromOffset(ART.Grid[3], ART.Grid[4]),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ScrollBarThickness = 6,
-        ScrollBarImageColor3 = GOLD,
+        ScrollBarImageColor3 = MenuArt.GOLD,
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         CanvasSize = UDim2.new(),
         ZIndex = 21,
     }, inventoryFrame)
+    itemGrid:SetAttribute("NoSkin", true)
     create("UIGridLayout", {
         CellSize = UDim2.fromOffset(ART.Cell.X, ART.Cell.Y),
         CellPadding = UDim2.fromOffset(ART.CellGap.X, ART.CellGap.Y),
         SortOrder = Enum.SortOrder.LayoutOrder,
     }, itemGrid)
-    create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 4) }, itemGrid)
-    local emptyLabel = create("TextLabel", {
-        Position = UDim2.fromOffset(ART.Grid[1], ART.Grid[2]),
-        Size = UDim2.fromOffset(ART.Grid[3], ART.Grid[4]),
-        BackgroundTransparency = 1,
+    -- top: room for a mutation badge that hangs over the first row's top edge; left: centres the five columns
+    create("UIPadding", { PaddingTop = UDim.new(0, 12), PaddingLeft = UDim.new(0, 3), PaddingBottom = UDim.new(0, 6) }, itemGrid)
+    local emptyLabel = MenuArt.text("TextLabel", {
+        Name = "Empty",
+        Position = UDim2.fromOffset(ART.Grid[1] + 20, ART.Grid[2]),
+        Size = UDim2.fromOffset(ART.Grid[3] - 40, ART.Grid[4]),
         Text = "",
-        FontFace = FONT,
+        TextWrapped = true,
         TextSize = 20,
-        TextColor3 = Color3.fromRGB(200, 195, 225),
-        ZIndex = 21,
+        TextColor3 = MenuArt.WHITE,
+        ZIndex = 22,
     }, inventoryFrame)
-    addStroke(emptyLabel, 2, BLACK).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-    local characterSummary = create("TextLabel", {
+    local characterSummary = MenuArt.text("TextLabel", {
         Name = "CharacterSummary",
-        Position = UDim2.fromOffset(24, 105),
-        Size = UDim2.fromOffset(438, 26),
-        BackgroundTransparency = 1,
-        FontFace = FONT,
-        TextSize = 17,
-        TextColor3 = CREAM,
+        Position = UDim2.fromOffset(ART.Summary[1], ART.Summary[2]),
+        Size = UDim2.fromOffset(ART.Summary[3], ART.Summary[4]),
+        Text = "",
+        TextSize = 15,
+        TextColor3 = MenuArt.WHITE,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 22,
         Visible = false,
     }, inventoryFrame)
-    addStroke(characterSummary, 2, BLACK)
-    local viewPlot = artButton({ 492, 103, 142, 31 }, 17)
-    viewPlot.Name = "ViewPlot"
-    viewPlot.Text = "VIEW PLOT"
+    local viewPlot = artButton("ViewPlot", ART.ViewPlot, PAL.gold, 13, "VIEW PLOT")
     viewPlot.Visible = false
     -- tab + rarity + mutation ("Mutated" = any) + case-insensitive plain-text search on "<mutation> <name>"
     local function matchesFilters(tool)
@@ -1925,146 +2143,331 @@ do
         end
         return true
     end
-    -- tab highlight + rarity / mutation / SELL chip labels and colours
+    -- chosen tab (gold outline) + rarity / mutation / SELL button words and colours
     local function refreshControls()
         for tabName, tabButton in tabButtons do
-            MenuArt.setPiece(tabArt[tabName], tabName == activeTab and "InvTabOn" or "InvTabOff")
-            tabButton.TextColor3 = Color3.new(1, 1, 1)
+            MenuArt.pick(tabButton, tabName == activeTab)
         end
         rarityButton.Text = "RARITY: " .. string.upper(RARITY_FILTERS[rarityIndex])
         mutationButton.Text = MUTATION_FILTERS[mutationIndex] == "Any" and "MUTATION: ANY"
             or string.upper(MUTATION_FILTERS[mutationIndex])
-        mutationButton.TextColor3 = INVENTORY_MUTATION_COLORS[MUTATION_FILTERS[mutationIndex]] or CREAM
-        sellModeButton.Text = sellMode and "SELLING: TAP x2" or "SELL ITEMS"
-        sellArt.Visible = sellMode -- the red piece over the art's green SELL button
+        mutationButton.TextColor3 = INVENTORY_MUTATION_COLORS[MUTATION_FILTERS[mutationIndex]] or MenuArt.WHITE
+        sellModeButton.Text = sellMode and "SELL: TAP x2" or "SELL ITEMS"
+        MenuArt.paint(sellModeButton, sellMode and PAL.red or PAL.lime) -- red while selling
+    end
+    -- ── Mutation look on backpack cards (2026-11-09) ──
+    -- A mutated item's card gets its mutation colour shading over it, a bright shine band sweeping across, and a
+    -- coloured border with a glint running round it. Rainbow cycles every colour. One Heartbeat loop drives every
+    -- card; cards that leave the screen drop out on their own. Reduced motion keeps the colours, stops the movement.
+    local MUTATION_SHADES = {
+        -- { light, dark, shine }
+        Silver = { Color3.fromRGB(235, 242, 255), Color3.fromRGB(120, 135, 160), Color3.fromRGB(255, 255, 255) },
+        Gold = { Color3.fromRGB(255, 226, 90), Color3.fromRGB(210, 120, 0), Color3.fromRGB(255, 250, 200) },
+        Diamond = { Color3.fromRGB(150, 240, 255), Color3.fromRGB(30, 130, 255), Color3.fromRGB(235, 255, 255) },
+        Rainbow = { Color3.fromRGB(255, 120, 220), Color3.fromRGB(120, 80, 255), Color3.fromRGB(255, 255, 255) },
+        Molten = { Color3.fromRGB(255, 150, 40), Color3.fromRGB(150, 20, 0), Color3.fromRGB(255, 230, 120) },
+    }
+    local mutationCards = setmetatable({}, { __mode = "k" }) -- [card Frame] = { base, sweep, bars, rainbow, seed }
+    local mutationLoop
+    local function startMutationLoop()
+        if mutationLoop then
+            return
+        end
+        mutationLoop = RunService.Heartbeat:Connect(function()
+            local calm = game:GetService("GuiService").ReducedMotionEnabled
+            local t = os.clock()
+            for card, info in mutationCards do
+                if not card.Parent then
+                    mutationCards[card] = nil
+                elseif not calm then
+                    local k = t + info.seed
+                    -- shine band: sweeps across in 1.1 s, then rests ~1.3 s
+                    local phase = (k % 2.4) / 1.1
+                    info.sweep.Offset = Vector2.new(phase <= 1 and (phase * 2.4 - 1.2) or 1.5, 0)
+                    -- border glint runs round the card
+                    local g = (k * 0.8) % 1
+                    for i, bar in info.bars do
+                        bar.Offset = Vector2.new(((g * 4 - (i - 1)) % 4) * 1 - 1, 0)
+                    end
+                    if info.rainbow then
+                        info.base.Rotation = (k * 60) % 360
+                    else
+                        -- the shading breathes a little
+                        local breath = (math.sin(k * 2.2) + 1) / 2
+                        info.base.Transparency = NumberSequence.new({
+                            NumberSequenceKeypoint.new(0, 0.82 - breath * 0.08),
+                            NumberSequenceKeypoint.new(1, 0.42 - breath * 0.12),
+                        })
+                    end
+                end
+            end
+        end)
+    end
+    local function rainbowSequence()
+        return ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 90)),
+            ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 170, 40)),
+            ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 240, 70)),
+            ColorSequenceKeypoint.new(0.6, Color3.fromRGB(70, 230, 120)),
+            ColorSequenceKeypoint.new(0.8, Color3.fromRGB(70, 150, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 90, 255)),
+        })
+    end
+    -- builds the shading layers on a card; z = the ZIndex just under the item picture
+    local function addMutationLook(card, mutation, z)
+        local shades = MUTATION_SHADES[mutation]
+        if not shades then
+            return
+        end
+        local light, dark, shine = shades[1], shades[2], shades[3]
+        local rainbow = mutation == "Rainbow"
+        local function layer(name, zIndex)
+            local frame = create("Frame", {
+                Name = name,
+                Position = UDim2.fromOffset(3, 3),
+                Size = UDim2.new(1, -6, 1, -6),
+                BackgroundColor3 = Color3.new(1, 1, 1),
+                BorderSizePixel = 0,
+                ZIndex = zIndex,
+            }, card)
+            create("UICorner", { CornerRadius = UDim.new(0, 6) }, frame)
+            return frame
+        end
+        -- 1. the mutation colour shading over the whole card (stronger at the bottom)
+        local base = create("UIGradient", {
+            Rotation = rainbow and 0 or 90,
+            Color = rainbow and rainbowSequence() or ColorSequence.new(light, dark),
+            Transparency = rainbow and NumberSequence.new(0.55) or NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.8),
+                NumberSequenceKeypoint.new(1, 0.4),
+            }),
+        }, layer("MutationShade", z))
+        -- 2. a bright band that sweeps across
+        local sweep = create("UIGradient", {
+            Rotation = 20,
+            Color = ColorSequence.new(shine),
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1),
+                NumberSequenceKeypoint.new(0.4, 1),
+                NumberSequenceKeypoint.new(0.5, 0.35),
+                NumberSequenceKeypoint.new(0.6, 1),
+                NumberSequenceKeypoint.new(1, 1),
+            }),
+            Offset = Vector2.new(-1.2, 0),
+        }, layer("MutationSweep", z))
+        -- 3. a coloured border (solid bars, so it always draws) with a glint running round it
+        local bars = {}
+        for i, spec in {
+            { UDim2.fromScale(0, 0), UDim2.new(1, 0, 0, 3), 0 },
+            { UDim2.new(1, -3, 0, 0), UDim2.new(0, 3, 1, 0), 90 },
+            { UDim2.new(0, 0, 1, -3), UDim2.new(1, 0, 0, 3), 180 },
+            { UDim2.fromScale(0, 0), UDim2.new(0, 3, 1, 0), 270 },
+        } do
+            local bar = create("Frame", {
+                Name = "MutationEdge",
+                Position = spec[1],
+                Size = spec[2],
+                BackgroundColor3 = Color3.new(1, 1, 1),
+                BorderSizePixel = 0,
+                ZIndex = 25,
+            }, card)
+            bars[i] = create("UIGradient", {
+                Rotation = spec[3],
+                Color = rainbow and rainbowSequence() or ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, light),
+                    ColorSequenceKeypoint.new(0.45, light),
+                    ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+                    ColorSequenceKeypoint.new(0.55, light),
+                    ColorSequenceKeypoint.new(1, light),
+                }),
+            }, bar)
+        end
+        mutationCards[card] = { base = base, sweep = sweep, bars = bars, rainbow = rainbow, seed = math.random() * 3 }
+        startMutationLoop()
     end
     local render
-    -- One inventory cell: rarity strip, icon, name, mutation tag + animated edge, held highlight, SELL-mode price
-    -- and the input handlers (drag / tap to hold, or tap twice within 3 s to sell in SELL mode).
+    -- cells on screen: [tool] = { stroke, color, thickness, transparency } (the stroke's look when not held), and the
+    -- tools in the order they were drawn, so equipping only re-highlights instead of rebuilding (2026-11-09)
+    local cellInfo = {}
+    local drawnItems = {}
+    local function refreshHeld()
+        local held = getEquippedTool()
+        for tool, info in cellInfo do
+            info.ring.Visible = tool == held
+        end
+    end
+    -- One inventory cell: a card in its rarity colour (black outline, lip, studs) with the icon, the name under it,
+    -- the mutation badge hanging over the top-right edge, the hotbar number top-left, a thick gold ring when held,
+    -- the SELL-mode price, and the input handlers (drag / tap to hold, or tap twice within 3 s to sell in SELL mode).
+    -- The cell is built unparented and sealed (NoSkin) so SharpUI leaves its outlines alone; the grid sizes the cell,
+    -- the card inside it is centre anchored and scales a little on hover / press.
     local function buildCell(index, tool)
         local name, rarity = describeTool(tool)
         local rarityColor = RARITY_COLORS[rarity] or Color3.fromRGB(150, 140, 160)
         local mutation = tool:GetAttribute("Mutation")
-        local cell = create("Frame", { LayoutOrder = index, BackgroundTransparency = 1, ZIndex = 22 }, itemGrid)
-        MenuArt.piece(cell, "Art", "Cell", { 0, 0, ART.Cell.X, ART.Cell.Y }, 22, 10)
-        -- the art has no outline of its own around a cell's edge: the stroke only shows for mutated / held items
-        local cellStroke = addStroke(cell, 2.5, BLACK)
-        cellStroke.Transparency = 1
-        create("Frame", {
-            Position = UDim2.fromOffset(9, ART.Cell.Y - 10),
-            Size = UDim2.new(1, -18, 0, 3),
-            BackgroundColor3 = rarityColor,
+        local cell = create("Frame", { LayoutOrder = index, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 22 })
+        local card = create("Frame", {
+            Name = "Card",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(1, -6, 1, -6), -- 3 px each side for the outline
+            BackgroundColor3 = rarityColor:Lerp(BLACK, 0.55), -- the lip
             BorderSizePixel = 0,
-            ZIndex = 24,
+            ZIndex = 22,
         }, cell)
-        local iconFrame = create("Frame", {
-            Position = UDim2.fromOffset(6, 5),
-            Size = UDim2.new(1, -12, 0, 56),
-            BackgroundTransparency = 1,
-            ZIndex = 23,
-        }, cell)
-        buildPreview(tool, iconFrame)
-        local nameLabel = create("TextLabel", {
-            Position = UDim2.fromOffset(8, 64),
-            Size = UDim2.new(1, -16, 0, 17),
-            BackgroundTransparency = 1,
-            Text = string.upper(name),
-            FontFace = FONT,
-            TextScaled = true,
-            TextColor3 = Color3.new(1, 1, 1),
-            ZIndex = 24,
-        }, cell)
-        create("UITextSizeConstraint", { MaxTextSize = 12 }, nameLabel)
-        addStroke(nameLabel, 1.5, BLACK)
+        H.round(card, 12)
+        H.ink(card, 3)
+        local cardScale = create("UIScale", { Name = "Pop" }, card)
+        local face = create("Frame", {
+            Name = "Face",
+            Size = UDim2.new(1, 0, 1, -4),
+            BorderSizePixel = 0,
+            ZIndex = 22,
+        }, card)
+        H.round(face, 11)
+        H.grad(face, rarityColor, rarityColor:Lerp(BLACK, 0.18))
+        H.studs(face, Vector2.new(48, 48), 0.8, 11, 22)
         if mutation then
-            local mutationTag = create("TextLabel", {
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.new(0.5, 0, 0, 0),
-                Size = UDim2.fromOffset(0, 14),
-                AutomaticSize = Enum.AutomaticSize.X,
-                BackgroundColor3 = INVENTORY_MUTATION_COLORS[mutation] or Color3.new(1, 1, 1),
-                Text = " " .. string.upper(mutation) .. " ",
-                FontFace = FONT,
-                TextSize = 11,
-                TextColor3 = BLACK,
-                ZIndex = 26,
-            }, cell)
-            create(
-                "UIStroke",
-                { Color = BLACK, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border },
-                mutationTag
-            )
-            if mutation == "Rainbow" then
-                create("UIGradient", { Color = RAINBOW_GRADIENT }, mutationTag)
+            -- the moving mutation shading and edge glint cover the face, not the lip
+            local look = create("Frame", {
+                Name = "MutationLook",
+                Size = UDim2.new(1, 0, 1, -4),
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                ZIndex = 23,
+            }, card)
+            addMutationLook(look, mutation, 23)
+        end
+        local iconFrame = create("Frame", {
+            Name = "Icon",
+            Position = UDim2.fromOffset(6, 5),
+            Size = UDim2.new(1, -12, 0, 50),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 23,
+        }, card)
+        local nameLabel = MenuArt.text("TextLabel", {
+            Name = "ItemName",
+            Position = UDim2.fromOffset(6, 60),
+            Size = UDim2.new(1, -12, 0, 20),
+            Text = string.upper(name),
+            TextScaled = true,
+            TextSize = 12,
+            TextColor3 = MenuArt.WHITE,
+            ZIndex = 24,
+        }, card)
+        create("UITextSizeConstraint", { MaxTextSize = 12, MinTextSize = 7 }, nameLabel)
+        if mutation then
+            -- the game's one mutation tag; it hangs over the top edge on the right, clear of the name below and
+            -- the hotbar number on the left
+            local badge = MutationStyle.Badge(card, mutation, { size = 10, z = 26, font = FONT })
+            badge.AnchorPoint = Vector2.new(1, 0.5)
+            badge.Position = UDim2.new(1, -2, 0, 1)
+            local badgePadding = badge:FindFirstChildOfClass("UIPadding")
+            if badgePadding then
+                badgePadding.PaddingLeft = UDim.new(0, 5)
+                badgePadding.PaddingRight = UDim.new(0, 5)
             end
-            cellStroke.Color = Color3.new(1, 1, 1)
-            cellStroke.Thickness = 3
-            cellStroke.Transparency = 0
-            local edgeGradient = create("UIGradient", {
-                Color = mutation == "Rainbow" and RAINBOW_GRADIENT
-                    or ColorSequence.new({
-                        ColorSequenceKeypoint.new(0, INVENTORY_MUTATION_COLORS[mutation] or Color3.new(1, 1, 1)),
-                        ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
-                        ColorSequenceKeypoint.new(1, INVENTORY_MUTATION_COLORS[mutation] or Color3.new(1, 1, 1)),
-                    }),
-            }, cellStroke)
-            task.spawn(function()
-                local startTime = os.clock()
-                while cell.Parent do
-                    edgeGradient.Rotation = ((os.clock() - startTime) * 120) % 360
-                    task.wait(0.03)
-                end
-            end)
         end
-        if getEquippedTool() == tool then
-            cellStroke.Color = GOLD
-            cellStroke.Thickness = 4
-            cellStroke.Transparency = 0
+        -- held highlight: a thick gold ring over the card's black outline
+        local heldRing = create("Frame", {
+            Name = "HeldRing",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(1, 8, 1, 8),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Visible = getEquippedTool() == tool,
+            ZIndex = 29,
+        }, card)
+        -- four solid gold bars (a UIStroke here did not always draw inside the scrolling grid)
+        for _, bar in {
+            { UDim2.fromScale(0, 0), UDim2.new(1, 0, 0, 5) },
+            { UDim2.new(0, 0, 1, -5), UDim2.new(1, 0, 0, 5) },
+            { UDim2.fromScale(0, 0), UDim2.new(0, 5, 1, 0) },
+            { UDim2.new(1, -5, 0, 0), UDim2.new(0, 5, 1, 0) },
+        } do
+            create("Frame", {
+                Position = bar[1],
+                Size = bar[2],
+                BackgroundColor3 = MenuArt.GOLD,
+                BorderSizePixel = 0,
+                ZIndex = 29,
+            }, heldRing)
         end
+        cellInfo[tool] = { ring = heldRing }
         -- hotbar slot number (top-left), like the number on the hotbar itself
         local barSlot = barSlotOf(tool)
         if barSlot then
-            local slotBadge = create("TextLabel", {
+            local slotBadge = create("Frame", {
                 Name = "HotbarSlot",
-                Position = UDim2.fromOffset(3, 2),
-                Size = UDim2.fromOffset(18, 18),
-                BackgroundColor3 = GOLD,
-                Text = tostring(barSlot),
-                FontFace = FONT,
-                TextSize = 13,
-                TextColor3 = INK,
+                Position = UDim2.fromOffset(5, 5),
+                Size = UDim2.fromOffset(20, 20),
+                BorderSizePixel = 0,
                 ZIndex = 26,
-            }, cell)
-            create("UICorner", { CornerRadius = UDim.new(0, 4) }, slotBadge)
-            addStroke(slotBadge, 1.5, BLACK)
+            }, card)
+            H.round(slotBadge, 8)
+            H.grad(slotBadge, PAL.gold[1], PAL.gold[2])
+            H.ink(slotBadge, 2.5)
+            MenuArt.text("TextLabel", {
+                Name = "Number",
+                Size = UDim2.fromScale(1, 1),
+                Text = tostring(barSlot),
+                TextSize = 13,
+                TextColor3 = MenuArt.WHITE,
+                ZIndex = 27,
+            }, slotBadge)
         end
         if sellMode then
             local quoteValue = getSellQuote(tool)
-            local priceLabel = create("TextLabel", {
+            local armed = armedItem == tool
+            local pricePal = armed and PAL.red or PAL.lime
+            local pricePill = create("Frame", {
+                Name = "Price",
                 AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromScale(0.5, 0.4),
-                Size = UDim2.fromOffset(80, 22),
-                BackgroundColor3 = armedItem == tool and Color3.fromRGB(226, 50, 44) or Color3.fromRGB(92, 192, 70),
-                Text = (armedItem == tool and "CONFIRM " or "") .. (type(quoteValue) == "number" and formatMoney(
+                Position = UDim2.new(0.5, 0, 0, 30),
+                Size = UDim2.fromOffset(96, 24),
+                BorderSizePixel = 0,
+                ZIndex = 27,
+            }, card)
+            H.round(pricePill, 10)
+            H.grad(pricePill, pricePal[1], pricePal[2])
+            H.ink(pricePill, 3)
+            local priceLabel = MenuArt.text("TextLabel", {
+                Name = "Amount",
+                Position = UDim2.fromOffset(4, 0),
+                Size = UDim2.new(1, -8, 1, 0),
+                Text = (armed and "CONFIRM " or "") .. (type(quoteValue) == "number" and formatMoney(
                     quoteValue
                 ) or (quoteValue == false and "CAN'T" or "…")),
-                FontFace = FONT,
+                TextScaled = true,
                 TextSize = 13,
-                TextColor3 = Color3.new(1, 1, 1),
+                TextColor3 = MenuArt.WHITE,
                 ZIndex = 27,
-            }, cell)
-            addStroke(priceLabel, 2, BLACK)
+            }, pricePill)
+            create("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 7 }, priceLabel)
         end
         local cellButton = create(
             "TextButton",
             { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 28 },
             cell
         )
+        MenuArt.seal(cell)
+        iconFrame:SetAttribute("NoSkin", nil) -- the item picture keeps the look it has everywhere else
+        cell.Parent = itemGrid
+        buildPreview(tool, iconFrame)
+        -- hover / press feedback: the card grows and dips from its centre
         cellButton.MouseEnter:Connect(function()
-            tween(cell, 0.08, { Rotation = -3 })
+            tween(cardScale, 0.12, { Scale = 1.05 })
         end)
         cellButton.MouseLeave:Connect(function()
-            tween(cell, 0.08, { Rotation = 0 })
+            tween(cardScale, 0.12, { Scale = 1 })
+        end)
+        cellButton.MouseButton1Down:Connect(function()
+            tween(cardScale, 0.08, { Scale = 0.95 })
+        end)
+        cellButton.MouseButton1Up:Connect(function()
+            tween(cardScale, 0.12, { Scale = 1 })
         end)
         cellButton.InputBegan:Connect(function(input)
             if sellMode then
@@ -2080,13 +2483,19 @@ do
                 if not tool.Parent then
                     return
                 end
-                if not barSlotOf(tool) then
+                -- the old custom hotbar took the item into slot 1 (which also moved it to the top of the list);
+                -- with Roblox's backpack the item stays where it is and only gets a gold outline
+                if not USE_DEFAULT_BACKPACK and not barSlotOf(tool) then
                     placeInSlot(tool, 1)
                 end
                 toggleEquip(tool)
                 task.delay(0.1, function()
                     if inventoryFrame.Visible then
-                        render()
+                        if USE_DEFAULT_BACKPACK then
+                            refreshHeld()
+                        else
+                            render()
+                        end
                     end
                 end)
             end)
@@ -2158,9 +2567,11 @@ do
             characterSummary.Text = ("Backpack: %d   |   Placed on Plot: %s"):format(carried, plotCount)
         end
         viewPlot.Visible = isCharacters and capacity ~= nil and capacity.hasPlot
-        local inset = isCharacters and 25 or 0
+        local inset = isCharacters and 36 or 0 -- the Characters tab has a summary row above the grid
         itemGrid.Position = UDim2.fromOffset(ART.Grid[1], ART.Grid[2] + inset)
         itemGrid.Size = UDim2.fromOffset(ART.Grid[3], ART.Grid[4] - inset)
+        MenuArt.well.Position = UDim2.fromOffset(ART.Grid[1] - 1, ART.Grid[2] - 1 + inset)
+        MenuArt.well.Size = UDim2.fromOffset(ART.Grid[3] + 2, ART.Grid[4] + 2 - inset)
         emptyLabel.Visible = #items == 0
         emptyLabel.Text = isCharacters and (carried > 0 and "No characters match these filters"
                 or not characterLoaded and "Loading characters…"
@@ -2168,6 +2579,8 @@ do
                 or "No characters yet — hatch an egg!")
             or activeTab == "Eggs" and "No eggs — grab some from the river!"
             or "Nothing here yet"
+        table.clear(cellInfo)
+        drawnItems = items
         for i, tool in items do
             buildCell(i, tool)
         end
@@ -2268,13 +2681,111 @@ do
         end
     end)
     inventoryPanel.setOpen = setInventoryOpen
+    -- Top bar backpack button (2026-11-08): a button next to Roblox's own top bar (like other games), with an
+    -- "Inventory · Backquote" tooltip. Roblox's top bar only offers its backpack inside the menu on PC, and games
+    -- can't open Roblox's backpack from a script, so this opens the game's inventory panel.
+    -- 2026-11-10: Folk Stud look: an orange studded button with a lip and a black outline (gold while the panel
+    -- is open), centre anchored so the kit's hover / press scale keeps it in place; the tooltip is a flat blue card.
+    if USE_DEFAULT_BACKPACK then
+        local GuiService = game:GetService("GuiService")
+        local topGui = create("ScreenGui", {
+            Name = "TopbarBackpack",
+            ResetOnSpawn = false,
+            IgnoreGuiInset = true,
+            DisplayOrder = 50,
+            ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        }, playerGui)
+        local button = create("ImageButton", {
+            Name = "Backpack",
+            AutoButtonColor = false,
+            BorderSizePixel = 0,
+            Size = UDim2.fromOffset(40, 40), -- 48 with its outline
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Image = "",
+        }, topGui)
+        H.dress(button, PAL.orange, 12, { lip = 4, studs = 0.7 })
+        local icon = create("ImageLabel", {
+            Name = "Icon",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, -2),
+            Size = UDim2.fromOffset(28, 28),
+            Image = "rbxasset://textures/ui/TopBar/inventoryOff.png",
+            ScaleType = Enum.ScaleType.Fit,
+            ZIndex = 3,
+        }, button)
+        -- tooltip under the button
+        local tip = create("Frame", {
+            Name = "Tooltip",
+            BorderSizePixel = 0,
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 1, 14),
+            Size = UDim2.fromOffset(128, 72),
+            Visible = false,
+            ZIndex = 5,
+        }, button)
+        H.round(tip, 12)
+        H.grad(tip, PAL.sky[1], PAL.sky[2])
+        H.ink(tip, 3)
+        MenuArt.text("TextLabel", {
+            Name = "Title",
+            Position = UDim2.fromOffset(8, 7),
+            Size = UDim2.new(1, -16, 0, 24),
+            Text = "INVENTORY",
+            TextSize = 15,
+            TextColor3 = MenuArt.WHITE,
+            ZIndex = 6,
+        }, tip)
+        local key = create("Frame", {
+            Name = "Key",
+            Position = UDim2.fromOffset(12, 37),
+            Size = UDim2.new(1, -24, 0, 24),
+            BorderSizePixel = 0,
+            ZIndex = 6,
+        }, tip)
+        H.round(key, 8)
+        H.grad(key, PAL.gold[1], PAL.gold[2])
+        H.ink(key, 2.5)
+        MenuArt.text("TextLabel", {
+            Name = "Word",
+            Size = UDim2.fromScale(1, 1),
+            Text = "BACKQUOTE",
+            TextSize = 12,
+            TextColor3 = MenuArt.WHITE,
+            ZIndex = 7,
+        }, key)
+        local function place()
+            local inset = GuiService.TopbarInset
+            button.Position = UDim2.fromOffset(inset.Min.X + 32, inset.Min.Y + inset.Height / 2)
+        end
+        place()
+        GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(place)
+        local function refresh()
+            local open = inventoryFrame.Visible
+            icon.Image = open and "rbxasset://textures/ui/TopBar/inventoryOn.png" or "rbxasset://textures/ui/TopBar/inventoryOff.png"
+            MenuArt.pick(button, open)
+        end
+        inventoryFrame:GetPropertyChangedSignal("Visible"):Connect(refresh)
+        button.MouseEnter:Connect(function()
+            tip.Visible = true
+        end)
+        button.MouseLeave:Connect(function()
+            tip.Visible = false
+        end)
+        button.Activated:Connect(function()
+            tip.Visible = false
+            setInventoryOpen(not inventoryFrame.Visible)
+        end)
+        refresh()
+        Kit.animate(topGui, { sounds = false })
+    end
     inventoryPanel.render = render
     inventoryPanel.frame = inventoryFrame -- drop target for hotbar slots (section 4)
     closeButton.Activated:Connect(function()
         setInventoryOpen(false)
     end)
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if not gameProcessed and input.KeyCode == Enum.KeyCode.Backquote then
+        if not gameProcessed and not USE_DEFAULT_BACKPACK and input.KeyCode == Enum.KeyCode.Backquote then
             setInventoryOpen(not inventoryFrame.Visible)
         end
     end)
@@ -2287,7 +2798,23 @@ do
         refreshPending = true
         task.delay(0.15, function()
             refreshPending = false
-            if inventoryFrame.Visible then
+            if not inventoryFrame.Visible then
+                return
+            end
+            local same = true
+            local index = 0
+            for _, tool in allTools() do
+                if matchesFilters(tool) then
+                    index += 1
+                    if drawnItems[index] ~= tool then
+                        same = false
+                        break
+                    end
+                end
+            end
+            if same and index == #drawnItems then
+                refreshHeld()
+            else
                 render()
             end
         end)

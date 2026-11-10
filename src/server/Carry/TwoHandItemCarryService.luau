@@ -299,7 +299,7 @@ function Service.Attach(player, tool)
             stroke.Parent = label
             return label, stroke
         end
-        addLabel(
+        local nameLabel = addLabel(
             (eggType or tool.Name):gsub("%s*[Ee]gg$", "") .. " Egg",
             0,
             28,
@@ -312,8 +312,16 @@ function Service.Attach(player, tool)
         local glowLabel, glowStroke = addLabel(string.upper(rarity), 28, 26, 20, rarityColor, rarityColor, 6)
         glowLabel.TextTransparency = 0.4
         glowStroke.Transparency = 0.55
-        local _rarityLabel, _rarityStroke =
-            addLabel(string.upper(rarity), 28, 26, 20, Color3.new(1, 1, 1), rarityColor, 2.6)
+        local rarityLabel = addLabel(string.upper(rarity), 28, 26, 22, rarityColor, Color3.fromRGB(11, 10, 14), 2.6)
+        -- round 2: the client flows the rarity (and mutation) colours over the letters (ReplicatedStorage.RarityText)
+        local CollectionService = game:GetService("CollectionService")
+        rarityLabel:SetAttribute("RarityTheme", rarity)
+        rarityLabel:SetAttribute("RaritySparks", true)
+        CollectionService:AddTag(rarityLabel, "RarityText")
+        if tool:GetAttribute("Mutation") then
+            nameLabel:SetAttribute("RarityTheme", tool:GetAttribute("Mutation"))
+            CollectionService:AddTag(nameLabel, "RarityText")
+        end
         game:GetService("TweenService")
             :Create(
                 glowStroke,

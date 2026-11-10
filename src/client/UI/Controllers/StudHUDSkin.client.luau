@@ -71,7 +71,11 @@ local function watchHotbar(hotbar)
 		if c:IsA("Frame") then task.spawn(skinSlot, c) end
 	end)
 end
+-- 2026-11-08: the hotbar and the Backpack window use Roblox's own dark backpack look now (GameHUD), so they are no
+-- longer skinned here. Set SKIN_BACKPACK = true to bring the white studded slots and window back.
+local SKIN_BACKPACK = false
 task.spawn(function()
+	if not SKIN_BACKPACK then return end
 	local hud = playerGui:WaitForChild("GameHUD")
 	local hotbar = hud:WaitForChild("Hotbar", 30)
 	if hotbar then watchHotbar(hotbar) end
@@ -249,6 +253,7 @@ local function skinInventory(inv)
 	local sh = H.rect(chrome, "Shadow", 0, 8, INV_W, INV_H, 14, 19, BLACK); sh.BackgroundTransparency = 0.55
 	local sheet = H.rect(chrome, "Sheet", 0, 0, INV_W, INV_H, 14, 20, WHITE)
 	H.ink(sheet, 5)
+	H.neon(sheet, M.COLOR.azure)
 	H.studs(sheet, Vector2.new(50, 46), 0.8, 14, 20)
 	local well = H.rect(chrome, "Well", 14, 126, INV_W - 28, 268, 10, 20, H.hex("EDE8FA"))
 	H.ink(well, 3)
@@ -353,7 +358,7 @@ local function skinInventory(inv)
 end
 task.spawn(function()
 	local hud = playerGui:WaitForChild("GameHUD")
-	local inv = hud:WaitForChild("Inventory", 60)
+	local inv = SKIN_BACKPACK and hud:WaitForChild("Inventory", 60)
 	if inv then skinInventory(inv) end
 end)
 
@@ -544,6 +549,7 @@ for _, g in ipairs(playerGui:GetChildren()) do watchEventGui(g) end
 playerGui.ChildAdded:Connect(watchEventGui)
 
 ---------------------------------------------------------------- backpack button
+local HIDE_BAG_BUTTON = true -- false brings back the lilac Bag button (GameHUD.USE_DEFAULT_BACKPACK = false too)
 local function skinBag(bag)
 	if bag:GetAttribute("Stud") then return end
 	bag:SetAttribute("Stud", true)
@@ -579,4 +585,12 @@ task.spawn(function()
 	end
 	task.wait(0.2)
 	skinBag(bag)
+	-- Roblox's default backpack (top bar icon + hotbar) replaces this button since 2026-11-08
+	if HIDE_BAG_BUTTON then
+		local slot = bag.Parent and bag.Parent.Name == "HotbarBagSlot" and bag.Parent or bag
+		slot.Visible = false
+		slot:GetPropertyChangedSignal("Visible"):Connect(function()
+			slot.Visible = false
+		end)
+	end
 end)

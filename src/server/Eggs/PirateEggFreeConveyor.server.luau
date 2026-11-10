@@ -47,9 +47,9 @@ local random = Random.new()
 local scheduler = require(script.Parent.RiverEggSpawnScheduler).new(templates, random)
 local serverStart = os.clock()
 -- Owner panel only: Halloween mutation eggs (Silver/Gold/Diamond/Rainbow) from UpdatePack_Mutations_Halloween
-local MUTATION_TIERS = { Silver = true, Gold = true, Diamond = true, Rainbow = true }
+local MUTATION_TIERS = { Silver = true, Gold = true, Diamond = true, Rainbow = true, Molten = true }
 local ownerQueue -- { { template, tier }, ... }; each entry takes the next normal river slot
--- Builds a river-ready mutated copy of `template` from the Halloween update pack, or nil if the pack lacks it.
+-- Builds a river-ready mutated copy of `template` from the update pack, or a tinted copy when the pack lacks it.
 local function mutatedTemplate(template, tier)
     local isHalloween = workspace:GetAttribute("HalloweenSeason") == true
     local packName = isHalloween and "UpdatePack_Mutations_Halloween" or "UpdatePack_Mutations"
@@ -61,10 +61,35 @@ local function mutatedTemplate(template, tier)
             or eggs:FindFirstChild(template.Name .. "_" .. tier .. "_Egg")
             or eggs:FindFirstChild(template.Name .. "_Halloween_" .. tier .. "_Egg")
         )
-    if not sourceEgg then
-        return nil
+    local mutatedEgg
+    if sourceEgg then
+        mutatedEgg = sourceEgg:Clone()
+    else
+        -- 2026-11-08: no pack egg for this tier (Hunter / Alien, and every Molten egg): tint the river egg itself in the
+        -- mutation colour, the same fallback Mutations.Model uses for characters, so the mutation is never lost.
+        local Mutations = require(game.ServerScriptService.Mutations)
+        local tint = Mutations.Tint and Mutations.Tint[tier]
+        if not tint then
+            return nil
+        end
+        mutatedEgg = template:Clone()
+        for _, descendant in mutatedEgg:GetDescendants() do
+            if descendant:IsA("SurfaceAppearance") then
+                pcall(function()
+                    descendant.Color = tint
+                end)
+            elseif descendant:IsA("BasePart") then
+                descendant.Color = descendant.Color:Lerp(tint, 0.7)
+                if (tier == "Gold" or tier == "Silver") and descendant.Material ~= Enum.Material.Neon then
+                    descendant.Material = Enum.Material.Metal
+                    descendant.Reflectance = 0.15
+                end
+            end
+        end
+        if tier == "Rainbow" and Mutations.RainbowTag then
+            mutatedEgg:AddTag(Mutations.RainbowTag)
+        end
     end
-    local mutatedEgg = sourceEgg:Clone()
     mutatedEgg.Name = template.Name
     for name, value in template:GetAttributes() do
         mutatedEgg:SetAttribute(name, value)
@@ -273,10 +298,11 @@ ownerRequest.Event:Connect(function(owner, id, mutation)
     if template and (template:GetAttribute("ReleaseEnabled") ~= false or MUTATION_TIERS[mutation]) then
         local tier = MUTATION_TIERS[mutation] and mutation or nil
         local mutated = tier and mutatedTemplate(template, tier)
+        -- every admin egg (plain or mutated) waits for the next river slot, so it never spawns inside another egg
         if mutated then
-            table.insert(ownerQueue, { template = mutated, tier = tier }) -- takes the next normal river slot
+            table.insert(ownerQueue, { template = mutated, tier = tier })
         else
-            spawnEgg(template)
+            table.insert(ownerQueue, { template = template })
         end
     end
 end)
@@ -292,7 +318,8 @@ while true do
             -- natural mutation eggs: Silver 1/100, Gold 1/500, Diamond 1/2000, Rainbow 1/5000 (night river luck multiplies the odds)
             local ok, tier = pcall(function()
                 return require(game.ServerScriptService.Mutations).Roll(
-                    workspace:GetAttribute("NightRiverLuckMultiplier") or 1
+                    (workspace:GetAttribute("NightRiverLuckMultiplier") or 1)
+                        * (workspace:GetAttribute("BoostMutationMultiplier") or 1)
                 )
             end)
             tier = ok and tier or nil
@@ -315,6 +342,8 @@ while true do
         local TIDE_SPAWN_INTERVAL = 1
         local interval = workspace:GetAttribute("HighTideActive") and TIDE_SPAWN_INTERVAL
             or math.clamp(tonumber(conveyor:GetAttribute("SpawnInterval")) or 4, 1.5, 30)
+                / (workspace:GetAttribute("BoostRiverSpeedMultiplier") or 1)
+        interval = math.max(interval, 0.35) -- a big River Speed boost still leaves room between eggs
         nextSpawn = nextSpawn + interval
         if nextSpawn <= os.clock() then
             nextSpawn = os.clock() + interval

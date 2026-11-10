@@ -87,7 +87,8 @@ function Scheduler.new(templates, random)
             then
                 local weight = (Catalog.SpawnChances[rarity] or 0) * boost
                 if rarity ~= "Common" then
-                    weight *= workspace:GetAttribute("NightRiverLuckMultiplier") or 1
+                    weight *= (workspace:GetAttribute("NightRiverLuckMultiplier") or 1)
+                        * (workspace:GetAttribute("BoostLuckMultiplier") or 1)
                 end
                 if weight > 0 then
                     totalWeight += weight

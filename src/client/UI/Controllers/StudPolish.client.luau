@@ -381,6 +381,7 @@ end
 ------------------------------------------------------------------ wiring
 
 local function handle(d)
+	if d.Name == "RarityFlow" then return end -- RarityText drives these colours every frame
 	if (d:IsA("GuiObject") or d:IsA("UIStroke") or d:IsA("UIGradient")) and not skipped(d) then
 		handleColour(d)
 	end

@@ -2,6 +2,7 @@
 Which egg hatches which characters. Built from docs/egg_drop_rates_new.csv; CharacterCatalog and CharacterEconomy
 read every egg and character from here, so a new character only needs a row below + a model in
 ServerStorage.BrainrotModels (named Id). Hatch times stay in EggHatchTiming, river chances in CharacterCatalog.
+Prices follow the HATCH ANIME Google Sheet (2026-11-08 rebalance: payback climbs from 1 min to ~5 h).
 
 Egg:       Id (= AuxEggTemplates name, tool attribute EggType), Rarity, Price (cash), Limited?, Luck, Characters
            Luck = multiplier on the chance of a Power roll above Ordinary (CharacterEconomy.Bands)
@@ -48,7 +49,7 @@ return {
         {
             Id = "Shinobi",
             Rarity = "Common",
-            Price = 300,
+            Price = 750,
             Luck = 1,
             Characters = {
                 {
@@ -80,7 +81,7 @@ return {
         {
             Id = "Power",
             Rarity = "Common",
-            Price = 1200,
+            Price = 2500,
             Luck = 1,
             Characters = {
                 {
@@ -112,7 +113,7 @@ return {
         {
             Id = "Hero",
             Rarity = "Uncommon",
-            Price = 6000,
+            Price = 12000,
             Luck = 0.85,
             Characters = {
                 {
@@ -144,7 +145,7 @@ return {
         {
             Id = "Slayer",
             Rarity = "Uncommon",
-            Price = 15000,
+            Price = 35000,
             Luck = 0.85,
             Characters = {
                 {
@@ -176,7 +177,7 @@ return {
         {
             Id = "Curse",
             Rarity = "Uncommon",
-            Price = 50000,
+            Price = 100000,
             Luck = 0.85,
             Characters = {
                 {
@@ -240,7 +241,7 @@ return {
         {
             Id = "Titan",
             Rarity = "Rare",
-            Price = 750000,
+            Price = 1000000,
             Luck = 0.65,
             Characters = {
                 {
@@ -272,7 +273,7 @@ return {
         {
             Id = "Magic",
             Rarity = "Rare",
-            Price = 2000000,
+            Price = 3000000,
             Luck = 0.65,
             Characters = {
                 {
@@ -304,7 +305,7 @@ return {
         {
             Id = "Academy",
             Rarity = "Epic",
-            Price = 12000000,
+            Price = 14000000,
             Luck = 0.45,
             Characters = {
                 {
@@ -336,7 +337,7 @@ return {
         {
             Id = "Devil",
             Rarity = "Epic",
-            Price = 35000000,
+            Price = 50000000,
             Luck = 0.45,
             Characters = {
                 {
@@ -368,7 +369,7 @@ return {
         {
             Id = "Guild",
             Rarity = "Epic",
-            Price = 100000000,
+            Price = 175000000,
             Luck = 0.45,
             Characters = {
                 {
@@ -400,7 +401,7 @@ return {
         {
             Id = "Sports",
             Rarity = "Legendary",
-            Price = 600000000,
+            Price = 700000000,
             Luck = 0.25,
             Characters = {
                 {
@@ -432,7 +433,7 @@ return {
         {
             Id = "Mecha",
             Rarity = "Legendary",
-            Price = 1500000000,
+            Price = 2500000000,
             Luck = 0.25,
             Characters = {
                 {
@@ -464,7 +465,7 @@ return {
         {
             Id = "God",
             Rarity = "Legendary",
-            Price = 5000000000,
+            Price = 9000000000,
             Luck = 0.25,
             Characters = {
                 {

@@ -1,17 +1,22 @@
---[[ ReplicatedStorage.StolenEggBanner  (ModuleScript, client)
-Compact stolen-egg banner in the game's cream / brown / vermilion style.
-Same API as before (EggStealClient drives it): Start(), Show(basePosition), Resolve("Secured"|"Dropped"|"Cancelled"), Hide().
-Show() also accepts an optional egg-info table: { name, rarity, price, eggType }.
-Cosmetic only; the server keeps all steal validation and rewards.
-
-Every Show/Resolve/Hide bumps `token`; delayed callbacks and background loops compare their captured
-token against it so a stale callback never touches a newer banner state.
+--[[ ReplicatedStorage.StolenEggBanner  (ModuleScript, client) - premium steal screen (2026-11-08)
+While the local player carries a stolen egg home:
+  * red heartbeat on every screen edge, pumping "lub-dub" (faster when you're far from home)
+  * a dark glass alert at the top: pulsing red "!" , "EGG STOLEN" + the egg's name, "RETURN TO YOUR BASE",
+    and a compass arrow with the distance home (turns green when close)
+  * every other UI is hidden (clean screen) until the egg is secured, dropped or the steal ends; Roblox's backpack bar
+    and player list hide too. Tutorial, hatch cinematic and loading screens are left alone.
+Same API as before (EggStealClient and RiverEggCarryClient drive it):
+  Start(), Show(basePosition, eggData?), Resolve("Secured" | "Dropped" | "Cancelled"), Hide()
+  eggData: { name, rarity, price, eggType }
+Cosmetic only; the server keeps all steal validation and rewards. The old version is in git history.
+Every Show / Resolve / Hide bumps `token`, so a late callback never touches a newer state.
 ]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 local GuiService = game:GetService("GuiService")
+local StarterGui = game:GetService("StarterGui")
 
 local Banner = {}
 local player = Players.LocalPlayer
@@ -25,25 +30,26 @@ local Config = {
     MuteAttribute = "SFXMuted",
     ReducedMotionAttribute = "ReducedMotion",
     DismissAfter = { Secured = 2.2, Dropped = 2, Cancelled = 1.8 },
-    PlateImage = "rbxassetid://95919146105293",
+    -- ScreenGuis that stay visible during a steal (everything else is hidden)
+    KeepVisible = { StolenEggBanner = true, FirstHatchTutorial = true, CinematicHatchUI = true, HatchLoading = true },
+    HideCoreGui = { Enum.CoreGuiType.Backpack, Enum.CoreGuiType.PlayerList, Enum.CoreGuiType.EmotesMenu },
 }
 Banner.Config = Config
 
-local _CREAM, _INK, RED, GOLD, GREEN, GREY =
-    Color3.fromRGB(255, 243, 217),
-    Color3.fromRGB(56, 34, 24),
-    Color3.fromRGB(204, 68, 54),
-    Color3.fromRGB(242, 190, 85),
-    Color3.fromRGB(85, 163, 78),
-    Color3.fromRGB(140, 128, 116)
+local RED = Color3.fromRGB(255, 42, 52)
+local DEEP_RED = Color3.fromRGB(150, 0, 12)
+local GREEN = Color3.fromRGB(60, 235, 120)
+local GREY = Color3.fromRGB(150, 150, 160)
+local GLASS = Color3.fromRGB(14, 9, 12)
 local FONT = Font.new("rbxasset://fonts/families/FredokaOne.json")
--- Only the keys are used (Resolve() validates its state against them); the visible text lives in setState().
+local FONT_BODY = Font.new("rbxasset://fonts/families/BuilderSans.json", Enum.FontWeight.Bold)
 local COPY = {
-    Stolen = { "CAPTURING EGG", "RETURN TO BASE!", RED },
+    Stolen = { "EGG STOLEN", "RETURN TO YOUR BASE", RED },
     Secured = { "SUCCESS", "EGG SECURED!", GREEN },
     Dropped = { "FAILED", "EGG DROPPED", GREY },
-    Cancelled = { "ENDED", "STEAL CANCELLED", GREY },
+    Cancelled = { "ENDED", "STEAL ENDED", GREY },
 }
+local ALERT_W, ALERT_H = 560, 84
 
 local function make(className, props, parent)
     local instance = Instance.new(className)
@@ -54,304 +60,193 @@ local function make(className, props, parent)
     return instance
 end
 local function tween(instance, duration, goal, style, direction)
-    local activeTween = TweenService:Create(
+    local t = TweenService:Create(
         instance,
         TweenInfo.new(duration, style or Enum.EasingStyle.Quart, direction or Enum.EasingDirection.Out),
         goal
     )
-    activeTween:Play()
-    return activeTween
+    t:Play()
+    return t
 end
 local function isReducedMotion()
-    return player:GetAttribute(Config.ReducedMotionAttribute) == true
+    return GuiService.ReducedMotionEnabled or player:GetAttribute(Config.ReducedMotionAttribute) == true
 end
 
-local gui, ui, currentState -- currentState: nil (hidden) | "Stolen" | "Secured" | "Dropped" | "Cancelled"
-local _PLATE = "rbxassetid://0" -- Unused; the plate image comes from Banner.Config.PlateImage.
-local PLATE_ASPECT = 987 / 265 -- source image is 987x265 px
-local BANNER_WIDTH = 470
-local BANNER_HEIGHT = BANNER_WIDTH / PLATE_ASPECT
+local gui, ui
 local function build()
-    gui = make(
-        "ScreenGui",
-        { Name = "StolenEggBanner", ResetOnSpawn = false, DisplayOrder = 20, Enabled = false },
-        player:WaitForChild("PlayerGui")
-    )
-    -- holder slides in from above the screen; pop is scaled for the "bump" on resolve.
+    gui = make("ScreenGui", {
+        Name = "StolenEggBanner",
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        DisplayOrder = 1000,
+        Enabled = false,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    }, player:WaitForChild("PlayerGui"))
+    ui = {}
+    -- heartbeat edges: four red bands that fade toward the middle of the screen
+    local edges = make("Frame", { Name = "Heartbeat", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, gui)
+    ui.edges = {}
+    for _, side in { "Top", "Bottom", "Left", "Right" } do
+        local vertical = side == "Top" or side == "Bottom"
+        local band = make("Frame", {
+            Name = side,
+            BorderSizePixel = 0,
+            BackgroundColor3 = RED,
+            AnchorPoint = Vector2.new(side == "Right" and 1 or 0, side == "Bottom" and 1 or 0),
+            Position = UDim2.fromScale(side == "Right" and 1 or 0, side == "Bottom" and 1 or 0),
+            Size = vertical and UDim2.fromScale(1, 0.2) or UDim2.fromScale(0.16, 1),
+        }, edges)
+        make("UIGradient", {
+            Rotation = ({ Top = 90, Bottom = 270, Left = 0, Right = 180 })[side],
+            Color = ColorSequence.new(DEEP_RED, RED),
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0),
+                NumberSequenceKeypoint.new(0.45, 0.65),
+                NumberSequenceKeypoint.new(1, 1),
+            }),
+        }, band)
+        ui.edges[side] = band
+    end
+    -- the alert at the top (named Frame: the tutorial looks for StolenEggBanner.Frame to stay below it)
     local holder = make("Frame", {
+        Name = "Frame",
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, -BANNER_HEIGHT - 30),
-        Size = UDim2.fromOffset(BANNER_WIDTH, BANNER_HEIGHT),
+        Position = UDim2.new(0.5, 0, 0, -ALERT_H - 40),
+        Size = UDim2.fromOffset(ALERT_W, ALERT_H),
         BackgroundTransparency = 1,
     }, gui)
-    local scale = make("UIScale", {}, holder)
-    local pop = make("Frame", {
+    ui.holder = holder
+    ui.fit = make("UIScale", { Name = "Fit" }, holder)
+    local plate = make("Frame", {
+        Name = "Plate",
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5),
         Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
+        BackgroundColor3 = GLASS,
+        BackgroundTransparency = 0.12,
     }, holder)
-    local popScale = make("UIScale", {}, pop)
-    -- soft drop shadow + painted plaque (studs, gold trim, blossoms)
-    local _shadow = make("ImageLabel", {
-        Position = UDim2.fromOffset(0, 6),
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        Image = Config.PlateImage,
-        ImageColor3 = Color3.new(0, 0, 0),
-        ImageTransparency = 0.6,
-    }, pop)
-    local plate = make(
-        "ImageLabel",
-        { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = Config.PlateImage, ZIndex = 2 },
-        pop
-    )
-    -- Transparent frame centred at (centerX, centerY) in plate scale; used for the round sockets painted on the plate.
-    local function socketFrame(centerX, centerY, width, height, zIndex)
-        return make("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromScale(centerX, centerY),
-            Size = UDim2.fromScale(width, height),
-            BackgroundTransparency = 1,
-            ZIndex = zIndex or 3,
-        }, plate)
-    end
-    -- inner panel: shine sweep + text
-    local inner = make("Frame", {
-        Position = UDim2.fromScale(0.192, 0.37),
-        Size = UDim2.fromScale(0.618, 0.505),
-        BackgroundTransparency = 1,
-        ClipsDescendants = true,
+    ui.pop = make("UIScale", { Name = "Pop" }, plate)
+    make("UICorner", { CornerRadius = UDim.new(0, 18) }, plate)
+    ui.stroke = make("UIStroke", { Color = RED, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, plate)
+    make("UIGradient", {
+        Rotation = 90,
+        Color = ColorSequence.new(Color3.fromRGB(70, 18, 24), Color3.fromRGB(255, 255, 255)),
+    }, plate)
+    -- red glow under the plate
+    ui.glow = make("Frame", {
+        Name = "Glow",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.new(1, 24, 1, 24),
+        BackgroundColor3 = RED,
+        BackgroundTransparency = 0.8,
+        ZIndex = 0,
+    }, holder)
+    make("UICorner", { CornerRadius = UDim.new(0, 28) }, ui.glow)
+    -- left: pulsing alarm "!"
+    local alarm = make("Frame", {
+        Name = "Alarm",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromOffset(46, ALERT_H / 2),
+        Size = UDim2.fromOffset(54, 54),
+        BackgroundColor3 = RED,
         ZIndex = 3,
     }, plate)
-    local sweep = make("Frame", {
+    make("UICorner", { CornerRadius = UDim.new(1, 0) }, alarm)
+    make("UIGradient", { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(255, 120, 120), Color3.fromRGB(190, 0, 20)) }, alarm)
+    ui.alarmRing = make("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 2.5, Transparency = 0.2 }, alarm)
+    ui.alarm = alarm
+    ui.alarmScale = make("UIScale", {}, alarm)
+    ui.mark = make("TextLabel", {
+        BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1),
-        BackgroundColor3 = Color3.fromRGB(255, 225, 150),
-        BorderSizePixel = 0,
-        ZIndex = 3,
-    }, inner)
-    local sweepGrad = make("UIGradient", {
-        Rotation = 18,
-        Offset = Vector2.new(-1.3, 0),
-        Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(0.43, 1),
-            NumberSequenceKeypoint.new(0.5, 0.75),
-            NumberSequenceKeypoint.new(0.57, 1),
-            NumberSequenceKeypoint.new(1, 1),
-        }),
-    }, sweep)
-    local tag = make("TextLabel", {
-        Position = UDim2.fromScale(0, 0.1),
-        Size = UDim2.fromScale(1, 0.28),
-        BackgroundTransparency = 1,
         FontFace = FONT,
-        TextScaled = true,
-        TextColor3 = GOLD,
-        Text = "",
-        ZIndex = 4,
-        RichText = true,
-    }, inner)
-    local title = make("TextLabel", {
-        Position = UDim2.fromScale(0, 0.38),
-        Size = UDim2.fromScale(1, 0.5),
-        BackgroundTransparency = 1,
-        FontFace = FONT,
-        TextScaled = true,
-        TextColor3 = Color3.new(1, 1, 1),
-        Text = "",
-        ZIndex = 5,
-    }, inner)
-    make("UIStroke", { Color = Color3.fromRGB(70, 10, 10), Thickness = 2.5 }, title)
-    local titleGrad = make(
-        "UIGradient",
-        { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 220, 150)) },
-        title
-    )
-    -- Rich-text egg name/rarity/price line; built hidden (Visible = false) and only its Text is updated.
-    local subtitle = make("TextLabel", {
-        Visible = false,
-        Position = UDim2.fromScale(0, 0.72),
-        Size = UDim2.fromScale(1, 0.24),
-        BackgroundTransparency = 1,
-        FontFace = FONT,
-        TextScaled = true,
-        TextColor3 = Color3.fromRGB(255, 214, 200),
-        Text = "",
-        ZIndex = 4,
-        RichText = true,
-    }, inner)
-    -- left socket: the egg (wobbles while stolen)
-    local leftSocket = socketFrame(0.076, 0.56, 0.1, 0.38)
-    make("UIAspectRatioConstraint", { AspectRatio = 1 }, leftSocket)
-    local egg = make("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.52),
-        Size = UDim2.fromScale(0.58, 0.74),
-        BackgroundColor3 = GOLD,
-        ZIndex = 4,
-    }, leftSocket)
-    make("UICorner", { CornerRadius = UDim.new(0.5, 0) }, egg)
-    make("UIStroke", { Color = Color3.fromRGB(70, 30, 10), Thickness = 2 }, egg)
-    local _eggGrad =
-        make("UIGradient", { Rotation = 60, Color = ColorSequence.new(Color3.fromRGB(255, 240, 190), GOLD) }, egg)
-    local band = make("Frame", {
-        Position = UDim2.fromScale(0, 0.44),
-        Size = UDim2.fromScale(1, 0.14),
-        BackgroundColor3 = RED,
-        BorderSizePixel = 0,
-        ZIndex = 5,
-    }, egg)
-    local eggShine = make("Frame", {
-        Position = UDim2.fromScale(0.22, 0.12),
-        Size = UDim2.fromScale(0.22, 0.28),
-        BackgroundColor3 = Color3.new(1, 1, 1),
-        BackgroundTransparency = 0.35,
-        ZIndex = 5,
-    }, egg)
-    make("UICorner", { CornerRadius = UDim.new(1, 0) }, eggShine)
-    local mark = make("TextLabel", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.86, 0.14),
-        Size = UDim2.fromScale(0.42, 0.42),
-        BackgroundColor3 = RED,
-        FontFace = FONT,
-        TextScaled = true,
-        TextColor3 = Color3.new(1, 1, 1),
         Text = "!",
-        ZIndex = 6,
-    }, leftSocket)
-    make("UICorner", { CornerRadius = UDim.new(1, 0) }, mark)
-    make("UIStroke", { Color = Color3.fromRGB(70, 10, 10), Thickness = 1.5 }, mark)
-    -- right socket: compass arrow + distance
-    local rightSocket = socketFrame(0.921, 0.56, 0.1, 0.38)
-    make("UIAspectRatioConstraint", { AspectRatio = 1 }, rightSocket)
-    local glow = make("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromScale(0.86, 0.86),
-        BackgroundColor3 = GOLD,
-        BackgroundTransparency = 0.75,
-        ZIndex = 3,
-    }, rightSocket)
-    make("UICorner", { CornerRadius = UDim.new(1, 0) }, glow)
-    local arrow = make("TextLabel", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.4),
-        Size = UDim2.fromScale(0.62, 0.62),
-        BackgroundTransparency = 1,
-        FontFace = FONT,
-        TextScaled = true,
-        TextColor3 = GOLD,
-        Text = "▲",
-        ZIndex = 5,
-    }, rightSocket)
-    make("UIStroke", { Color = Color3.fromRGB(70, 10, 10), Thickness = 1.5 }, arrow)
-    local distanceLabel = make("TextLabel", {
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.fromScale(0.5, 0.66),
-        Size = UDim2.fromScale(1.1, 0.26),
-        BackgroundTransparency = 1,
-        FontFace = FONT,
         TextScaled = true,
         TextColor3 = Color3.new(1, 1, 1),
-        Text = "",
-        ZIndex = 5,
-    }, rightSocket)
-    -- Result icon (check / cross) that replaces the arrow once the steal is resolved.
-    local icon = make("TextLabel", {
+        ZIndex = 4,
+    }, alarm)
+    make("UIPadding", { PaddingTop = UDim.new(0.14, 0), PaddingBottom = UDim.new(0.14, 0) }, ui.mark)
+    -- middle: two lines
+    ui.kicker = make("TextLabel", {
+        Name = "Kicker",
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(88, 12),
+        Size = UDim2.new(1, -196, 0, 22),
+        FontFace = FONT_BODY,
+        Text = "EGG STOLEN",
+        TextSize = 18,
+        TextColor3 = RED,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ZIndex = 3,
+    }, plate)
+    ui.title = make("TextLabel", {
+        Name = "Title",
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(88, 34),
+        Size = UDim2.new(1, -196, 0, 40),
+        FontFace = FONT,
+        Text = "RETURN TO YOUR BASE",
+        TextSize = 34,
+        TextColor3 = Color3.new(1, 1, 1),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextScaled = true,
+        ZIndex = 3,
+    }, plate)
+    make("UITextSizeConstraint", { MaxTextSize = 34 }, ui.title)
+    make("UIStroke", { Color = Color3.fromRGB(60, 0, 8), Thickness = 2.5, LineJoinMode = Enum.LineJoinMode.Bevel }, ui.title)
+    -- right: compass arrow + distance home
+    local compass = make("Frame", {
+        Name = "Compass",
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -14, 0.5, 0),
+        Size = UDim2.fromOffset(86, 62),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BackgroundTransparency = 0.92,
+        ZIndex = 3,
+    }, plate)
+    make("UICorner", { CornerRadius = UDim.new(0, 12) }, compass)
+    ui.compass = compass
+    ui.arrow = make("TextLabel", {
+        Name = "Arrow",
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromScale(0.7, 0.7),
+        Position = UDim2.fromScale(0.5, 0.33),
+        Size = UDim2.fromOffset(28, 28),
         BackgroundTransparency = 1,
         FontFace = FONT,
+        Text = "▲",
         TextScaled = true,
-        TextColor3 = GREEN,
-        Text = "",
-        Visible = false,
-        ZIndex = 5,
-    }, rightSocket)
-    make("UIStroke", { Color = Color3.fromRGB(20, 40, 10), Thickness = 1.5 }, icon)
-    -- 3D egg preview (see showPreview); swaps with the flat 2D egg when a model is available.
-    local viewport = make("ViewportFrame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromScale(1.15, 1.15),
-        BackgroundTransparency = 1,
-        Ambient = Color3.fromRGB(255, 255, 255),
-        LightColor = Color3.new(1, 1, 1),
-        LightDirection = Vector3.new(-1, -1, -1),
-        Visible = false,
-        ZIndex = 5,
-    }, leftSocket)
-    local disc = make("Frame", {
-        Name = "EggDisc",
-        Visible = false,
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromScale(0.86, 0.86),
-        BackgroundColor3 = Color3.fromRGB(255, 236, 200),
+        TextColor3 = Color3.new(1, 1, 1),
         ZIndex = 4,
-    }, leftSocket)
-    make("UICorner", { CornerRadius = UDim.new(1, 0) }, disc)
-    make(
-        "UIGradient",
-        { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(255, 248, 225), Color3.fromRGB(240, 196, 120)) },
-        disc
-    )
-    ui = {
-        vp = viewport,
-        holder = holder,
-        scale = scale,
-        popScale = popScale,
-        plate = plate,
-        tag = tag,
-        title = title,
-        sub = subtitle,
-        egg = egg,
-        mark = mark,
-        band = band,
-        arrow = arrow,
-        dist = distanceLabel,
-        icon = icon,
-        glow = glow,
-        sweepGrad = sweepGrad,
-        titleGrad = titleGrad,
-        stroke = make("UIStroke", { Thickness = 0, Color = GOLD, Transparency = 1 }, glow),
-    }
-    -- Scale the banner to the viewport width (minus a 12 px margin each side), clamped.
-    local function fit()
-        local camera = workspace.CurrentCamera
-        if not camera then
-            return
-        end
-        local view = camera.ViewportSize
-        local fitScale = (view.X - 24) / BANNER_WIDTH
-        -- Phones (short screens): keep the banner to about a fifth of the screen height.
-        local phone = view.Y < 500 or (game:GetService("UserInputService").TouchEnabled and view.X < 1100)
-        if phone then
-            fitScale = math.min(fitScale, view.Y * 0.13 / BANNER_HEIGHT)
-        end
-        scale.Scale = math.clamp(fitScale, phone and 0.3 or 0.5, 0.9)
-    end
-    fit()
-    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
+    }, compass)
+    ui.dist = make("TextLabel", {
+        Name = "Distance",
+        AnchorPoint = Vector2.new(0.5, 1),
+        Position = UDim2.new(0.5, 0, 1, -4),
+        Size = UDim2.new(1, 0, 0, 22),
+        BackgroundTransparency = 1,
+        FontFace = FONT,
+        Text = "",
+        TextSize = 20,
+        TextColor3 = Color3.new(1, 1, 1),
+        ZIndex = 4,
+    }, compass)
 end
 
--- One-shot Sound parented to the banner gui; destroyed on Ended or after 6 s at the latest.
 local function playSound(id)
     if not id or id == "" or player:GetAttribute(Config.MuteAttribute) then
         return
     end
-    local sound = make("Sound", { SoundId = id, Volume = Config.Volume }, gui)
-    local soundGroup = SoundService:FindFirstChild(Config.SoundGroupName)
-    if soundGroup and soundGroup:IsA("SoundGroup") then
-        sound.SoundGroup = soundGroup
-    end
+    local sound = Instance.new("Sound")
+    sound.SoundId = id
+    sound.Volume = Config.Volume
+    sound.SoundGroup = SoundService:FindFirstChild(Config.SoundGroupName)
+    sound.Parent = SoundService
+    sound:Play()
     sound.Ended:Once(function()
         sound:Destroy()
     end)
-    sound:Play()
     task.delay(6, function()
         if sound.Parent then
             sound:Destroy()
@@ -359,316 +254,337 @@ local function playSound(id)
     end)
 end
 
--- Same phone heuristic as fit() inside build().
-local function isPhone()
-    local camera = workspace.CurrentCamera
-    return camera
-        and (
-            camera.ViewportSize.Y < 500
-            or (game:GetService("UserInputService").TouchEnabled and camera.ViewportSize.X < 1100)
-        )
-end
--- Resting Y offset of the banner: just below the top-bar inset on desktop, flush to the top on phones.
-local function topY()
-    if isPhone() then
-        return 4
+local function fitToScreen()
+    local size = gui.AbsoluteSize
+    if size.X > 10 then
+        ui.fit.Scale = math.clamp((size.X - 24) / ALERT_W, 0.55, 1.1)
     end
-    return GuiService:GetGuiInset().Y + 6
-end
--- Rich-text hex colour per rarity for the subtitle line.
-local RARITY_HEX = {
-    Common = "#C8C8C8",
-    Uncommon = "#7FD86E",
-    Rare = "#6FB2FF",
-    Epic = "#C98BFF",
-    Legendary = "#FFC94A",
-    Mythic = "#FF50A5",
-    Cosmic = "#5AF0D7",
-    Secret = "#FFFFFF",
-}
--- 1 decimal with a unit suffix ("1.5K", "2M"); plain integer below 1000.
-local function short(n)
-    n = tonumber(n) or 0
-    for _, unit in { { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } } do
-        if n >= unit[1] then
-            return (string.format("%.1f", n / unit[1]):gsub("%.0$", "")) .. unit[2]
-        end
-    end
-    return tostring(math.floor(n))
-end
-local eggInfo = {} -- { name?, rarity?, price?, eggType? } from the last Show() call that passed a table
-local function setState(state)
-    local stolen = state == "Stolen"
-    local nameLine = eggInfo.name and ('<font color="#FFFFFF">' .. eggInfo.name .. "</font>") or ""
-    if eggInfo.rarity then
-        nameLine = nameLine
-            .. '  <font color="'
-            .. (RARITY_HEX[eggInfo.rarity] or "#FFFFFF")
-            .. '">'
-            .. string.upper(eggInfo.rarity)
-            .. "</font>"
-    end
-    if eggInfo.price and eggInfo.price > 0 then
-        nameLine = nameLine .. '  <font color="#9BE07A">$' .. short(eggInfo.price) .. "</font>"
-    end
-    if state == "Stolen" then
-        ui.tag.Text = "STOLEN EGG"
-        ui.title.Text = "RETURN TO BASE!"
-        ui.sub.Text = nameLine ~= "" and nameLine or "Get it home before you're caught!"
-        ui.titleGrad.Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(255, 220, 150))
-        ui.mark.Text = "!"
-        ui.mark.BackgroundColor3 = RED
-    elseif state == "Secured" then
-        ui.tag.Text = "SUCCESS"
-        ui.title.Text = "EGG SECURED!"
-        ui.sub.Text = nameLine ~= "" and (nameLine .. "  is yours") or "The egg is safe in your base"
-        ui.titleGrad.Color = ColorSequence.new(Color3.fromRGB(235, 255, 225), Color3.fromRGB(120, 230, 110))
-        ui.mark.Text = "✓"
-        ui.mark.BackgroundColor3 = GREEN
-    else
-        ui.tag.Text = state == "Dropped" and "FAILED" or "ENDED"
-        ui.title.Text = state == "Dropped" and "EGG DROPPED" or "STEAL CANCELLED"
-        ui.sub.Text = state == "Dropped" and "Bonked! Grab it back before someone else does" or "The steal has ended"
-        ui.titleGrad.Color = ColorSequence.new(Color3.fromRGB(235, 235, 240), Color3.fromRGB(170, 170, 185))
-        ui.mark.Text = "×"
-        ui.mark.BackgroundColor3 = GREY
-    end
-    ui.arrow.Visible, ui.dist.Visible = stolen, stolen
-    ui.icon.Visible = not stolen
-    ui.icon.Text = state == "Secured" and "✓" or "×"
-    ui.icon.TextColor3 = state == "Secured" and GREEN or Color3.fromRGB(230, 230, 235)
-    ui.glow.BackgroundColor3 = state == "Secured" and GREEN or (stolen and GOLD or GREY)
 end
 
----------------------------------------------------------------- compass tracking + idle loops
-local trackConnection, loopTweens = nil, {}
-local function stopTracking()
-    if trackConnection then
-        trackConnection:Disconnect()
-        trackConnection = nil
+local token = 0
+local currentState = nil
+local eggInfo = nil
+local basePos = nil
+local distanceHome = nil
+
+local function setState(state)
+    local copy = COPY[state]
+    local color = copy[3]
+    local kicker = copy[1]
+    if state == "Stolen" and eggInfo and (eggInfo.name or eggInfo.eggType) then
+        local name = eggInfo.name or (tostring(eggInfo.eggType) .. " Egg")
+        kicker = "EGG STOLEN  ·  " .. string.upper(name)
     end
-    for _, loopTween in loopTweens do
-        loopTween:Cancel()
+    ui.kicker.Text = kicker
+    ui.kicker.TextColor3 = color
+    ui.title.Text = copy[2]
+    ui.stroke.Color = color
+    ui.glow.BackgroundColor3 = color
+    ui.alarm.BackgroundColor3 = color
+    ui.mark.Text = state == "Secured" and "✓" or "!"
+    ui.compass.Visible = state == "Stolen"
+    for _, band in ui.edges do
+        band.BackgroundColor3 = color
     end
-    table.clear(loopTweens)
-    ui.egg.Rotation = 0
-    ui.glow.Size = UDim2.fromScale(0.86, 0.86)
 end
--- Infinite reversing Sine tween; cancelled by stopTracking().
-local function startLoopTween(instance, duration, goal)
-    local loopTween = TweenService:Create(
-        instance,
-        TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        goal
-    )
-    loopTween:Play()
-    table.insert(loopTweens, loopTween)
+
+---------------------------------------------------------------- clean screen: hide every other UI while stealing
+local hidden = {} -- [ScreenGui] = true (only the ones this module turned off)
+local hiddenCore = {} -- [CoreGuiType] = was enabled
+local hideConnection
+local function hideGui(screenGui)
+    if screenGui:IsA("ScreenGui") and not Config.KeepVisible[screenGui.Name] and screenGui.Enabled then
+        hidden[screenGui] = true
+        screenGui.Enabled = false
+    end
 end
--- Points the arrow at basePos relative to the camera's flat look direction and shows the distance (20 Hz).
-local function startTracking(basePos)
-    stopTracking()
+local function cleanScreen()
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    if not playerGui or hideConnection then
+        return
+    end
+    for _, screenGui in playerGui:GetChildren() do
+        hideGui(screenGui)
+    end
+    for _, coreType in Config.HideCoreGui do
+        local ok, enabled = pcall(StarterGui.GetCoreGuiEnabled, StarterGui, coreType)
+        if ok and enabled then
+            hiddenCore[coreType] = true
+            pcall(StarterGui.SetCoreGuiEnabled, StarterGui, coreType, false)
+        end
+    end
+    -- keep it clean: UI that opens (or re-enables itself) during the steal is hidden too
     local elapsed = 0
-    trackConnection = RunService.RenderStepped:Connect(function(dt)
+    hideConnection = RunService.Heartbeat:Connect(function(dt)
         elapsed += dt
-        if elapsed < 0.05 then
+        if elapsed < 0.2 then
             return
         end
         elapsed = 0
-        local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        local camera = workspace.CurrentCamera
-        if not rootPart or not camera or typeof(basePos) ~= "Vector3" then
-            return
+        for _, screenGui in playerGui:GetChildren() do
+            hideGui(screenGui)
         end
-        local toBase = basePos - rootPart.Position
-        local flatToBase = Vector3.new(toBase.X, 0, toBase.Z)
-        local flatLook = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
-        if flatToBase.Magnitude > 0.1 and flatLook.Magnitude > 0.01 then
-            -- Signed yaw angle between look and target directions.
-            ui.arrow.Rotation =
-                -math.deg(math.atan2(flatLook.Unit:Cross(flatToBase.Unit).Y, flatLook.Unit:Dot(flatToBase.Unit)))
-        end
-        local meters = math.floor(flatToBase.Magnitude + 0.5)
-        ui.dist.Text = meters .. "m"
-        ui.dist.TextColor3 = meters < 25 and Color3.fromRGB(150, 255, 140) or Color3.new(1, 1, 1)
     end)
-    if not isReducedMotion() then
-        ui.egg.Rotation = -8
-        startLoopTween(ui.egg, 0.35, { Rotation = 8 })
-        startLoopTween(ui.glow, 0.7, { Size = UDim2.fromScale(1.05, 1.05) })
+end
+local function restoreScreen()
+    if hideConnection then
+        hideConnection:Disconnect()
+        hideConnection = nil
     end
+    for screenGui in hidden do
+        if screenGui.Parent then
+            screenGui.Enabled = true
+        end
+    end
+    table.clear(hidden)
+    for coreType in hiddenCore do
+        pcall(StarterGui.SetCoreGuiEnabled, StarterGui, coreType, true)
+    end
+    table.clear(hiddenCore)
 end
 
-local token = 0 -- banner generation; see header comment
--- Repeats the shine sweep every 2.4 s while this generation is current and the banner is visible.
-local function shineLoop(myToken)
-    task.spawn(function()
-        while myToken == token and gui.Enabled and not isReducedMotion() do
-            ui.sweepGrad.Offset = Vector2.new(-1.3, 0)
-            TweenService
-                :Create(ui.sweepGrad, TweenInfo.new(0.9, Enum.EasingStyle.Sine), { Offset = Vector2.new(1.3, 0) })
-                :Play()
-            task.wait(2.4)
+---------------------------------------------------------------- heartbeat + tracking loop
+local loopConnection
+local function stopLoop()
+    if loopConnection then
+        loopConnection:Disconnect()
+        loopConnection = nil
+    end
+end
+-- lub-dub: two quick beats then a rest. Returns 0..1
+local function beat(phase)
+    local function pulse(center, width)
+        local d = math.abs(phase - center) / width
+        return d < 1 and (1 - d) ^ 2 or 0
+    end
+    return math.max(pulse(0.06, 0.09), pulse(0.3, 0.09) * 0.75)
+end
+local function startLoop(myToken)
+    stopLoop()
+    local clock = 0
+    local trackTimer = 0
+    loopConnection = RunService.RenderStepped:Connect(function(dt)
+        if myToken ~= token then
+            return
+        end
+        local calm = isReducedMotion()
+        -- heart rate: 70 bpm near home, up to 120 bpm far away
+        local far = distanceHome and math.clamp(distanceHome / 150, 0, 1) or 0.6
+        local period = 60 / (70 + far * 50)
+        if currentState ~= "Stolen" then
+            period = 0.9
+        end
+        clock = (clock + dt / period) % 1
+        local strength = calm and 0.35 or beat(clock)
+        local base = currentState == "Stolen" and 0.55 or 0.75
+        for side, band in ui.edges do
+            local vertical = side == "Top" or side == "Bottom"
+            band.BackgroundTransparency = math.clamp(base - strength * 0.45, 0, 1)
+            local thick = (vertical and 0.16 or 0.12) + strength * 0.06
+            band.Size = vertical and UDim2.fromScale(1, thick) or UDim2.fromScale(thick, 1)
+        end
+        ui.alarmScale.Scale = 1 + strength * 0.16
+        ui.alarmRing.Transparency = 0.2 + (1 - strength) * 0.6
+        ui.glow.BackgroundTransparency = 0.85 - strength * 0.35
+        ui.stroke.Thickness = 3 + strength * 2
+        -- compass + distance, 20 times a second
+        trackTimer += dt
+        if trackTimer >= 0.05 and currentState == "Stolen" then
+            trackTimer = 0
+            local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            local camera = workspace.CurrentCamera
+            if root and camera and typeof(basePos) == "Vector3" then
+                local toBase = basePos - root.Position
+                local flat = Vector3.new(toBase.X, 0, toBase.Z)
+                local look = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
+                if flat.Magnitude > 0.1 and look.Magnitude > 0.01 then
+                    ui.arrow.Rotation = -math.deg(math.atan2(look.Unit:Cross(flat.Unit).Y, look.Unit:Dot(flat.Unit)))
+                end
+                distanceHome = flat.Magnitude
+                local meters = math.floor(distanceHome + 0.5)
+                ui.dist.Text = meters .. "m"
+                local near = meters < 25
+                ui.dist.TextColor3 = near and GREEN or Color3.new(1, 1, 1)
+                ui.arrow.TextColor3 = near and GREEN or Color3.new(1, 1, 1)
+            end
         end
     end)
 end
-local function slideIn()
-    gui.Enabled = true
-    if isReducedMotion() then
-        ui.holder.Position = UDim2.new(0.5, 0, 0, topY())
+
+
+---------------------------------------------------------------- capture zone: white box rising from the ground
+-- Drawn on the player's own PlotSpawn pad while they carry a stolen egg (only they see it). The server secures the
+-- egg inside the same square (EggStealConfig.Rules.CaptureHalfSize / CaptureHeight).
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local zoneModel, zoneConnection
+local function captureRules()
+    local ok, config = pcall(function()
+        return require(ReplicatedStorage:WaitForChild("EggSteal", 5):WaitForChild("EggStealConfig", 5))
+    end)
+    local rules = ok and config and config.Rules or {}
+    return rules.CaptureHalfSize or 6, rules.CaptureHeight or 14
+end
+local function myPad()
+    local plots = workspace:FindFirstChild("Plots")
+    for _, plot in plots and plots:GetChildren() or {} do
+        if plot:GetAttribute("OwnerUserId") == player.UserId then
+            return plot:FindFirstChild("PlotSpawn")
+        end
+    end
+end
+local function clearZone()
+    if zoneConnection then
+        zoneConnection:Disconnect()
+        zoneConnection = nil
+    end
+    if zoneModel then
+        zoneModel:Destroy()
+        zoneModel = nil
+    end
+end
+local function zonePart(props)
+    local part = Instance.new("Part")
+    part.Anchored = true
+    part.CanCollide = false
+    part.CanQuery = false
+    part.CanTouch = false
+    part.CastShadow = false
+    part.Material = Enum.Material.Neon
+    part.Color = Color3.new(1, 1, 1)
+    for key, value in props do
+        part[key] = value
+    end
+    part.Parent = zoneModel
+    return part
+end
+-- a see-through wall that is bright at the ground and fades out upward
+local function fadeWall(cf, width, height)
+    local wall = zonePart({ Name = "Wall", Material = Enum.Material.SmoothPlastic, Transparency = 1, Size = Vector3.new(width, height, 0.05), CFrame = cf })
+    for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
+        local surface = Instance.new("SurfaceGui")
+        surface.Face = face
+        surface.LightInfluence = 0
+        surface.Brightness = 2.5
+        surface.CanvasSize = Vector2.new(100, 100)
+        surface.Parent = wall
+        local fill = Instance.new("Frame")
+        fill.Size = UDim2.fromScale(1, 1)
+        fill.BorderSizePixel = 0
+        fill.BackgroundColor3 = Color3.new(1, 1, 1)
+        fill.Parent = surface
+        local gradient = Instance.new("UIGradient")
+        gradient.Rotation = 90
+        gradient.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.6, 0.85),
+            NumberSequenceKeypoint.new(1, 0.35),
+        })
+        gradient.Parent = fill
+    end
+    return wall
+end
+local function showZone()
+    clearZone()
+    local pad = myPad()
+    if not pad then
         return
     end
-    ui.holder.Position = UDim2.new(0.5, 0, 0, -BANNER_HEIGHT - 30)
-    ui.popScale.Scale = 0.9
-    tween(ui.holder, 0.45, { Position = UDim2.new(0.5, 0, 0, topY()) }, Enum.EasingStyle.Back)
-    tween(ui.popScale, 0.45, { Scale = 1 }, Enum.EasingStyle.Back)
-end
-
----------------------------------------------------------------- 3D egg preview
--- 3D picture of the egg you're carrying (copied from the StolenEggCarry model the server attaches)
-local spinConnection
-local function clearPreview()
-    if spinConnection then
-        spinConnection:Disconnect()
-        spinConnection = nil
+    local half, height = captureRules()
+    local size = half * 2
+    local wallHeight = math.min(height, 6)
+    zoneModel = Instance.new("Model")
+    zoneModel.Name = "CaptureZone"
+    local ground = pad.CFrame * CFrame.new(0, pad.Size.Y / 2 + 0.06, 0)
+    -- glowing floor + white border
+    zonePart({ Name = "Floor", Size = Vector3.new(size, 0.1, size), CFrame = ground, Transparency = 0.82 })
+    for i = 0, 3 do
+        local side = ground * CFrame.Angles(0, math.rad(90 * i), 0)
+        zonePart({ Name = "Edge", Size = Vector3.new(size + 0.5, 0.25, 0.5), CFrame = side * CFrame.new(0, 0.08, -half), Transparency = 0.05 })
+        fadeWall(side * CFrame.new(0, wallHeight / 2, -half), size, wallHeight)
     end
-    ui.vp:ClearAllChildren()
-    ui.vp.Visible = false
-    ui.egg.Visible = true
-    ui.vp.Parent.EggDisc.Visible = false
-end
-local function showPreview(myToken)
-    task.spawn(function()
-        local sourceModel
-        -- 1) clean preview model for this egg type (all eggs have one)
-        local previews = game:GetService("ReplicatedStorage"):FindFirstChild("GameMenu")
-            and game:GetService("ReplicatedStorage").GameMenu:FindFirstChild("EggPreviews")
-        if previews then
-            -- Candidate names, lower-cased with a trailing " Egg" stripped, matched against "MenuEgg_<name>".
-            local wantedNames = {}
-            for _, candidate in
-                {
-                    eggInfo.eggType,
-                    eggInfo.name,
-                    player:GetAttribute("CarryingStolenEggType"),
-                    player:GetAttribute("RiverEggCarryType"),
-                }
-            do
-                if type(candidate) == "string" then
-                    table.insert(wantedNames, (candidate:gsub("%s*[Ee]gg%s*$", "")):lower())
-                end
-            end
-            for _, previewModel in previews:GetChildren() do
-                local previewName = previewModel.Name:gsub("^MenuEgg_", ""):lower()
-                for _, wantedName in wantedNames do
-                    if wantedName == previewName then
-                        sourceModel = previewModel
-                    end
-                end
-            end
+    -- rings that rise up the walls and fade, like a scanner
+    local rings = {}
+    for r = 1, 2 do
+        local ring = Instance.new("Model")
+        ring.Name = "Ring"
+        ring.Parent = zoneModel
+        local bars = {}
+        for i = 0, 3 do
+            local bar = zonePart({ Name = "Bar", Size = Vector3.new(size, 0.18, 0.18) })
+            bar.Parent = ring
+            bars[i] = bar
         end
-        -- 2) otherwise the egg on your character (polls up to 30 x 0.1 s for the carry model to replicate)
-        for _ = 1, sourceModel and 0 or 30 do
-            local character = player.Character
-            sourceModel = character
-                    and (character:FindFirstChild("StolenEggCarry", true) or character:FindFirstChild("HeldItemCarry") or character:FindFirstChild(
-                        "RiverEggCarry"
-                    ))
-                or workspace:FindFirstChild("StolenEggCarry_" .. player.UserId, true)
-            if sourceModel or myToken ~= token then
-                break
-            end
-            task.wait(0.1)
-        end
-        if not sourceModel or myToken ~= token then
-            return
-        end
-        -- Copy visible parts (all parts for MenuEgg_ previews) keeping only their mesh/surface children.
-        local model = Instance.new("Model")
-        for _, descendant in sourceModel:GetDescendants() do
-            if
-                descendant:IsA("BasePart")
-                and (descendant.Transparency < 0.95 or sourceModel.Name:find("^MenuEgg_"))
-                and descendant.Name ~= "Carrier"
-            then
-                local partClone = descendant:Clone()
-                for _, child in partClone:GetDescendants() do
-                    if
-                        not (
-                            child:IsA("DataModelMesh")
-                            or child:IsA("Decal")
-                            or child:IsA("Texture")
-                            or child:IsA("SurfaceAppearance")
-                        )
-                    then
-                        child:Destroy()
-                    end
-                end
-                partClone.Anchored = true
-                partClone.Parent = model
+        rings[r] = { bars = bars, offset = (r - 1) * 0.5 }
+    end
+    -- sparkles floating up from the floor
+    local emitterPart = zonePart({ Name = "Sparkles", Transparency = 1, Size = Vector3.new(size, 0.1, size), CFrame = ground })
+    local sparkles = Instance.new("ParticleEmitter")
+    sparkles.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    sparkles.Color = ColorSequence.new(Color3.new(1, 1, 1))
+    sparkles.LightEmission = 1
+    sparkles.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.35), NumberSequenceKeypoint.new(1, 0) })
+    sparkles.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.2), NumberSequenceKeypoint.new(1, 1) })
+    sparkles.Lifetime = NumberRange.new(1, 1.8)
+    sparkles.Speed = NumberRange.new(2, 4)
+    sparkles.EmissionDirection = Enum.NormalId.Top
+    sparkles.SpreadAngle = Vector2.new(8, 8)
+    sparkles.Rate = 18
+    sparkles.Parent = emitterPart
+    local light = Instance.new("PointLight")
+    light.Color = Color3.new(1, 1, 1)
+    light.Range = size
+    light.Brightness = 1.2
+    light.Parent = emitterPart
+    zoneModel.Parent = workspace
+    local calm = isReducedMotion()
+    zoneConnection = RunService.RenderStepped:Connect(function()
+        local t = os.clock()
+        for _, ring in rings do
+            local progress = calm and 0.15 or ((t * 0.6 + ring.offset) % 1)
+            local y = 0.1 + progress * wallHeight
+            for i, bar in ring.bars do
+                local side = ground * CFrame.Angles(0, math.rad(90 * i), 0)
+                bar.CFrame = side * CFrame.new(0, y, -half)
+                bar.Transparency = 0.1 + progress * 0.9
             end
         end
-        if #model:GetChildren() == 0 then
-            model:Destroy()
-            return
-        end
-        local boundsCFrame, boundsSize = model:GetBoundingBox()
-        for _, part in model:GetChildren() do
-            part.CFrame = boundsCFrame:Inverse() * part.CFrame
-        end -- centre at origin
-        model.Parent = ui.vp
-        local previewCamera = Instance.new("Camera")
-        previewCamera.FieldOfView = 30
-        previewCamera.Parent = ui.vp
-        ui.vp.CurrentCamera = previewCamera
-        -- Orbit distance that fits the largest extent inside the 30 deg FOV (half-angle 15 deg), slightly zoomed in.
-        local radius = math.max(boundsSize.X, boundsSize.Y, boundsSize.Z)
-        local distance = radius / math.tan(math.rad(15)) * 0.6
-        local angle = 0
-        spinConnection = RunService.RenderStepped:Connect(function(dt)
-            angle += dt * 0.9
-            previewCamera.CFrame =
-                CFrame.new(Vector3.new(math.sin(angle) * distance, 0, math.cos(angle) * distance), Vector3.zero)
-        end)
-        ui.vp.Visible = true
-        ui.egg.Visible = false
-        ui.vp.Parent.EggDisc.Visible = true
     end)
 end
 
----------------------------------------------------------------- public API
+local function slideIn()
+    fitToScreen()
+    local top = math.max(GuiService.TopbarInset.Max.Y, 36) + 14
+    gui.Enabled = true
+    if isReducedMotion() then
+        ui.holder.Position = UDim2.new(0.5, 0, 0, top)
+        return
+    end
+    ui.holder.Position = UDim2.new(0.5, 0, 0, -ALERT_H - 40)
+    tween(ui.holder, 0.45, { Position = UDim2.new(0.5, 0, 0, top) }, Enum.EasingStyle.Back)
+end
+
 function Banner.Show(basePosition, eggData)
     if type(eggData) == "table" then
-        eggInfo = {
-            name = eggData.name,
-            rarity = eggData.rarity,
-            price = tonumber(eggData.price),
-            eggType = eggData.eggType,
-        }
+        eggInfo = { name = eggData.name, rarity = eggData.rarity, price = tonumber(eggData.price), eggType = eggData.eggType }
     end
-    -- Already showing a steal: only refresh tracking / preview, don't replay the slide-in.
+    if typeof(basePosition) == "Vector3" then
+        basePos = basePosition
+    end
+    -- already showing this steal: just refresh the text / target
     if currentState == "Stolen" and gui.Enabled then
-        if typeof(basePosition) == "Vector3" then
-            startTracking(basePosition)
-        end
-        if type(eggData) == "table" and (eggData.eggType or eggData.name) then
-            clearPreview()
-            showPreview(token)
-        end
+        setState("Stolen")
         return
     end
     token += 1
     currentState = "Stolen"
+    distanceHome = nil
+    ui.dist.Text = ""
     setState("Stolen")
-    clearPreview()
-    showPreview(token)
+    cleanScreen()
+    showZone()
     slideIn()
-    shineLoop(token)
+    startLoop(token)
     playSound(Config.AlertSound)
-    if typeof(basePosition) == "Vector3" then
-        startTracking(basePosition)
-    else
-        ui.dist.Text = ""
-    end
 end
 
 function Banner.Resolve(state)
@@ -678,16 +594,13 @@ function Banner.Resolve(state)
     token += 1
     local myToken = token
     currentState = state
-    stopTracking()
     setState(state)
+    startLoop(myToken)
     if not isReducedMotion() then
-        ui.popScale.Scale = 1
-        tween(ui.popScale, 0.12, { Scale = 1.07 }).Completed:Once(function()
-            tween(ui.popScale, 0.25, { Scale = 1 }, Enum.EasingStyle.Back)
+        ui.pop.Scale = 1
+        tween(ui.pop, 0.12, { Scale = 1.08 }).Completed:Once(function()
+            tween(ui.pop, 0.25, { Scale = 1 }, Enum.EasingStyle.Back)
         end)
-        if state == "Secured" then
-            shineLoop(myToken)
-        end
     end
     playSound(state == "Secured" and Config.SuccessSound or Config.FailSound)
     task.delay(Config.DismissAfter[state] or 1.8, function()
@@ -699,48 +612,40 @@ end
 
 function Banner.Hide()
     token += 1
-    -- Clear the 3D preview after the slide-out, unless a new banner was shown meanwhile.
-    task.delay(0.5, function()
-        if not currentState then
-            clearPreview()
-        end
-    end)
     local myToken = token
-    stopTracking()
     currentState = nil
-    if not gui.Enabled then
+    eggInfo = nil
+    restoreScreen()
+    clearZone()
+    if not gui or not gui.Enabled then
+        stopLoop()
         return
     end
     if isReducedMotion() then
+        stopLoop()
         gui.Enabled = false
         return
     end
-    tween(
-        ui.holder,
-        0.3,
-        { Position = UDim2.new(0.5, 0, 0, -BANNER_HEIGHT - 40) },
-        Enum.EasingStyle.Back,
-        Enum.EasingDirection.In
-    ).Completed:Once(function()
+    for _, band in ui.edges do
+        tween(band, 0.35, { BackgroundTransparency = 1 })
+    end
+    tween(ui.holder, 0.3, { Position = UDim2.new(0.5, 0, 0, -ALERT_H - 40) }, Enum.EasingStyle.Back, Enum.EasingDirection.In).Completed:Once(function()
         if myToken == token then
+            stopLoop()
             gui.Enabled = false
         end
     end)
 end
 
 local started = false
--- Idempotent; builds the gui (yields on PlayerGui) and hides the banner when the character respawns mid-steal.
+-- Idempotent; builds the gui (yields on PlayerGui) and ends the steal screen when the character respawns mid-steal.
 function Banner.Start()
     if started then
         return
     end
     started = true
     build()
-    task.spawn(function()
-        pcall(function()
-            game:GetService("ContentProvider"):PreloadAsync({ ui.plate })
-        end)
-    end)
+    gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitToScreen)
     player.CharacterRemoving:Connect(function()
         if currentState == "Stolen" then
             Banner.Hide()

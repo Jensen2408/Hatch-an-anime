@@ -89,7 +89,6 @@ Mutations.Textures = {
     Zoro = { Silver = 73265779154979, Gold = 85963045781033, Diamond = 76309674239826, Rainbow = 135395598069562 },
 }
 Mutations.RainbowTag = "RainbowMutation"
-Mutations.ProbeMaps = false
 
 local rng = Random.new()
 local MOLTEN_VOLCANO_ODDS = 1000
@@ -199,7 +198,14 @@ end
 -- Probe the underlying image URIs. ContentProvider does not preload a SurfaceAppearance itself.
 local ContentProvider = game:GetService("ContentProvider")
 local mapChecks = {}
+-- 2026-11-08: the server cannot preload images (PreloadAsync never finishes there), so the 8 s timeout below marked
+-- every map as failed and turned every mutated character into a flat-coloured silhouette. The check only runs where
+-- images can actually be loaded; on the server the textures are kept.
+local CAN_PRELOAD = not game:GetService("RunService"):IsServer()
 local function checkMutationMaps(appearance, part, tint)
+    if not CAN_PRELOAD then
+        return
+    end
     local function useFallback()
         if appearance.Parent == part then
             appearance:Destroy()
@@ -301,10 +307,7 @@ function Mutations.Model(id, tier, base)
     if clone then
         clone:SetAttribute("Mutation", tier)
         local tint = Mutations.Tint[tier]
-        -- The server-side texture probe stripped every Gold/Silver SurfaceAppearance when PreloadAsync did not
-        -- report Success within 8s (it often does not on the server), leaving flat yellow/white plot characters.
-        -- Off by default; set Mutations.ProbeMaps = true to bring the fallback back.
-        if tint and Mutations.ProbeMaps then
+        if tint then
             for _, appearance in clone:GetDescendants() do
                 local part = appearance.Parent
                 if appearance:IsA("SurfaceAppearance") and part:IsA("MeshPart") then

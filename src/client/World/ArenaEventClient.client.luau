@@ -119,77 +119,63 @@ local function label(parent, props)
     return make("TextLabel", base, parent)
 end
 
+-- The top panel and the toast come from ReplicatedStorage.EventUI (the same family as the boss HUD, the event pills
+-- and the banners): a blue strip with the sword, the title and the timer, then one or two flat lines under it.
+local EventUI = require(ReplicatedStorage:WaitForChild("EventUI"))
+local HUD_W, STRIP_H, LINE_H = 520, 40, 22
 local panel = make("Frame", {
     Name = "Panel",
+    BackgroundTransparency = 1,
     AnchorPoint = Vector2.new(0.5, 0),
     Position = UDim2.new(0.5, 0, 0, 70),
-    Size = UDim2.new(0.92, 0, 0, 78),
-    BackgroundColor3 = THEME.lacquer,
+    Size = UDim2.fromOffset(HUD_W, STRIP_H),
     Visible = false,
 }, gui)
-make("UISizeConstraint", { MaxSize = Vector2.new(520, 120) }, panel)
-make("UICorner", { CornerRadius = UDim.new(0, 10) }, panel)
-make("UIStroke", { Color = THEME.gold, Thickness = 2 }, panel)
-make("UIPadding", {
-    PaddingLeft = UDim.new(0, 12),
-    PaddingRight = UDim.new(0, 12),
-    PaddingTop = UDim.new(0, 6),
-    PaddingBottom = UDim.new(0, 6),
-}, panel)
-local titleLabel = label(panel, {
-    Size = UDim2.new(1, -80, 0, 24),
-    Text = "ARENA BRAWL",
-    TextSize = 22,
-    TextColor3 = THEME.gold,
+local panelFit = make("UIScale", { Name = "Fit" }, panel)
+local titleStrip = EventUI.pill(panel, {
+    name = "Title",
+    theme = "arena",
+    width = HUD_W,
+    height = STRIP_H,
+    nameSize = 22,
+    timeSize = 23,
+    timeWidth = EventUI.measure("0:00", 23),
+    iconSize = 36,
+    shadow = true,
+})
+local infoLabel = EventUI.label(panel, {
+    Name = "Info",
+    TextSize = 16,
     TextTruncate = Enum.TextTruncate.AtEnd,
+    Position = UDim2.fromOffset(0, STRIP_H + 8),
+    Size = UDim2.fromOffset(HUD_W, LINE_H - 2),
 })
-make("UIStroke", { Color = THEME.post, Thickness = 1.5 }, titleLabel)
-local timerLabel = label(panel, {
-    AnchorPoint = Vector2.new(1, 0),
-    Position = UDim2.new(1, 0, 0, 0),
-    Size = UDim2.new(0, 80, 0, 24),
-    TextSize = 20,
-    TextXAlignment = Enum.TextXAlignment.Right,
-})
-local infoLabel = label(panel, {
-    Position = UDim2.new(0, 0, 0, 28),
-    Size = UDim2.new(1, 0, 0, 18),
-    TextSize = 14,
+local detailLabel = EventUI.label(panel, {
+    Name = "Detail",
+    TextSize = 16,
+    TextColor3 = EventUI.HOT,
     TextTruncate = Enum.TextTruncate.AtEnd,
+    Position = UDim2.fromOffset(0, STRIP_H + 8 + LINE_H),
+    Size = UDim2.fromOffset(HUD_W, LINE_H - 2),
 })
-local detailLabel = label(panel, {
-    Position = UDim2.new(0, 0, 0, 48),
-    Size = UDim2.new(1, 0, 0, 18),
-    TextSize = 14,
-    TextColor3 = THEME.gold,
-    TextTruncate = Enum.TextTruncate.AtEnd,
-})
+-- a line that is too long for the panel shrinks a little before it is cut off
+local function setLine(lineLabel, text)
+    lineLabel.Visible = text ~= nil
+    if text and lineLabel.Text ~= text then
+        lineLabel.Text = text
+        lineLabel.TextSize = math.clamp(math.floor(16 * HUD_W / EventUI.measure(text, 16)), 12, 16)
+    end
+end
 
-local toast = label(gui, {
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.new(0.5, 0, 0.24, 0),
-    Size = UDim2.new(0, 480, 0, 50),
-    TextSize = 30,
-    TextXAlignment = Enum.TextXAlignment.Center,
-    TextTransparency = 1,
-    TextWrapped = true,
-    ZIndex = 30,
-})
-local toastStroke = make("UIStroke", { Color = THEME.post, Thickness = 3, Transparency = 1 }, toast)
-local toastToken = 0
+local toast = EventUI.toast(gui, 0.24, { name = "Toast", textSize = 32 })
 local function showToast(text, color, seconds)
-    toastToken += 1
-    local token = toastToken
-    toast.Text = text
-    toast.TextColor3 = color or THEME.cream
-    toast.TextTransparency = 0
-    toastStroke.Transparency = 0
-    task.delay(seconds or 2.5, function()
-        if token == toastToken then
-            TweenService:Create(toast, TweenInfo.new(0.5), { TextTransparency = 1 }):Play()
-            TweenService:Create(toastStroke, TweenInfo.new(0.5), { Transparency = 1 }):Play()
-        end
-    end)
+    -- the old cream / brass tones become the family's white and hot yellow
+    if color == nil or color == THEME.cream then
+        color = Color3.new(1, 1, 1)
+    elseif color == THEME.gold or color == THEME.goldBright then
+        color = EventUI.HOT
+    end
+    toast.show(text, color, seconds or 2.5)
 end
 
 -- ===== 2b. Podium Character Loadout UI (Active Buffs Strip + 3-Character Selector Modal) =====
@@ -980,21 +966,42 @@ equipBestBtn.Activated:Connect(function()
     pushEquippedToServer(best)
 end)
 
-local function setPanel(height, titleText, timerText, infoText, detailText)
+local panelShown = false
+local panelGlide = EventUI.glider(14)
+local function hidePanel()
+    if panelShown then
+        panelShown = false
+        panel.Visible = false
+        titleStrip.setUrgent(false)
+    end
+    EventUI.stackSet("arena", 0)
+end
+local function setPanel(_, titleText, timerText, infoText, detailText, lastSeconds)
+    local height = STRIP_H + (infoText and (8 + LINE_H) or 0) + (detailText and LINE_H or 0)
+    local first = not panelShown
+    panelShown = true
     panel.Visible = true
-    panel.Size = UDim2.new(0.92, 0, 0, height)
-    titleLabel.Text = titleText
-    timerLabel.Text = timerText or ""
-    infoLabel.Text = infoText or ""
-    infoLabel.Visible = infoText ~= nil
-    detailLabel.Text = detailText or ""
-    detailLabel.Visible = detailText ~= nil
-    -- sit under the river boss panel when both are showing
-    local bossHud = player.PlayerGui:FindFirstChild("BossEventHUD")
-    local bossPanel = bossHud and bossHud:FindFirstChild("Panel")
-    local topY = (bossPanel and bossPanel.Visible) and (bossPanel.AbsoluteSize.Y + 14) or 6
+    panel.Size = UDim2.fromOffset(HUD_W, height)
+    titleStrip.setName(titleText)
+    titleStrip.nameLabel.TextColor3 = string.sub(titleText, 1, 6) == "WINNER" and EventUI.HOT or Color3.new(1, 1, 1)
+    titleStrip.setTime(timerText)
+    titleStrip.setUrgent(lastSeconds == true)
+    setLine(infoLabel, infoText)
+    setLine(detailLabel, detailText)
+    -- its place in the shared top-centre column: under the event pills and the river boss HUD when they show
+    local scale = EventUI.fitTop(gui.AbsoluteSize, HUD_W + 8)
+    panelFit.Scale = scale
+    local topY = panelGlide(EventUI.stackTop("arena") - EventUI.originY(gui), first)
     panel.Position = UDim2.new(0.5, 0, 0, topY)
-    buffsBar.Position = UDim2.new(0.5, 0, 0, topY + height + 6)
+    buffsBar.Position = UDim2.new(0.5, 0, 0, topY + height * scale + 8)
+    local taken = height * scale
+    if buffsBar.Visible then
+        taken += 8 + buffsBar.AbsoluteSize.Y
+    end
+    EventUI.stackSet("arena", taken)
+    if first then
+        titleStrip.popIn()
+    end
 end
 
 -- ===== 3. The personal portal (built here, on this client only) =====
@@ -1273,14 +1280,15 @@ local function refresh()
             info = "Walk into the glowing portal outside your plot to join! " .. joined .. " joined"
             detail = "At least $20M per knockout and $100M for the winner"
         end
-        setPanel(detail and 78 or 58, "ARENA BRAWL - PORTAL OPEN!", formatTime(endsAt - now), info, detail)
+        setPanel(detail and 78 or 58, "ARENA BRAWL - PORTAL OPEN!", formatTime(endsAt - now), info, detail, endsAt - now <= 10)
     elseif phase == "Countdown" then
         setPanel(
             58,
             inArena and "GET READY!" or "ARENA BRAWL STARTING",
             formatTime(endsAt - now),
             inArena and "Equip your bat - your Podium Team buffs are active!" or "The portals have closed.",
-            nil
+            nil,
+            endsAt - now <= 10
         )
     elseif phase == "Fight" then
         local fighters = workspace:GetAttribute("ArenaFighters") or 0
@@ -1297,9 +1305,9 @@ local function refresh()
     else
         local nextAt = workspace:GetAttribute("ArenaNextAt")
         if nextAt and nextAt - now <= 60 and nextAt - now > 0 then
-            setPanel(38, "ARENA BRAWL IN", formatTime(nextAt - now), nil, nil)
+            setPanel(38, "ARENA BRAWL IN", formatTime(nextAt - now), nil, nil, nextAt - now <= 10)
         else
-            panel.Visible = false
+            hidePanel()
         end
     end
 end

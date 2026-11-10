@@ -58,6 +58,7 @@ local function card(parent, name, x, y, w, h, pal, z)
 	H.grad(f, pal[1], pal[2])
 	H.ink(f, 4)
 	H.studs(f, Vector2.new(48, 48), 0.84, 18, z + 1)
+	if H.gloss then H.gloss(f, 18, z + 1) end
 	return f
 end
 local function btn(parent, name, x, y, w, h, pal, word, size, z, onActivate, done)
@@ -192,6 +193,7 @@ function QuestMenuComponent.new(panel, layer, model)
 	H.shadow(canvas, "Sheet", 0, 0, CW, CH, 26, Z - 2)
 	local sheet = H.rect(canvas, "Background", 0, 0, CW, CH, 26, Z - 1, WHITE)
 	H.ink(sheet, 5)
+	H.crazy(canvas, sheet, { pal = C.green, w = CW, h = CH, z = Z, band = 58 })
 	H.studs(sheet, Vector2.new(50, 46), 0.8, 26, Z - 1)
 	H.beams(canvas, 52, 18, 190, Z + 1, hex("8CF56A"), 0.35, 6)
 	local scroll = H.art(canvas, "HeaderIcon", QUEST_ICON, 52, 16, 116, Z + 2)

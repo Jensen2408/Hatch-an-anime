@@ -25,10 +25,44 @@ local Catalog = require(ReplicatedStorage:WaitForChild("CharacterCatalog"))
 local EggCharacterRewards = require(script.Parent:WaitForChild("EggCharacterRewards"))
 local OwnerGameActions = require(script.Parent:WaitForChild("OwnerGameActions"))
 local AdminRoles = require(script.Parent:WaitForChild("AdminRoles"))
+-- Mutation tiers the panel may ask for (river, hand eggs, characters).
+local MUTATION_TIERS = { Silver = true, Gold = true, Diamond = true, Rainbow = true, Molten = true }
+-- A held egg in a mutation: the update pack's egg model when it exists, else the normal egg tinted + its aura.
+local function mutatedEggVisual(template, eggId, tier)
+    local pack = game.ServerStorage:FindFirstChild("UpdatePack_Mutations")
+    local eggs = pack and pack:FindFirstChild("Update_Eggs", true)
+    local packEgg = eggs and eggs:FindFirstChild(eggId .. "_" .. tier .. "_Egg")
+    local visual
+    if packEgg then
+        visual = packEgg:Clone()
+        local _, templateSize = template:GetBoundingBox()
+        local _, packSize = visual:GetBoundingBox()
+        visual:ScaleTo(visual:GetScale() * templateSize.Y / math.max(packSize.Y, 0.01))
+    else
+        local Mutations = require(script.Parent:WaitForChild("Mutations"))
+        local tint = Mutations.Tint[tier]
+        visual = template:Clone()
+        for _, descendant in visual:GetDescendants() do
+            if descendant:IsA("SurfaceAppearance") then
+                pcall(function()
+                    descendant.Color = tint
+                end)
+            elseif descendant:IsA("BasePart") then
+                descendant.Color = descendant.Color:Lerp(tint, 0.7)
+            end
+        end
+        if tier == "Rainbow" and Mutations.RainbowTag then
+            visual:AddTag(Mutations.RainbowTag)
+        end
+    end
+    return visual
+end
 -- Dispatch actions an Admin may run through the Dispatch bindable (everything else is owner-only).
 local ADMIN_BRIDGE = {
     Info = true,
     SpawnRiverEgg = true,
+    SpawnEgg = true, -- 2026-11-08: admins can put eggs / characters in a hand too (lobby-wide stays owner-only)
+    SpawnCharacter = true,
     StartEvent = true,
     StopEvent = true,
     SetSpawnInterval = true,
@@ -41,10 +75,11 @@ local ADMIN_BRIDGE = {
 
 -- ===== 2. State =====
 local ownerControlRemote = ReplicatedStorage:WaitForChild("OwnerControl")
--- lastRequestAt / busy: per-player rate limit. activeEvent: the one running live event in this server.
+-- lastRequestAt / busy: per-player rate limit. activeEvents: the live events running in this server, by Kind.
+-- Since 2026-11-08 they stack: EggRush, DoubleCash and GoldenHour can all run at once (each has its own timer).
 local lastRequestAt = {}
 local busy = {}
-local activeEvent = nil
+local activeEvents = {} -- [Kind] = { Kind, Ends, Before, Conveyor? }
 -- Owner-only gift entry (Golden Pirate). Its templates live in ServerStorage.FutureUpdateContent.<kind>.
 local GOLD_ENTRY = {
     Id = "Pirate",
@@ -83,22 +118,44 @@ local function resolveTarget(raw)
         return result, Players:GetPlayerByUserId(result)
     end
 end
--- Restores whatever the active event changed and clears the replicated event attributes.
-local function stopEvent()
-    if not activeEvent then
-        return
+-- Publishes the running live events for clients: OwnerEvent_<Kind>Ends per event, plus OwnerEventName ("EggRush,
+-- DoubleCash") and OwnerEventEnds (the latest end) for older readers.
+local function publishEvents()
+    local names, latest = {}, nil
+    for _, kind in { "EggRush", "DoubleCash", "GoldenHour" } do
+        local event = activeEvents[kind]
+        workspace:SetAttribute("OwnerEvent_" .. kind .. "Ends", event and event.Ends or nil)
+        if event then
+            table.insert(names, kind)
+            latest = math.max(latest or 0, event.Ends)
+        end
     end
-    local event = activeEvent
-    activeEvent = nil
-    if event.Kind == "EggRush" and event.Conveyor.Parent then
-        event.Conveyor:SetAttribute("SpawnInterval", event.Before)
-    elseif event.Kind == "DoubleCash" then
-        workspace:SetAttribute("OwnerIncomeMultiplier", event.Before)
-    elseif event.Kind == "GoldenHour" then
-        Lighting.ClockTime = event.Before
+    workspace:SetAttribute("OwnerEventName", #names > 0 and table.concat(names, ",") or nil)
+    workspace:SetAttribute("OwnerEventEnds", latest)
+end
+local function eventList()
+    local names = {}
+    for kind in activeEvents do
+        table.insert(names, kind)
     end
-    workspace:SetAttribute("OwnerEventName", nil)
-    workspace:SetAttribute("OwnerEventEnds", nil)
+    table.sort(names)
+    return #names > 0 and table.concat(names, ", ") or "None"
+end
+-- Restores what one live event changed (kind), or every running one (kind = nil).
+local function stopEvent(kind)
+    for eventKind, event in activeEvents do
+        if kind == nil or eventKind == kind then
+            activeEvents[eventKind] = nil
+            if eventKind == "EggRush" and event.Conveyor.Parent then
+                event.Conveyor:SetAttribute("SpawnInterval", event.Before)
+            elseif eventKind == "DoubleCash" then
+                workspace:SetAttribute("OwnerIncomeMultiplier", event.Before)
+            elseif eventKind == "GoldenHour" then
+                Lighting.ClockTime = event.Before
+            end
+        end
+    end
+    publishEvents()
 end
 
 -- ===== 4. Dispatcher (permission check, validation, rate limit, actions) =====
@@ -128,11 +185,26 @@ local dispatch = function(player, action, payload)
         -- Catalog + roster snapshot for the panel.
         elseif action == "Info" then
             local items = {}
-            for _, list in { Catalog.Eggs, Catalog.Characters } do
+            for listIndex, list in { Catalog.Eggs, Catalog.Characters } do
                 for _, catalogEntry in ipairs(list) do
+                    -- 2026-11-08 spawn page: kind, egg, chance, income and the egg's characters for the categories
+                    local eggEntry = Catalog.EggById[catalogEntry.Egg or catalogEntry.Id]
+                    local income, names = nil, {}
+                    for _, character in (eggEntry and eggEntry.Characters or {}) do
+                        table.insert(names, character.Id)
+                        if character.Id == catalogEntry.Id then
+                            income = character.BaseIncome
+                        end
+                    end
                     table.insert(items, {
                         Id = catalogEntry.Id,
                         Name = catalogEntry.Name,
+                        Kind = listIndex == 1 and "Egg" or "Character",
+                        Egg = catalogEntry.Egg,
+                        Order = catalogEntry.Order,
+                        Chance = catalogEntry.Chance,
+                        Income = income,
+                        Characters = listIndex == 1 and names or nil,
                         Rarity = catalogEntry.Rarity,
                         Price = catalogEntry.Price,
                         CharacterAvailable = game.ServerStorage.BrainrotModels:FindFirstChild(catalogEntry.Id) ~= nil,
@@ -158,24 +230,28 @@ local dispatch = function(player, action, payload)
                     { Id = rosterPlayer.UserId, Name = rosterPlayer.Name, Display = rosterPlayer.DisplayName }
                 )
             end
-            return { Ok = true, Items = items, Players = roster, Event = activeEvent and activeEvent.Kind or "None" }
+            return { Ok = true, Items = items, Players = roster, Event = eventList() }
         elseif action == "SpawnRiverEgg" then
             assert(payload.Id ~= "Golden Pirate", "Golden items are owner gifts only; river spawning is disabled.")
             local entry = type(payload.Id) == "string" and Catalog.ById[payload.Id]
             assert(entry, "Choose an egg.")
-            local isMutation = ({ Silver = 1, Gold = 1, Diamond = 1, Rainbow = 1 })[payload.Mutation]
+            local isMutation = MUTATION_TIERS[payload.Mutation]
             local template = game.ServerStorage.AuxEggTemplates:FindFirstChild(entry.Id)
             assert(isMutation or (template and template:GetAttribute("ReleaseEnabled") ~= false), "Egg unavailable.")
             local request = workspace.PirateEggConveyor:FindFirstChild("RequestOwnerRiverEgg")
             assert(request, "River is not ready.")
-            local mutation = ({ Silver = 1, Gold = 1, Diamond = 1, Rainbow = 1 })[payload.Mutation] and payload.Mutation
+            local mutation = MUTATION_TIERS[payload.Mutation] and payload.Mutation
                 or nil
-            request:Fire(player, entry.Id, mutation)
+            local count = math.clamp(math.floor(tonumber(payload.Amount) or 1), 1, 10)
+            for _ = 1, count do
+                request:Fire(player, entry.Id, mutation)
+            end
             return {
                 Ok = true,
-                Message = mutation
-                        and (mutation .. " " .. entry.Id .. " egg queued: it's the next egg down the river.")
-                    or (entry.Id .. " egg spawned at the waterfall."),
+                Message = (count > 1 and (count .. "x ") or "")
+                    .. (mutation and (mutation .. " ") or "")
+                    .. entry.Id
+                    .. " egg queued: next down the river.",
             }
         elseif action == "SpawnEgg" or action == "SpawnCharacter" then
             local entry = payload.Id == "Golden Pirate" and GOLD_ENTRY
@@ -189,14 +265,17 @@ local dispatch = function(player, action, payload)
             for _, recipient in ipairs(recipients) do
                 assert(recipient:FindFirstChildOfClass("Backpack"), "A player backpack is not ready. Try again.")
             end
+            local count = math.clamp(math.floor(tonumber(payload.Amount) or 1), 1, 10)
+            local mutation = MUTATION_TIERS[payload.Mutation] and payload.Mutation or nil
             for _, recipient in ipairs(recipients) do
+              for _ = 1, count do
                 local bag = recipient:FindFirstChildOfClass("Backpack")
                 assert(bag, "Your backpack is not ready.")
                 if action == "SpawnCharacter" then
                     local template = entry.OwnerGold and goldTemplate("Characters")
                         or game.ServerStorage.BrainrotModels:FindFirstChild(entry.Id)
                     assert(template, "Character unavailable.")
-                    local gift = EggCharacterRewards.Tool(template, entry.CharacterId or entry.Id)
+                    local gift = EggCharacterRewards.Tool(template, entry.CharacterId or entry.Id, nil, mutation or false)
                     if entry.OwnerGold then
                         gift:SetAttribute("GoldVariant", true)
                         gift:SetAttribute("Golden", true)
@@ -225,9 +304,13 @@ local dispatch = function(player, action, payload)
                         tool:SetAttribute("GoldVariant", true)
                         tool:SetAttribute("Golden", true)
                     end
-                    local visual = template:Clone()
+                    local visual = (mutation and mutatedEggVisual(template, entry.Id, mutation)) or template:Clone()
+                    if mutation then
+                        tool:SetAttribute("Mutation", mutation)
+                        tool.Name = mutation .. " " .. tool.Name
+                    end
                     visual.Name = "Egg"
-                    visual:ScaleTo(template:GetScale() * 0.5)
+                    visual:ScaleTo(visual:GetScale() * 0.5)
                     visual:PivotTo(CFrame.new())
                     visual.Parent = tool
                     local handle = Instance.new("Part")
@@ -253,8 +336,17 @@ local dispatch = function(player, action, payload)
                     end
                     tool.Parent = bag
                 end
+              end
             end
-            return { Ok = true, Message = entry.Name .. " given to " .. #recipients .. " player(s)." }
+            return {
+                Ok = true,
+                Message = (count > 1 and (count .. "x ") or "")
+                    .. (mutation and (mutation .. " ") or "")
+                    .. entry.Name
+                    .. " given to "
+                    .. #recipients
+                    .. " player(s).",
+            }
         -- Unreachable: OwnerGameActions.Handles.GiveCash is checked first (kept as-is).
         elseif action == "GiveCash" then
             local amount = tonumber(payload.Amount)
@@ -272,33 +364,40 @@ local dispatch = function(player, action, payload)
                 "Unknown event."
             )
             local duration = tonumber(payload.Duration) or 120
-            assert(duration == duration and duration >= 15 and duration <= 1800, "Duration must be 15–1800 seconds.")
-            assert(not activeEvent, "Stop the active event before starting another.")
-            local event = { Kind = payload.Kind }
-            if event.Kind == "EggRush" then
-                event.Conveyor = workspace:FindFirstChild("PirateEggConveyor")
-                assert(event.Conveyor, "River unavailable.")
-                event.Before = event.Conveyor:GetAttribute("SpawnInterval") or 4
-                event.Conveyor:SetAttribute("SpawnInterval", math.max(1.5, event.Before * 0.5))
-            elseif event.Kind == "DoubleCash" then
-                event.Before = workspace:GetAttribute("OwnerIncomeMultiplier") or 1
-                workspace:SetAttribute("OwnerIncomeMultiplier", 2)
+            assert(duration == duration and duration >= 15 and duration <= 7200, "Duration must be 15 s to 2 hours.")
+            local ends = workspace:GetServerTimeNow() + duration
+            local event = activeEvents[payload.Kind]
+            if event then
+                -- already running: start its timer again with the new length
+                event.Ends = ends
             else
-                event.Before = Lighting.ClockTime
-                Lighting.ClockTime = 17.4
+                event = { Kind = payload.Kind, Ends = ends }
+                if event.Kind == "EggRush" then
+                    event.Conveyor = workspace:FindFirstChild("PirateEggConveyor")
+                    assert(event.Conveyor, "River unavailable.")
+                    event.Before = event.Conveyor:GetAttribute("SpawnInterval") or 4
+                    event.Conveyor:SetAttribute("SpawnInterval", math.max(1.5, event.Before * 0.5))
+                elseif event.Kind == "DoubleCash" then
+                    event.Before = workspace:GetAttribute("OwnerIncomeMultiplier") or 1
+                    workspace:SetAttribute("OwnerIncomeMultiplier", 2)
+                else
+                    event.Before = Lighting.ClockTime
+                    Lighting.ClockTime = 17.4
+                end
+                activeEvents[event.Kind] = event
             end
-            activeEvent = event
-            workspace:SetAttribute("OwnerEventName", event.Kind)
-            workspace:SetAttribute("OwnerEventEnds", workspace:GetServerTimeNow() + duration)
+            publishEvents()
             task.delay(duration, function()
-                if activeEvent == event then
-                    stopEvent()
+                if activeEvents[event.Kind] == event and workspace:GetServerTimeNow() >= event.Ends - 0.5 then
+                    stopEvent(event.Kind)
                 end
             end)
-            return { Ok = true, Message = event.Kind .. " started in this server for " .. duration .. " seconds." }
+            return { Ok = true, Message = event.Kind .. " running in this server for " .. math.floor(duration) .. " seconds." }
         elseif action == "StopEvent" then
-            stopEvent()
-            return { Ok = true, Message = "Event stopped; original settings restored." }
+            local kind = payload.Kind
+            assert(kind == nil or activeEvents[kind], "That event is not running.")
+            stopEvent(kind)
+            return { Ok = true, Message = (kind or "Every live event") .. " stopped; original settings restored." }
         -- Moderation. Note: dispatch-level Kick is owner-only; admin kicks are handled in OwnerPanelServer.
         elseif action == "Kick" or action == "Ban24h" or action == "Unban" then
             assert(payload.Confirmed == true, "Confirm this moderation action first.")

@@ -96,7 +96,7 @@ local function card(parent, name, x, y, w, h, pal, z, shine)
 	H.grad(f, pal[1], pal[2])
 	H.ink(f, 4)
 	H.studs(f, Vector2.new(48, 48), 0.84, 18, z + 1)
-	if shine then H.shine(f, 18, z + 1) end
+	if shine then H.shine(f, 18, z + 1) elseif H.gloss then H.gloss(f, 18, z + 1) end
 	return f
 end
 -- a pressable button; off = the darkest slab with the reason, no lip, no click (MAX, LOCKED, ...)
@@ -397,6 +397,7 @@ function PlotComponent.new(panel, layer, model)
 	H.shadow(canvas, "Sheet", 0, 0, CW, CH, 26, Z - 2)
 	local sheet = H.rect(canvas, "Background", 0, 0, CW, CH, 26, Z - 1, WHITE)
 	H.ink(sheet, 5)
+	H.crazy(canvas, sheet, { pal = C.red, w = CW, h = CH, z = Z, band = 58 })
 	H.studs(sheet, Vector2.new(50, 46), 0.8, 26, Z - 1)
 	H.beams(canvas, 52, 18, 190, Z + 1, hex("FF5A6E"), 0.35, 6)
 	picture(canvas, "HeaderIcon", TEMPLE_ICON, 52, 14, 120, Z + 2):SetAttribute("Float", 14)
