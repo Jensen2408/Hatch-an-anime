@@ -257,7 +257,7 @@
         },
         "MutationCoating": {
           "$path": "src/client/Effects/MutationCoating.client.luau",
-          "MoltenSurface": {"$path": "src/client/Effects/MoltenSurface.luau", "MoltenMapData": {"$path": "src/client/Effects/MoltenMapData.luau"}}
+          "MoltenSurface": {"$path": "src/client/Effects/MoltenSurface.luau", "MoltenMapData": {"$path": "src/client/Effects/MoltenMapData"}}
         },
         "RainbowMutationClient": {
           "$path": "src/client/Effects/RainbowMutationClient.client.luau"
@@ -3914,6 +3914,9 @@
         "$className": "Folder",
         "OrionPixels": {
           "$path": "src/shared/Effects/GalaxyPrototype/OrionPixels.luau"
+        },
+        "GalaxyMapData": {
+          "$path": "src/shared/Effects/GalaxyPrototype/GalaxyMapData"
         },
         "BodyProjection": {
           "$path": "src/shared/Effects/GalaxyPrototype/BodyProjection.model.json"

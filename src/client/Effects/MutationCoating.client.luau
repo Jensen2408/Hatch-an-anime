@@ -1,10 +1,19 @@
 local Assets=game:GetService("AssetService")
 local Run=game:GetService("RunService")
 local textures={Silver="rbxassetid://96228988315926",Gold="rbxassetid://110840054513785",Diamond="rbxassetid://70482436642739",Rainbow="rbxassetid://70614355485441",Molten=true}
-local opacity={Silver=.42,Gold=.62,Diamond=.58,Rainbow=.48,Molten=.20}
+local opacity={Silver=.28,Gold=.5,Diamond=.58,Rainbow=.48,Molten=.20}
+-- Ash (Molten) head fade: shells above HEAD_FRAC of the model height use HEAD_ALPHA transparency (1 = no coating).
+local HEAD_FRAC,HEAD_ALPHA=.55,.88
+-- Tiers that get a projected layer. Gold and Silver have their pattern baked into the character texture
+-- (MutationFinish/bake_metal_atlas.js), so they get no layer.
+local coated={Rainbow=true,Molten=true,Diamond=true}
 local active,pending={},{}
 local moltenSurface
+-- Style "LiquidMetal": seamless wave textures + closed meshes (smoothed-normal offset, no cracks at cube edges).
+-- Rainbow keeps the original projected meshes ("ProjectedRainbow").
+local STYLE="LiquidMetal"
 local templates=game.ReplicatedStorage:WaitForChild("ProjectedCoatingMeshes")
+local closedTemplates=game.ReplicatedStorage:WaitForChild("ClosedCoatingMeshes")
 local finishes=game.ReplicatedStorage:WaitForChild("MutationSurfaceFinishes")
 local image=Assets:CreateEditableImage({Size=Vector2.new(64,64)})
 local pixels=buffer.create(16384)
@@ -25,7 +34,8 @@ local function build(m)
  if active[m] or pending[m] then return end pending[m]=true
  local s={folder=Instance.new("Folder"),parts={},tier=m:GetAttribute("Mutation")}
  s.folder.Name="MutationCoating"
- local home=m:GetPivot() local _,size=m:GetBoundingBox() local tile=math.max(size.Y*.65,1)
+ local home=m:GetPivot() local bbox,size=m:GetBoundingBox() local tile=math.max(size.Y*.65,1)
+ local headY=bbox.Position.Y-size.Y/2+size.Y*HEAD_FRAC
  local ok,err=pcall(function()
  local finish
  if s.tier == "Molten" then
@@ -36,9 +46,11 @@ local function build(m)
  end
  for _,part in m:GetDescendants() do
  if not part:IsA("MeshPart") or part.Transparency>=1 then continue end
- local template=templates:FindFirstChild(part.Name)
+ local template=(s.tier=="Rainbow" and templates or closedTemplates):FindFirstChild(part.Name)
  if not template then continue end
- local rec={source=part,bones={}} table.insert(s.parts,rec)
+ local rec={source=part,bones={},alpha=opacity[s.tier]} table.insert(s.parts,rec)
+ -- Molten/Ash: fade the coating on the head so the face reads through the crust.
+ if s.tier=="Molten" and part.Position.Y>headY then rec.alpha=HEAD_ALPHA end
  local shell=part:Clone()
  for _,d in shell:GetDescendants() do if not d:IsA("Bone") and not d:FindFirstAncestorWhichIsA("Bone") then d:Destroy() end end
  -- The projected mesh has a baked normal offset. Preserve that offset at the source mesh's scale.
@@ -46,12 +58,13 @@ local function build(m)
  shell:ApplyMesh(template)
  shell.Size=part.Size*(template.MeshSize/part.MeshSize)
  shell.CFrame=part.CFrame shell.Name="ProjectedCoating"
+ shell:SetAttribute("CoatingStyle",s.tier=="Rainbow" and "ProjectedRainbow" or s.tier=="Molten" and "Ash" or STYLE)
  shell.Material=Enum.Material.SmoothPlastic shell.Reflectance=0 shell.Color=Color3.new(1,1,1)
  shell.TextureID=""
  local surface=finish:Clone()
- surface.Parent=shell
+ surface.Parent=shell rec.surface=surface
  shell.Anchored=true shell.CanCollide=false shell.CanQuery=false shell.CanTouch=false shell.CastShadow=false
- shell.Transparency=opacity[s.tier] rec.shell=shell
+ shell.Transparency=rec.alpha rec.shell=shell
  for _,b in part:GetDescendants() do if b:IsA("Bone") then
  local path={} local p=b while p~=part do table.insert(path,1,p.Name) p=p.Parent end
  local target=shell for _,name in path do target=target and target:FindFirstChild(name) end
@@ -68,7 +81,7 @@ task.spawn(function()
  while task.wait(1) do
  local cam=workspace.CurrentCamera if not cam then continue end
  local near={}
- for _,m in workspace:GetDescendants() do if m:IsA("Model") and not m:IsA("Tool") and textures[m:GetAttribute("Mutation")] then
+ for _,m in workspace:GetDescendants() do if m:IsA("Model") and not m:IsA("Tool") and coated[m:GetAttribute("Mutation")] then
  local distance=(m:GetPivot().Position-cam.CFrame.Position).Magnitude
  if distance<100 then table.insert(near,{m,distance}) end end end
  table.sort(near,function(a,b) return a[2]<b[2] end)
@@ -93,11 +106,12 @@ Run.RenderStepped:Connect(function()
          break
      end
  end
- if hasMolten and moltenSurface then moltenSurface.Update(now) end
+ local glow=hasMolten and moltenSurface and moltenSurface.Update(now)
  for m,s in active do
  if not m:IsDescendantOf(workspace) then remove(m) continue end
  for _,p in s.parts do if p.shell and p.source.Parent then
- p.shell.CFrame=p.source.CFrame p.shell.Transparency=p.source.Transparency>=1 and 1 or opacity[s.tier]
+ p.shell.CFrame=p.source.CFrame p.shell.Transparency=p.source.Transparency>=1 and 1 or p.alpha
+ if glow and p.surface and s.tier=="Molten" then p.surface.EmissiveStrength=glow end
  p.shell.LocalTransparencyModifier=p.source.LocalTransparencyModifier
  for _,b in p.bones do if b[1].Parent then b[2].Transform=b[1].Transform end end
  end end end

@@ -89,6 +89,7 @@ Mutations.Textures = {
     Zoro = { Silver = 73265779154979, Gold = 85963045781033, Diamond = 76309674239826, Rainbow = 135395598069562 },
 }
 Mutations.RainbowTag = "RainbowMutation"
+Mutations.ProbeMaps = false
 
 local rng = Random.new()
 local MOLTEN_VOLCANO_ODDS = 1000
@@ -300,7 +301,10 @@ function Mutations.Model(id, tier, base)
     if clone then
         clone:SetAttribute("Mutation", tier)
         local tint = Mutations.Tint[tier]
-        if tint then
+        -- The server-side texture probe stripped every Gold/Silver SurfaceAppearance when PreloadAsync did not
+        -- report Success within 8s (it often does not on the server), leaving flat yellow/white plot characters.
+        -- Off by default; set Mutations.ProbeMaps = true to bring the fallback back.
+        if tint and Mutations.ProbeMaps then
             for _, appearance in clone:GetDescendants() do
                 local part = appearance.Parent
                 if appearance:IsA("SurfaceAppearance") and part:IsA("MeshPart") then
