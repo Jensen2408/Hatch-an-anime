@@ -63,9 +63,7 @@ end
 
 ---------------------------------------------------------------- the screen (2026-11-10, no stud plate)
 -- A full-screen colour backdrop (violet > blue > teal, slowly drifting) with soft glow blobs, spinning rays and a
--- gold glow behind the headline. The Roblox menu covers the middle, so the text sits at the top:
--- "WHILE YOU'RE AWAY YOUR TEMPLE EARNS" / big gold amount / "A DAY OFFLINE" / small rate line.
-local W, HT = 900, 250
+-- gold glows behind the two text columns.
 local GOLD_A, GOLD_B = Color3.fromRGB(255, 240, 120), Color3.fromRGB(255, 168, 0)
 
 local screenGui = create(
@@ -115,20 +113,8 @@ local rays = create("ImageLabel", {
     ImageColor3 = Color3.fromRGB(255, 236, 150),
     ImageTransparency = 0.78,
     AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.new(0.5, 0, 0, 150),
+    Position = UDim2.fromScale(0.5, 0.5),
     Size = UDim2.fromScale(1.5, 1.5),
-    SizeConstraint = Enum.SizeConstraint.RelativeXX,
-    ZIndex = 2,
-}, backdrop)
-create("ImageLabel", {
-    Name = "GoldGlow",
-    BackgroundTransparency = 1,
-    Image = GLOW_IMAGE,
-    ImageColor3 = Color3.fromRGB(255, 200, 40),
-    ImageTransparency = 0.25,
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.new(0.5, 0, 0, 150),
-    Size = UDim2.fromScale(0.8, 0.45),
     SizeConstraint = Enum.SizeConstraint.RelativeXX,
     ZIndex = 2,
 }, backdrop)
@@ -145,55 +131,70 @@ create("UIGradient", {
 }, shade)
 local rain = create("Frame", { Name = "Rain", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ClipsDescendants = true, ZIndex = 4 }, backdrop)
 
-local root = create("Frame", { Name = "Root", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 34), Size = UDim2.fromOffset(W, HT), ZIndex = 5 }, screenGui)
-local fitScale = create("UIScale", { Name = "Fit" }, root)
-local stage = create("Frame", { Name = "Stage", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0), Size = UDim2.fromScale(1, 1) }, root)
-local popScale = create("UIScale", { Name = "Pop", Scale = 0.6 }, stage)
-
-local function label(name, text, y, size, color, stroke)
+-- The Roblox menu covers the middle of the screen (about 22%..78% across, 9%..94% down), so nothing readable may
+-- sit there. The message lives in the two side strips, plus one short line in the thin band above the menu.
+local COL_W, COL_H = 300, 380
+local function strokeOn(textLabel, thickness)
+    create("UIStroke", { Color = Color3.fromRGB(20, 8, 60), Thickness = thickness, LineJoinMode = Enum.LineJoinMode.Bevel }, textLabel)
+end
+local columns = {}
+local function column(name, xScale)
+    local root = create("Frame", { Name = name, BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(xScale, 0.5), Size = UDim2.fromOffset(COL_W, COL_H), ZIndex = 5 }, screenGui)
+    local fit = create("UIScale", { Name = "Fit" }, root)
+    local stage = create("Frame", { Name = "Stage", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, root)
+    local pop = create("UIScale", { Name = "Pop", Scale = 0.6 }, stage)
+    create("ImageLabel", { Name = "Glow", BackgroundTransparency = 1, Image = GLOW_IMAGE, ImageColor3 = Color3.fromRGB(255, 200, 40), ImageTransparency = 0.35, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(COL_W * 1.9, COL_W * 1.9), ZIndex = 4 }, stage)
+    table.insert(columns, { fit = fit, pop = pop })
+    return stage
+end
+local function label(parent, name, text, y, height, size, color, stroke)
     local textLabel = create("TextLabel", {
         Name = name,
         BackgroundTransparency = 1,
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, y),
-        Size = UDim2.fromOffset(W, size + 8),
+        Position = UDim2.fromOffset(0, y),
+        Size = UDim2.fromOffset(COL_W, height),
         FontFace = FONT,
         Text = text,
         TextSize = size,
+        TextWrapped = true,
         TextColor3 = color,
         ZIndex = 6,
-    }, stage)
-    create("UIStroke", { Color = Color3.fromRGB(20, 8, 60), Thickness = stroke, LineJoinMode = Enum.LineJoinMode.Bevel }, textLabel)
+    }, parent)
+    strokeOn(textLabel, stroke)
     return textLabel
 end
-local topLabel = label("Top", "WHILE YOU'RE AWAY, YOUR TEMPLE EARNS", 0, 30, WHITE, 3)
-local amountLabel = label("Amount", "$0", 34, 124, WHITE, 6)
+local MINT = Color3.fromRGB(150, 255, 214)
+local left = column("Left", 0.11)
+local leftTop = label(left, "Top", "YOUR TEMPLE EARNS", 20, 80, 34, WHITE, 3.7)
+local amountLabel = label(left, "Amount", "$0", 110, 130, 110, WHITE, 6)
+amountLabel.TextWrapped = false
+amountLabel.TextScaled = true
+create("UITextSizeConstraint", { MaxTextSize = 110, MinTextSize = 30 }, amountLabel)
 create("UIGradient", { Rotation = 90, Color = ColorSequence.new(GOLD_A, GOLD_B) }, amountLabel)
-local dayLabel = label("Day", "A DAY OFFLINE", 164, 40, WHITE, 3.7)
-local pill = create("Frame", {
-    Name = "Pill",
-    AnchorPoint = Vector2.new(0.5, 0),
-    Position = UDim2.new(0.5, 0, 0, 216),
-    AutomaticSize = Enum.AutomaticSize.X,
-    Size = UDim2.fromOffset(0, 34),
-    BackgroundColor3 = Color3.fromRGB(20, 8, 60),
-    BackgroundTransparency = 0.35,
-    ZIndex = 6,
-}, stage)
-create("UICorner", { CornerRadius = UDim.new(1, 0) }, pill)
-create("UIPadding", { PaddingLeft = UDim.new(0, 18), PaddingRight = UDim.new(0, 18) }, pill)
-create("UIStroke", { Color = WHITE, Transparency = 0.6, Thickness = 1.5 }, pill)
-local rateLabel = create("TextLabel", {
-    Name = "Rate",
+local dayLabel = label(left, "Day", "A DAY OFFLINE", 250, 90, 38, WHITE, 3.7)
+local right = column("Right", 0.89)
+local rightTop = label(right, "Top", "WHILE YOU'RE AWAY", 20, 80, 34, WHITE, 3.7)
+local rateLabel = label(right, "Rate", "$0/s", 115, 90, 70, MINT, 5)
+rateLabel.TextWrapped = false
+rateLabel.TextScaled = true
+create("UITextSizeConstraint", { MaxTextSize = 70, MinTextSize = 24 }, rateLabel)
+local tipLabel = label(right, "Tip", "FILLS UP OVER 8 HOURS, COME BACK TO COLLECT!", 215, 130, 28, WHITE, 3.2)
+-- the one-liner above the menu
+local topLine = create("TextLabel", {
+    Name = "TopLine",
     BackgroundTransparency = 1,
-    AutomaticSize = Enum.AutomaticSize.X,
-    Size = UDim2.fromScale(0, 1),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0.5, 0, 0, 30),
+    Size = UDim2.new(0.6, 0, 0, 34),
     FontFace = FONT,
     Text = "",
-    TextSize = 20,
-    TextColor3 = Color3.fromRGB(150, 255, 214),
-    ZIndex = 7,
-}, pill)
+    TextScaled = true,
+    TextColor3 = WHITE,
+    TextTransparency = 1,
+    ZIndex = 6,
+}, screenGui)
+create("UITextSizeConstraint", { MaxTextSize = 26, MinTextSize = 12 }, topLine)
+local topStroke = create("UIStroke", { Color = Color3.fromRGB(20, 8, 60), Thickness = 3, LineJoinMode = Enum.LineJoinMode.Bevel, Transparency = 1 }, topLine)
 
 local isOpen, renderConnection = false, nil
 local function spawnFallingCoin()
@@ -227,20 +228,32 @@ local function showOverlay()
     -- a full day away pays out the cap (8 hours of offline income), so that is the honest "per day" number
     local perDay = rate * math.min(86400, OFFLINE_CAP)
     if rate > 0 then
-        topLabel.Text = "WHILE YOU'RE AWAY, YOUR TEMPLE EARNS"
+        leftTop.Text = "YOUR TEMPLE EARNS"
         amountLabel.Text = formatShortCash(perDay)
         dayLabel.Text = "A DAY OFFLINE"
-        rateLabel.Text = formatShortCash(rate) .. "/s while you're gone  ·  fills up over 8 hours"
+        rightTop.Text = "WHILE YOU'RE AWAY"
+        rateLabel.Text = formatShortCash(rate) .. "/s"
+        tipLabel.Text = "FILLS UP OVER 8 HOURS, COME BACK TO COLLECT!"
+        topLine.Text = "YOUR TEMPLE EARNS " .. formatShortCash(perDay) .. " A DAY OFFLINE"
     else
-        topLabel.Text = "YOUR TEMPLE CAN EARN WHILE YOU'RE AWAY"
+        leftTop.Text = "YOUR TEMPLE CAN EARN"
         amountLabel.Text = "$0"
         dayLabel.Text = "A DAY OFFLINE... SO FAR"
-        rateLabel.Text = "Place characters on your stands to start earning offline"
+        rightTop.Text = "START EARNING"
+        rateLabel.Text = "$0/s"
+        tipLabel.Text = "PLACE CHARACTERS ON YOUR STANDS TO EARN WHILE OFFLINE!"
+        topLine.Text = "PLACE CHARACTERS TO EARN CASH WHILE YOU'RE OFFLINE"
     end
-    fitScale.Scale = math.clamp(workspace.CurrentCamera.ViewportSize.X / (W + 120), 0.4, 1.15)
+    local viewport = workspace.CurrentCamera.ViewportSize
+    local fit = math.clamp(math.min(viewport.X * 0.2 / COL_W, viewport.Y * 0.8 / COL_H), 0.35, 1.6)
     screenGui.Enabled = true
-    popScale.Scale = 0.6
-    TweenService:Create(popScale, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+    for _, col in columns do
+        col.fit.Scale = fit
+        col.pop.Scale = 0.6
+        TweenService:Create(col.pop, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+    end
+    TweenService:Create(topLine, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
+    TweenService:Create(topStroke, TweenInfo.new(0.3), { Transparency = 0 }):Play()
     TweenService:Create(backdrop, TweenInfo.new(0.35, Enum.EasingStyle.Quad), { GroupTransparency = 0.04 }):Play()
     local spawnTimer, clock = 0, 0
     renderConnection = RunService.RenderStepped:Connect(function(dt)
@@ -264,7 +277,11 @@ local function hideOverlay()
         return
     end
     isOpen = false
-    TweenService:Create(popScale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.6 }):Play()
+    for _, col in columns do
+        TweenService:Create(col.pop, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.6 }):Play()
+    end
+    TweenService:Create(topLine, TweenInfo.new(0.2), { TextTransparency = 1 }):Play()
+    TweenService:Create(topStroke, TweenInfo.new(0.2), { Transparency = 1 }):Play()
     TweenService:Create(backdrop, TweenInfo.new(0.25), { GroupTransparency = 1 }):Play()
     if renderConnection then
         renderConnection:Disconnect()
