@@ -44,53 +44,21 @@ local function makeSolid(color)
 	return img
 end
 
-local originalNormal = track(Assets:CreateEditableImageAsync(Content.fromUri("rbxassetid://122481203141794")))
-local faceImage = track(Assets:CreateEditableImageAsync(Content.fromUri("rbxassetid://131043949385474")))
-local faceMask = track(Assets:CreateEditableImageAsync(Content.fromUri("rbxassetid://81291379703357")))
-local faceSurface = track(Assets:CreateSurfaceAppearanceAsync({
-	ColorMap = Content.fromObject(faceImage),
-	NormalMap = Content.fromObject(originalNormal),
-	EmissiveMask = Content.fromObject(faceMask),
-	RoughnessMap = Content.fromObject(makeSolid(Color3.new(1, 1, 1))),
-	MetalnessMap = Content.fromObject(makeSolid(Color3.new(0, 0, 0))),
-}))
-faceSurface.Name = "GalaxyBase"
-faceSurface.EmissiveStrength = 1.85
-
--- Rich cosmic violet/indigo base with original voxel cube normal bevels
-local tintNormal = track(Assets:CreateEditableImageAsync(Content.fromUri("rbxassetid://122481203141794")))
-local tintImage = track(Assets:CreateEditableImageAsync(Content.fromUri("rbxassetid://92565503187719")))
-local dims = tintImage.Size
-local tintPixels = tintImage:ReadPixelsBuffer(Vector2.zero, dims)
-for i = 0, dims.X * dims.Y - 1 do
-	local p = i * 4
-	local r = buffer.readu8(tintPixels, p) / 255
-	local g = buffer.readu8(tintPixels, p + 1) / 255
-	local b = buffer.readu8(tintPixels, p + 2) / 255
-	local lum = r * 0.3 + g * 0.5 + b * 0.2
-	buffer.writeu8(tintPixels, p, math.floor(math.clamp(0.035 + lum * 0.30, 0, 1) * 255))
-	buffer.writeu8(tintPixels, p + 1, math.floor(math.clamp(0.015 + lum * 0.16, 0, 1) * 255))
-	buffer.writeu8(tintPixels, p + 2, math.floor(math.clamp(0.095 + lum * 0.50, 0, 1) * 255))
-end
-tintImage:WritePixelsBuffer(Vector2.zero, dims, tintPixels)
-local tintSurface = track(Assets:CreateSurfaceAppearanceAsync({
-	ColorMap = Content.fromObject(tintImage),
-	NormalMap = Content.fromObject(tintNormal),
-	EmissiveMask = Content.fromObject(makeSolid(Color3.new(0, 0, 0))),
-	RoughnessMap = Content.fromObject(makeSolid(Color3.new(1, 1, 1))),
-	MetalnessMap = Content.fromObject(makeSolid(Color3.new(0, 0, 0))),
-}))
-tintSurface.Name = "GalaxyBase"
-
--- Decode baked 256x256 seamless ColorMap for the SINGLE animated layer
--- Populate driftImage BEFORE CreateSurfaceAppearanceAsync so the GPU texture backing initializes with valid opaque texels.
-local colorBytes = decodeParts(mapData.Color)
-local colorTile = track(Assets:CreateEditableImage({ Size = DIMS }))
-colorTile:WritePixelsBuffer(Vector2.zero, DIMS, colorBytes)
-
-local driftImage = track(Assets:CreateEditableImage({ Size = DIMS }))
-driftImage:WritePixelsBuffer(Vector2.zero, DIMS, colorBytes)
-
+-- Everything below is built lazily, the first time a galaxy model is near the camera. Before this, every client
+-- loaded 3 asset images, ran a Luau loop over the whole Sun God atlas and held ~9 EditableImages at startup,
+-- even when nobody owned a galaxy character.
+local coat, colorTile, driftImage
+-- Base surface: the character's CURRENT atlas tinted cosmic violet, eyes/mouth glowing white (GlowFace). The old
+-- hand-made face/tint images were drawn for the pre-re-unwrap UVs, which is why the face had disappeared.
+local GlowFace = require(RS:WaitForChild("GlowFace"))
+local GALAXY_STYLE = {
+	base = function(r, g, b)
+		local lum = r * 0.3 + g * 0.5 + b * 0.2
+		return 0.035 + lum * 0.30, 0.015 + lum * 0.16, 0.095 + lum * 0.50
+	end,
+	glow = Color3.new(1, 1, 1),
+	emissive = 1.85,
+}
 local DRAW_OPTS = {
 	PivotPoint = Vector2.zero,
 	CombineType = Enum.ImageCombineType.Overwrite,
@@ -106,16 +74,29 @@ local function drift(t)
 		end
 	end
 end
-drift(0)
+local initStarted, ready = false, false
+local function initResources()
+	-- Decode baked 256x256 seamless ColorMap for the SINGLE animated layer
+	-- Populate driftImage BEFORE CreateSurfaceAppearanceAsync so the GPU texture backing initializes with valid opaque texels.
+	local colorBytes = decodeParts(mapData.Color)
+	colorTile = track(Assets:CreateEditableImage({ Size = DIMS }))
+	colorTile:WritePixelsBuffer(Vector2.zero, DIMS, colorBytes)
 
-local coat = track(Assets:CreateSurfaceAppearanceAsync({
-	ColorMap = Content.fromObject(driftImage),
-	EmissiveMask = Content.fromObject(makeSolid(Color3.new(1, 1, 1))),
-	RoughnessMap = Content.fromObject(makeSolid(Color3.new(1, 1, 1))),
-	MetalnessMap = Content.fromObject(makeSolid(Color3.new(0, 0, 0))),
-}))
-coat.Name = "GalaxyDrift"
-coat.EmissiveStrength = 1.35
+	driftImage = track(Assets:CreateEditableImage({ Size = DIMS }))
+	driftImage:WritePixelsBuffer(Vector2.zero, DIMS, colorBytes)
+
+	drift(0)
+
+	coat = track(Assets:CreateSurfaceAppearanceAsync({
+		ColorMap = Content.fromObject(driftImage),
+		EmissiveMask = Content.fromObject(makeSolid(Color3.new(1, 1, 1))),
+		RoughnessMap = Content.fromObject(makeSolid(Color3.new(1, 1, 1))),
+		MetalnessMap = Content.fromObject(makeSolid(Color3.new(0, 0, 0))),
+	}))
+	coat.Name = "GalaxyDrift"
+	coat.EmissiveStrength = 1.35
+	ready = true
+end
 
 local active, pending = {}, {}
 local function remove(m)
@@ -161,6 +142,12 @@ local function build(m)
 	local folder = Instance.new("Folder")
 	folder.Name = "GalaxyLayersLocal"
 	local records = {}
+	local baseSurface, faceParts = GlowFace.Surface(m, "Galaxy", GALAXY_STYLE)
+	if not m:IsDescendantOf(workspace) then
+		pending[m] = nil
+		folder:Destroy()
+		return
+	end
 	for _, p in m:GetDescendants() do
 		if not p:IsA("MeshPart") or p.Transparency >= 1 then continue end
 		if p.Name == "GalaxyMovingLayer" or p.Name == "ProjectedCoating" then continue end
@@ -172,11 +159,16 @@ local function build(m)
 				oldSa:Destroy()
 			end
 		end
-		local original = p:FindFirstChildOfClass("SurfaceAppearance")
-		if original then original.Parent = nil end
-		local head = partIndex and partIndex >= 6
-		local base = head and faceSurface or tintSurface
-		base:Clone().Parent = p
+		local original
+		if baseSurface then
+			original = p:FindFirstChildOfClass("SurfaceAppearance")
+			if original then original.Parent = nil end
+			local base = baseSurface:Clone()
+			base.Name = "GalaxyBase"
+			base.Parent = p
+		end
+		-- parts carrying the glowing face get a thinner galaxy layer so the face reads through
+		local head = if faceParts then faceParts[p.Name] == true else (partIndex and partIndex >= 6)
 		local shell = p:Clone()
 		for _, d in shell:GetDescendants() do
 			if not d:IsA("Bone") and not d:FindFirstAncestorWhichIsA("Bone") then
@@ -238,27 +230,28 @@ local function build(m)
 end
 
 -- Event-driven candidate tracking (eliminates expensive workspace:GetDescendants() scans in RenderStepped!)
+-- No per-Model signal connections (the old version hooked GetAttributeChangedSignal on every Model in workspace).
+-- Galaxy models are found when they are added (attribute or "GalaxyPrototype" tag); attribute removal is caught by the scan.
+local CollectionService = game:GetService("CollectionService")
 local candidates = {}
+local function isGalaxy(inst)
+	return inst:GetAttribute("GalaxyPrototype") == true or CollectionService:HasTag(inst, "GalaxyPrototype")
+end
 local function watchInstance(inst)
-	if inst:IsA("Model") and not inst:IsA("Tool") then
-		if inst:GetAttribute("GalaxyPrototype") == true then
-			candidates[inst] = true
-		end
-		inst:GetAttributeChangedSignal("GalaxyPrototype"):Connect(function()
-			if inst:GetAttribute("GalaxyPrototype") == true then
-				candidates[inst] = true
-			else
-				candidates[inst] = nil
-				remove(inst)
-			end
-		end)
+	if inst:IsA("Model") and not inst:IsA("Tool") and isGalaxy(inst) then
+		candidates[inst] = true
 	end
 end
 
 for _, inst in workspace:GetDescendants() do
 	watchInstance(inst)
 end
-local addedConn = workspace.DescendantAdded:Connect(watchInstance)
+local addedConn = workspace.DescendantAdded:Connect(function(inst)
+	watchInstance(inst)
+	if inst:IsA("Model") then
+		task.defer(watchInstance, inst)
+	end
+end)
 local removingConn = workspace.DescendantRemoving:Connect(function(inst)
 	if candidates[inst] then
 		candidates[inst] = nil
@@ -275,7 +268,7 @@ local connection = Run.RenderStepped:Connect(function()
 		local cam = workspace.CurrentCamera
 		if cam then
 			for m in candidates do
-				if not m:IsDescendantOf(workspace) then
+				if not m:IsDescendantOf(workspace) or not isGalaxy(m) then
 					candidates[m] = nil
 					remove(m)
 					continue
@@ -288,12 +281,21 @@ local connection = Run.RenderStepped:Connect(function()
 				end
 			end
 		end
+		if #near > 0 and not ready then
+			if not initStarted then
+				initStarted = true
+				task.spawn(initResources)
+			end
+			near = {}
+		end
 		table.sort(near, function(a, b) return a.distance < b.distance end)
 		local keep = {}
 		for i = 1, math.min(2, #near) do
 			local m = near[i].model
 			keep[m] = true
-			build(m)
+			if not active[m] and not pending[m] then
+				task.spawn(build, m)
+			end
 		end
 		for m in active do
 			if not keep[m] then remove(m) end

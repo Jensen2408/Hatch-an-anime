@@ -371,6 +371,48 @@ local function createMoltenAura(size)
     return aura
 end
 
+-- Molten uses the Rainbow aura's flame flipbooks, droplets, cubes and sparks, recoloured to lava
+-- (yellow core -> orange -> red -> dark smoke). Built once from ServerStorage.MutationAuras.Rainbow and cached.
+local moltenFireTemplate
+local LAVA_FIRE = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 165, 50)),
+    ColorSequenceKeypoint.new(0.35, Color3.fromRGB(235, 75, 15)),
+    ColorSequenceKeypoint.new(0.7, Color3.fromRGB(150, 28, 8)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(45, 15, 10)),
+})
+local LAVA_EMBER = ColorSequence.new(Color3.fromRGB(255, 140, 40), Color3.fromRGB(200, 40, 10))
+local function moltenFireAura()
+    if moltenFireTemplate then
+        return moltenFireTemplate
+    end
+    local auras = ServerStorage:FindFirstChild("MutationAuras")
+    local rainbow = auras and auras:FindFirstChild("Rainbow")
+    if not rainbow then
+        return nil
+    end
+    local aura = rainbow:Clone()
+    aura.Name = "MoltenFire"
+    for _, v in aura:GetDescendants() do
+        if v:IsA("ParticleEmitter") then
+            -- cubes take the full fire gradient (they read as flat yellow squares with the bright ember colours)
+            local ember = v.Name == "droplets" or v.Name == "RiseSparks"
+            v.Color = ember and LAVA_EMBER or LAVA_FIRE
+            -- keep Rainbow's own LightEmission: raising it made the overlapping flames add up to white
+            if v.Name == "droplets" then
+                v.Rate = v.Rate * 0.5 -- 300/s on Rainbow; embers read fine at half and it saves particles
+            end
+        elseif v:IsA("Beam") or v:IsA("Trail") then
+            v.Color = LAVA_FIRE
+        elseif v:IsA("PointLight") then
+            v.Color = Color3.fromRGB(255, 104, 29)
+        elseif v:IsA("BaseScript") then
+            v:Destroy()
+        end
+    end
+    moltenFireTemplate = aura
+    return aura
+end
+
 -- aura welded to the model's centre (works on anchored displays and on held tools)
 function Mutations.AddAura(model, tier)
     if not tier then
@@ -378,6 +420,9 @@ function Mutations.AddAura(model, tier)
     end
     local auraTemplate = ServerStorage:FindFirstChild("MutationAuras")
         and ServerStorage.MutationAuras:FindFirstChild(tier)
+    if not auraTemplate and tier == "Molten" then
+        auraTemplate = moltenFireAura()
+    end
     if not auraTemplate and tier ~= "Molten" then
         return
     end

@@ -1,5 +1,6 @@
--- "Ash" style: a dark ash crust with glowing lava cracks. 384px maps (cracks ~2.7x bigger and ~3x sharper than the
--- old 128px set), scrolled slowly and smoothly, with a gentle breathing glow. Normal map is rebuilt from Color + Emissive.
+-- Molten v3 "LavaFlow" style: ambientCG Lava003 (CC0, photo-based) cooled basalt crust with glowing flow seams,
+-- 384px seamless maps (MutationFinish/Molten/build-maps-lava003.js), drifting slowly along the flow, gentle breathing glow.
+-- Normal map is rebuilt from Color + Emissive.
 local Assets = game:GetService("AssetService")
 local Encoding = game:GetService("EncodingService")
 local data = require(script.MoltenMapData)
@@ -35,6 +36,15 @@ for _, part in data.Color do
     offset += buffer.len(bytes)
 end
 local emissive = decode(data.Emissive)
+if data.EmissiveGrey then
+    -- stored as one grey byte per pixel to keep the module small; expand to RGBA
+    local grey = emissive
+    emissive = buffer.create(totalBytes)
+    for i = 0, size * size - 1 do
+        local v = buffer.readu8(grey, i)
+        buffer.writeu32(emissive, i * 4, 0xFF000000 + v * 0x010101)
+    end
+end
 
 -- Height from brightness minus the glowing cracks, then slope -> tangent-space normal.
 local height = table.create(size * size)
@@ -67,15 +77,15 @@ local surface = Assets:CreateSurfaceAppearanceAsync({
     RoughnessMap = uniformMap(.81),
     MetalnessMap = uniformMap(0),
 })
-surface.Name = "Ash"
-surface.EmissiveStrength = 1.15
+surface.Name = "LavaFlow"
+surface.EmissiveStrength = 1.4
 
-local X_SPEED, Y_SPEED = 3.5, 8 -- pixels per second (slow drift)
+local X_SPEED, Y_SPEED = 9, 2 -- pixels per second: mostly along the horizontal flow seams
 local lastX, lastY = -1, -1
 local nextFrame = 0
 local function update(now)
     -- Breathing glow every frame: perfectly smooth, costs nothing.
-    local glow = 1.1 + .22 * math.sin(now * .9) + .08 * math.sin(now * 2.3 + 1.7)
+    local glow = 1.35 + .25 * math.sin(now * .9) + .08 * math.sin(now * 2.3 + 1.7)
     surface.EmissiveStrength = glow
     if now < nextFrame then
         return glow

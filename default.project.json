@@ -3427,6 +3427,7 @@
     "ReplicatedStorage": {
       "ProjectedCoatingMeshes": {"$path": "assets/Studio/ProjectedCoatingMeshes.rbxm"},
       "MutationStyle": {"$path": "src/shared/UI/MutationStyle.luau"},
+      "GlowFace": {"$path": "src/shared/Effects/GlowFace"},
       "MutationShade": {"$path": "src/shared/UI/MutationShade.luau"},
       "RarityText": {"$path": "src/shared/UI/RarityText.luau"},
       "UpcomingConfig": {"$path": "src/shared/Config/UpcomingConfig.luau"},
