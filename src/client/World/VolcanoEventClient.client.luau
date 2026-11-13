@@ -962,11 +962,27 @@ local function scanRiver()
                 end
             end
         end
+        -- RiverWater's coarse far meshes (RiverCoarseWater<lod>_<index>), one lava overlay each (see levelOverlays)
+        for _, part in folder:GetChildren() do
+            local lod, index = string.match(part.Name, "^RiverCoarseWater(%d)_(%d+)$")
+            local chunk = lod and riverChunks[tonumber(index)]
+            if chunk and part:IsA("MeshPart") then
+                chunk.coarse = chunk.coarse or {}
+                chunk.coarse[tonumber(lod)] = part
+            end
+        end
     end
     local curtain = workspace:FindFirstChild("WaterfallCurtainLocal")
     local body = curtain and curtain:FindFirstChild("WaterfallBody")
     if body and body:IsA("MeshPart") then
         fall.base = body
+        for lod = 1, 2 do
+            local coarse = curtain:FindFirstChild("WaterfallBodyLod" .. lod)
+            if coarse and coarse:IsA("MeshPart") then
+                fall.coarse = fall.coarse or {}
+                fall.coarse[lod] = coarse
+            end
+        end
     end
 end
 
@@ -1050,6 +1066,53 @@ local function dropOverlay(entry)
         entry.overlay:Destroy()
     end
     entry.overlay, entry.light, entry.steam, entry.loop, entry.surge = nil, nil, nil, nil, nil
+    for _, sub in entry.levelEntries or {} do
+        dropOverlay(sub)
+    end
+end
+
+-- Far away, RiverWater and WaterfallCurtain hide the full mesh (no longer updated) and show a coarser one instead
+-- (entry.coarse[lod]). Each coarse level gets its own lava overlay sharing its mesh, so the lava has the same level of
+-- detail and keeps sliding. Only the overlay on the level that is showing is visible; the full overlay keeps the light,
+-- steam and sounds. Returns whether the full overlay should show (its level is showing, or the coarse overlay isn't
+-- built yet).
+local function levelOverlays(entry, template, name, offset, widen, shown)
+    if not entry.coarse or not entry.base then
+        return true
+    end
+    local level = 0
+    if entry.base.Transparency >= 1 then
+        for lod, part in entry.coarse do
+            if part.Parent and part.Transparency < 1 then
+                level = lod
+            end
+        end
+    end
+    entry.levelEntries = entry.levelEntries or {}
+    for lod, part in entry.coarse do
+        local sub = entry.levelEntries[lod]
+        if not sub or sub.base ~= part then
+            if sub then
+                dropOverlay(sub)
+            end
+            sub = { base = part, index = entry.index, fade = 0 }
+            entry.levelEntries[lod] = sub
+        end
+        buildOverlay(sub, template, name .. "Lod" .. lod, offset, false, widen)
+        if sub.light then
+            sub.light:Destroy() -- the full overlay's light covers the chunk
+            sub.light = nil
+        end
+        if sub.overlay then
+            sub.overlay.CFrame = part.CFrame + offset
+            local transparency = lod == level and 1 - shown or 1
+            if sub.overlay.Transparency ~= transparency then
+                sub.overlay.Transparency = transparency
+            end
+        end
+    end
+    local sub = entry.levelEntries[level]
+    return level == 0 or not (sub and sub.overlay)
 end
 
 -- eases entry.fade toward target (0 water ... 1 lava) and returns it smoothed
@@ -1067,6 +1130,7 @@ local function updateChunk(chunk, target, dt, keep)
     if chunk.fade <= 0 and target == 0 and keep then
         -- not lava yet (or lava has gone again) but the event is running: keep the layer built, invisible, so nothing hitches
         buildOverlay(chunk, templates.RiverLavaAppearance, "VolcanoLava" .. chunk.index, Vector3.new(0, LIFT, 0), true, SEAM_OVERLAP)
+        levelOverlays(chunk, templates.RiverLavaAppearance, "VolcanoLava" .. chunk.index, Vector3.new(0, LIFT, 0), SEAM_OVERLAP, 0)
         if chunk.overlay then
             chunk.overlay.Transparency = 1
             chunk.light.Brightness = 0
@@ -1103,7 +1167,9 @@ local function updateChunk(chunk, target, dt, keep)
         return
     end
     overlay.CFrame = chunk.base.CFrame + Vector3.new(0, LIFT, 0)
-    overlay.Transparency = 1 - shown
+    local fullShown =
+        levelOverlays(chunk, templates.RiverLavaAppearance, "VolcanoLava" .. chunk.index, Vector3.new(0, LIFT, 0), SEAM_OVERLAP, shown)
+    overlay.Transparency = fullShown and 1 - shown or 1
     chunk.light.Brightness = 3 * shown
     chunk.steam.Rate = 5 * shown
     if shown > 0.02 and not chunk.loop.IsPlaying then
@@ -1133,6 +1199,7 @@ local function updateFall(target, dt, keep)
     local shown = stepFade(fall, target, dt)
     if fall.fade <= 0 and target == 0 and keep then
         buildOverlay(fall, templates.WaterfallLavaAppearance, "VolcanoLavaFall", FALL_OFFSET, false)
+        levelOverlays(fall, templates.WaterfallLavaAppearance, "VolcanoLavaFall", FALL_OFFSET, nil, 0)
         if fall.overlay then
             fall.overlay.Transparency = 1
             fall.light.Brightness = 0
@@ -1157,14 +1224,15 @@ local function updateFall(target, dt, keep)
     local curtain = workspace:FindFirstChild("WaterfallCurtainLocal")
     if curtain then
         for _, part in curtain:GetChildren() do
-            if part:IsA("MeshPart") and part.Name ~= "VolcanoLavaFall" then
+            if part:IsA("MeshPart") and not string.find(part.Name, "^VolcanoLava") then
                 part.LocalTransparencyModifier = shown -- body, veil and ripple sheen fade out under the lava
             end
         end
     end
     if fall.overlay then
         fall.overlay.CFrame = fall.base.CFrame + FALL_OFFSET
-        fall.overlay.Transparency = 1 - shown
+        local fullShown = levelOverlays(fall, templates.WaterfallLavaAppearance, "VolcanoLavaFall", FALL_OFFSET, nil, shown)
+        fall.overlay.Transparency = fullShown and 1 - shown or 1
         fall.light.Brightness = 4 * shown
     end
 end

@@ -56,13 +56,18 @@ local BURST_DECAY = 3.8 -- seconds for the burst to ease off (was 2.4)
 local BURST_RISE = 1.1 -- seconds for the burst to build up (it used to snap to full in 0.25)
 local WAVE_TRANSPARENCY = 0.82
 -- Level of detail, from the camera distance to the falls (Simple Water caps it at LOD 1):
---   LOD 0  < LOD_NEAR  shape rebuilt every frame (wobble, run swell), all three layers
---   LOD 1  < LOD_MID   wobble frozen, shape rebuilt only when the tide / burst changes the arc, textures slide every 2
---                      frames, ripple sheen hidden
---   LOD 2  beyond      as LOD 1, every 6 frames
+--   LOD 0  < LOD_NEAR  full sheet (39 rows x 8 quads), shape rebuilt every frame (wobble, run swell), all three layers
+--   LOD 1  < LOD_MID   coarse body + veil (every 2nd row and column), wobble frozen, shape rebuilt only when the tide /
+--                      burst changes the arc, textures slide every 2 frames, ripple sheen hidden
+--   LOD 2  beyond      coarser body + veil (about every 4th row, every 4th column), as LOD 1 every 6 frames
+-- Each level is its own mesh sampled from the same sheet (its rows and columns are a subset of the full grid, always
+-- including the edges, the lip and the foot), and texture V always follows the full sheet's length, so a switch
+-- doesn't move the streaks. The level switched to is reshaped before it shows. LOD_HYSTERESIS keeps it from
+-- flickering at a threshold.
 -- Nothing is updated while the falls are behind the camera; splash emitters and sound keep running regardless.
 local LOD_NEAR = 140
 local LOD_MID = 320
+local LOD_HYSTERESIS = 10
 local LOD_EVERY = { [0] = 1, [1] = 2, [2] = 6 }
 local BEHIND_MARGIN = 40
 
@@ -101,15 +106,41 @@ end
 
 -- Mesh building (same fixed-size copy approach as RiverWater: growable meshes reserve too much memory) -----------
 local centre = Vector3.new(LIP_X + 4, (TOP_Y + Path.SurfaceY) / 2, Z_CENTRE)
-local function buildLayer(name, appearance, layerOffset)
+local LAST_ROW = ROWS - 1
+-- Rows and columns of the full grid each level samples (0-based). Every list keeps both ends and the lip row.
+local function everyNth(last, n, keep)
+    local list, seen = {}, {}
+    local function add(i)
+        if not seen[i] then
+            seen[i] = true
+            table.insert(list, i)
+        end
+    end
+    for i = 0, last, n do
+        add(i)
+    end
+    add(last)
+    for _, i in keep do
+        add(i)
+    end
+    table.sort(list)
+    return list
+end
+local LEVEL_GRIDS = {
+    [0] = { rows = everyNth(LAST_ROW, 1, {}), columns = everyNth(COLUMNS, 1, {}) },
+    [1] = { rows = everyNth(LAST_ROW, 2, { RUN_ROWS }), columns = everyNth(COLUMNS, 2, {}) },
+    [2] = { rows = everyNth(LAST_ROW, 4, { RUN_ROWS, RUN_ROWS + 2 }), columns = everyNth(COLUMNS, 4, {}) },
+}
+
+local function buildMesh(name, appearance, layerOffset, grid)
     local em = AssetService:CreateEditableMesh()
     assert(em, "Waterfall mesh memory unavailable")
     local ids = {}
     local verts = {}
     -- Lay the mesh out at its widest burst shape so the part's bounds cover every later pose.
     local maxThrow = CALM_THROW + TIDE_THROW + BURST_THROW
-    for row = 0, ROWS - 1 do
-        for column = 0, COLUMNS do
+    for _, row in grid.rows do
+        for _, column in grid.columns do
             local p = sheetPoint(row, column, maxThrow, BASE_HALF * 1.7, Path.SurfaceY, 0, layerOffset) - centre
             local key = tostring(p)
             local vert = { row = row, column = column, key = key }
@@ -117,21 +148,23 @@ local function buildLayer(name, appearance, layerOffset)
             table.insert(verts, vert)
         end
     end
-    local width = COLUMNS + 1
-    local function at(row, column)
-        return ids[verts[row * width + column + 1]]
+    local width = #grid.columns
+    local function at(r, c)
+        return ids[verts[(r - 1) * width + c]]
     end
     local function face(a, b, c)
         local f = em:AddTriangle(a[1], b[1], c[1])
         em:SetFaceNormals(f, { a[2], b[2], c[2] })
         em:SetFaceUVs(f, { a[3], b[3], c[3] })
     end
-    for row = 0, ROWS - 2 do
-        for column = 0, COLUMNS - 1 do
+    local triangles = 0
+    for r = 1, #grid.rows - 1 do
+        for c = 1, width - 1 do
             -- Faces out from the cliff (rows run down the fall, columns toward +Z).
-            local a, b, c, d = at(row, column), at(row, column + 1), at(row + 1, column), at(row + 1, column + 1)
+            local a, b, cc, d = at(r, c), at(r, c + 1), at(r + 1, c), at(r + 1, c + 1)
             face(a, b, d)
-            face(a, d, c)
+            face(a, d, cc)
+            triangles += 2
         end
     end
     local mesh = AssetService:CreateEditableMeshAsync(Content.fromObject(em), { FixedSize = true })
@@ -159,21 +192,38 @@ local function buildLayer(name, appearance, layerOffset)
     part.Color = Color3.new(1, 1, 1)
     part.CFrame = CFrame.new(centre)
     templates[appearance]:Clone().Parent = part
-    return { mesh = mesh, part = part, verts = verts, offset = layerOffset, name = name }
+    return { mesh = mesh, part = part, verts = verts, triangles = triangles }
+end
+
+-- A layer has one mesh per level it shows at; the full level keeps the plain name (VolcanoEventClient builds its lava
+-- overlay from WaterfallBody). The ripple sheen only exists at LOD 0.
+local function buildLayer(name, appearance, layerOffset, kind, coarse)
+    local layer = { offset = layerOffset, name = name, kind = kind, levels = {} }
+    layer.levels[0] = buildMesh(name, appearance, layerOffset, LEVEL_GRIDS[0])
+    if coarse then
+        for lod = 1, 2 do
+            local ok, level = pcall(buildMesh, name .. "Lod" .. lod, appearance, layerOffset, LEVEL_GRIDS[lod])
+            if ok then
+                level.part.Transparency = 1
+                layer.levels[lod] = level
+            end
+        end
+    end
+    return layer
 end
 
 local folder = Instance.new("Folder")
 folder.Name = "WaterfallCurtainLocal"
 local built, layersOrError = pcall(function()
     return {
-        buildLayer("WaterfallBody", "WaterfallBodyAppearance", 0),
-        buildLayer("WaterfallVeil", "WaterfallVeilAppearance", VEIL_OFFSET),
-        buildLayer("WaterfallWaves", "WaterfallWaveAppearance", WAVE_OFFSET),
+        buildLayer("WaterfallBody", "WaterfallBodyAppearance", 0, "body", true),
+        buildLayer("WaterfallVeil", "WaterfallVeilAppearance", VEIL_OFFSET, "veil", true),
+        buildLayer("WaterfallWaves", "WaterfallWaveAppearance", WAVE_OFFSET, "waves", false),
     }
 end)
 if built then
     -- The wave layer only carries ripple normals and gloss: a faint pale sheen over the pixel water.
-    local waveLayer = layersOrError[3]
+    local waveLayer = layersOrError[3].levels[0]
     waveLayer.part.Color = Color3.fromRGB(200, 244, 252)
     waveLayer.part.Transparency = WAVE_TRANSPARENCY
 end
@@ -184,9 +234,37 @@ if not built then
 end
 local layers = layersOrError
 for _, layer in layers do
-    layer.part.Parent = folder
+    for _, level in layer.levels do
+        level.part.Parent = folder
+    end
 end
 folder.Parent = workspace
+
+-- The level a layer shows at `lod` (a coarse level falls back to a finer one if it couldn't be built; the sheen has
+-- none and is hidden).
+local function levelOf(layer, lod)
+    if lod == 0 then
+        return layer.levels[0]
+    end
+    if layer.kind == "waves" then
+        return nil
+    end
+    return layer.levels[lod] or layer.levels[1] or layer.levels[0]
+end
+local function showLevel(lod)
+    for _, layer in layers do
+        local shown = levelOf(layer, lod)
+        for _, level in layer.levels do
+            local visible = level == shown
+            local transparency = visible and (layer.kind == "waves" and WAVE_TRANSPARENCY or 0) or 1
+            if level.part.Transparency ~= transparency then
+                level.part.Transparency = transparency
+            end
+            level.current = level.current and visible -- a hidden level's shape goes stale
+        end
+    end
+end
+
 
 
 -- Splash emitters follow the arc's landing point and roar with the tide --------------------------------------------
@@ -196,7 +274,8 @@ for _, holder in { fallFx, riverRoot:FindFirstChild("FX") } do
     if holder then
         for _, emitter in holder:GetDescendants() do
             if emitter:IsA("ParticleEmitter") then
-                table.insert(emitters, { emitter = emitter, rate = emitter.Rate })
+                -- ParticleBudget may already have cut Rate; its attribute keeps the authored rate
+                table.insert(emitters, { emitter = emitter, rate = emitter:GetAttribute("ParticleBudgetBase") or emitter.Rate })
             end
         end
     end
@@ -294,20 +373,25 @@ RunService.RenderStepped:Connect(function(dt)
         fallSound.PlaybackSpeed = 1 - 0.15 * tide
     end
 
-    -- Level of detail (see the header): pick the LOD, hide the ripple sheen beyond LOD 0, skip when behind the camera
-    -- or between the LOD's update frames.
+    -- Level of detail (see the header): pick the LOD, skip when behind the camera or between the LOD's update frames
+    -- (unless the level just changed: the new one is reshaped before it shows).
+    local started = os.clock()
     local toFall = centre - camera.CFrame.Position
     local distance = toFall.Magnitude
     local lod = distance < LOD_NEAR and 0 or distance < LOD_MID and 1 or 2
+    if lod > shownLod then
+        local held = distance < LOD_NEAR + LOD_HYSTERESIS and 0 or distance < LOD_MID + LOD_HYSTERESIS and 1 or 2
+        lod = math.max(shownLod, held)
+    end
     if WaterQuality.IsSimple(player) then
         lod = math.max(lod, 1)
     end
     if lod ~= shownLod then
         shownLod = lod
-        layers[3].part.Transparency = lod == 0 and WAVE_TRANSPARENCY or 1
+        showLevel(lod)
         reshapeAll = true
     end
-    if toFall:Dot(camera.CFrame.LookVector) < -BEHIND_MARGIN or frame % LOD_EVERY[lod] ~= 0 then
+    if not reshapeAll and (toFall:Dot(camera.CFrame.LookVector) < -BEHIND_MARGIN or frame % LOD_EVERY[lod] ~= 0) then
         return
     end
     -- LOD 0 rebuilds the shape every frame (it wobbles with time). LOD 1 / 2 freeze the wobble and only rebuild when
@@ -321,12 +405,16 @@ RunService.RenderStepped:Connect(function(dt)
     if reshape then
         lastShape.throw, lastShape.half, lastShape.baseY = throw, half, baseY
     end
-    for index, layer in layers do
-        if index == 3 and lod > 0 then
+    local writes, triangles = 0, 0
+    for _, layer in layers do
+        local level = levelOf(layer, lod)
+        if not level then
             continue -- hidden ripple sheen
         end
-        local mesh, offset = layer.mesh, layer.offset
-        if reshape or reshapeAll or not layer.lengths then
+        triangles += level.triangles
+        local mesh, offset = level.mesh, layer.offset
+        if reshape or not level.current or not layer.lengths then
+            -- The full grid's positions (cheap maths); only the shown level's vertices are written.
             for row = 0, ROWS - 1 do
                 local rowPositions = positions[row + 1] or {}
                 positions[row + 1] = rowPositions
@@ -335,7 +423,8 @@ RunService.RenderStepped:Connect(function(dt)
                         sheetPoint(row, column, throw, half * (1 + offset * 0.1), baseY, shapeTime, offset)
                 end
             end
-            -- Texture V follows the sheet's length down its middle, so streaks keep their size as the arc stretches.
+            -- Texture V follows the full sheet's length down its middle, so streaks keep their size as the arc
+            -- stretches and stay put when the level changes.
             local lengths = table.create(ROWS)
             local run = 0
             local middle = COLUMNS // 2 + 1
@@ -346,7 +435,7 @@ RunService.RenderStepped:Connect(function(dt)
                 lengths[row] = run
             end
             layer.lengths = lengths
-            for _, vert in layer.verts do
+            for _, vert in level.verts do
                 local row, column = vert.row + 1, vert.column + 1
                 local rowPositions = positions[row]
                 local p = rowPositions[column]
@@ -356,22 +445,29 @@ RunService.RenderStepped:Connect(function(dt)
                 mesh:SetNormal(vert.nid, across:Cross(down).Unit)
                 vert.across16 = (p.Z - Z_CENTRE) / 16
             end
+            writes += #level.verts * 2
+            level.current = true
         end
         -- Every layer slides down the sheet: the body, the front streaks faster, and the wave layer's fine ripples
         -- fastest, at a slight slant so they cross the others.
-        local layerPhase = layer.name == "WaterfallVeil" and veilPhase
-            or layer.name == "WaterfallWaves" and wavePhase
-            or bodyPhase
-        local slant = layer.name == "WaterfallWaves" and 0.25 or 0
-        local repeatLength = layer.name == "WaterfallWaves" and WAVE_LENGTH or TEXTURE_LENGTH
+        local layerPhase = layer.kind == "veil" and veilPhase or layer.kind == "waves" and wavePhase or bodyPhase
+        local slant = layer.kind == "waves" and 0.25 or 0
+        local repeatLength = layer.kind == "waves" and WAVE_LENGTH or TEXTURE_LENGTH
         local lengths = layer.lengths
-        for _, vert in layer.verts do
+        for _, vert in level.verts do
             local across16 = vert.across16
             mesh:SetUV(
                 vert.uv,
                 Vector2.new(across16 + 0.5, lengths[vert.row + 1] / repeatLength + across16 * slant - layerPhase)
             )
         end
+        writes += #level.verts
     end
     reshapeAll = false
+    if frame % 30 == 0 then
+        riverRoot:SetAttribute("WaterfallMs", math.floor((os.clock() - started) * 10000) / 10)
+        riverRoot:SetAttribute("WaterfallLOD", lod)
+        riverRoot:SetAttribute("WaterfallTriangles", triangles)
+        riverRoot:SetAttribute("WaterfallWrites", writes)
+    end
 end)

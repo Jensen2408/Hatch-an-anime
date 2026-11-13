@@ -66,6 +66,49 @@ Latest tuning:
 - **Waterfall back layer.** It no longer uses the old streaked sheet. It's glossy water in the river's colour (transparency 0.15) with the river's realistic ripple map stretched down the fall.
 - **Animation.** River pieces sway gently across the current as they drift (`SWAY`, a sine rolling downstream). The wave layers are stronger (transparency 0.5).
 
+### Geometry LOD (2026-11-13, supersedes the river table below)
+
+Before this, every chunk kept the full grid (rows every 2 studs, 8 quads across) at every distance; LOD only changed how often it was updated. Now each 60-stud chunk owns three mesh sets and shows one:
+
+| LOD | Distance (nearest water in the chunk) | Mesh | Updates |
+| --- | --- | --- | --- |
+| 0 | under 120 studs | Full grid, 3 layers (water, foam, ripple sheen) | Waves every frame |
+| 1 | 120 to 280 studs | Rows up to 8 studs apart (fewer on bends, edges within 0.15 studs of the full ribbon), 2 quads across; water + foam | Textures slide every 2 frames |
+| 2 | beyond 280 studs | Rows up to 30 studs apart (edges within 0.3 studs), 1 quad across; water + foam | Textures slide every 6 frames |
+
+- **No seams:** every level keeps the full 9-vertex end rows and zips them to its coarse interior, so neighbours share identical seam vertices at any mix of levels (no T-junction cracks).
+- **No popping:** waves fade to flat by 120 studs, and a chunk only leaves LOD 0 once all its water is at least 120 studs away (10-stud hysteresis before going coarser). A level is brought up to date in the frame it is switched to, and every chunk of a level updates on the same frames, so the sliding textures line up across seams.
+- **Near savings:** a full-grid vertex already faded flat writes only its UVs; chunks whose bounding sphere is fully outside the camera view are not updated.
+- **Other scripts:** the full parts keep their names (`RiverWater<i>`, `RiverFoam<i>`, `RiverWaves<i>`) and stay parented, hidden by Transparency, because VolcanoEventClient builds its lava overlay from them. Coarse parts are `RiverCoarseWater<lod>_<i>` / `RiverCoarseFoam<lod>_<i>`; they copy the full parts' LocalTransparencyModifier (tide foam fade, volcano fade), rise with the tide, and get the tide foam swap.
+- **Debug attributes** on `workspace.WaterfallRiver`: `RiverWaterTriangles` (triangles on show, all layers) and `RiverWaterVertexWrites` (mesh writes in the sampled frame), plus the existing `RiverWaterLOD`.
+- **Measured** (Studio Play, same session, scripted cameras; frame times are noisy): far overview 8,640 → 356 triangles on show, mesh writes ~50k/s → ~4k/s; near, same 5/3/1 LOD split, writes ~12.5k → ~6.8k per frame, river script 1.70 → 1.33–1.45 ms. Simple Water near: 768 triangles, 0.19 ms.
+
+### Waterfall geometry LOD (2026-11-13, supersedes the waterfall table below)
+
+The falls are one sheet, so there are no seams. Each body and veil layer now has three meshes; the ripple sheen exists only at LOD 0.
+
+| LOD | Distance | Mesh (body + veil) | Updates |
+| --- | --- | --- | --- |
+| 0 | under 140 studs | Full sheet, 39 rows x 8 quads, plus sheen | Reshaped every frame (wobble) |
+| 1 | 140 to 320 studs | Every 2nd row and column (20 x 4 quads) | Reshaped only when the tide or burst moves the arc; textures every 2 frames |
+| 2 | beyond 320 studs | About every 4th row (keeps the lip), every 4th column (12 x 2 quads) | As LOD 1, every 6 frames |
+
+- Every level samples the same sheet function at a subset of the full grid's rows and columns, always including the edges, the lip row and the foot. Texture V always comes from the full sheet's length, so the streaks don't move on a switch.
+- The level switched to is reshaped in the same frame, before it shows. There is 10-stud hysteresis before going coarser.
+- The full parts keep their names (`WaterfallBody`, `WaterfallVeil`, `WaterfallWaves`); the coarse parts are `WaterfallBodyLod1/2` and `WaterfallVeilLod1/2` in the same `WaterfallCurtainLocal` folder. VolcanoEventClient fades every MeshPart in that folder and builds its overlay from `WaterfallBody`.
+- Debug attributes on `workspace.WaterfallRiver`: `WaterfallLOD`, `WaterfallTriangles`, `WaterfallWrites`, `WaterfallMs`.
+- Measured in Studio Play: triangles on show 1,824 / 304 / 88 at LOD 0/1/2 (before: 1,824 / 1,216 / 1,216). Texture writes per update frame 200 at LOD 1 and 72 at LOD 2 (before: 702). During a burst at LOD 1, 600 writes per reshape (before: 2,106).
+
+### Volcano lava and the geometry LOD (2026-11-13)
+
+VolcanoEventClient's lava overlays share their water mesh. Far away that is now the coarse mesh, because the full mesh is hidden and no longer updated. So each coarse level gets its own lava overlay, built from `RiverCoarseWater<lod>_<i>` or `WaterfallBodyLod<lod>` and named `VolcanoLava<i>Lod<lod>` / `VolcanoLavaFallLod<lod>`. Only the overlay on the level that is showing is visible. The full overlay keeps the chunk's light, steam and sounds. The curtain fade skips every `VolcanoLava*` part.
+
+Checked in Studio Play by jumping into the lava phase:
+- River chunks at LOD 0/1/2 each showed exactly the matching lava overlay.
+- The waterfall lava followed the falls through LOD 0/1/2 at 40, 200 and 400 studs.
+- The lava was continuous across a LOD 0/1 boundary.
+- After the event, every overlay was removed.
+
 ### Level of detail and Simple Water (2026-10-26, written in source, not yet synced)
 
 Playtested by pasting the client scripts into a Play session (checksum-verified). River script time from the same river view: old 3.51 ms, Detailed 1.70 ms, Simple 0.30 ms. Forced high tide burst worked with no errors. The Settings switch UI was not tested (Studio's `MusicSettings` is a newer version than this copy).
