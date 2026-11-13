@@ -8,7 +8,11 @@
 --   LOD 1  < LOD2_DISTANCE  lights parked (38 PointLights per temple), interior ceiling lanterns, Halloween candles /
 --                           webs / spider and parts under 2 studs hidden
 --   LOD 2  beyond           also the Halloween string-light bulbs and parts under 4 studs hidden; parts under 8 studs
---                           stop casting shadows
+--                           stop casting shadows; and the temple is swapped for its proxy (ReplicatedStorage.TempleProxy):
+--                           one vertex-coloured MeshPart with the tile quads merged into large rectangles, ~260 draw
+--                           calls and ~20k triangles down to 1 part and a few thousand. Parts without baked proxy data
+--                           stay as they are. The proxy is built the first time a temple reaches LOD 2 and rebuilt
+--                           (after PROXY_SETTLE seconds) when the temple changes (upgrade, build animation, theme).
 -- Low graphics quality (Roblox levels 1-3) pulls both distances in.
 --
 -- Everything here is local and reversible:
@@ -27,9 +31,24 @@ local FINE_SIZE = 2 -- largest dimension below which a part is hidden from LOD 1
 local SMALL_SIZE = 4 -- ... from LOD 2
 local SHADOW_SIZE = 8 -- ... below which a part stops casting shadows at LOD 2
 
+local PROXY_SETTLE = 3 -- seconds a temple must go unchanged before its proxy is (re)built
+
 local camera = workspace.CurrentCamera
 local plots = workspace:WaitForChild("Plots")
-local temples = {} -- [Model] = { model, level, bucket, shadowCast, lightParent, cframe, half, boundsDirty, connections }
+local temples = {} -- [Model] = { model, level, bucket, shadowCast, lightParent, cframe, half, boundsDirty, connections,
+--                                proxy, proxyActive, proxyBuilding, changedAt }
+
+local TempleProxy
+do
+    local module = game:GetService("ReplicatedStorage"):WaitForChild("TempleProxy", 10)
+    local ok, result = pcall(function()
+        return module and require(module)
+    end)
+    TempleProxy = ok and result or nil
+end
+local proxyFolder = Instance.new("Folder")
+proxyFolder.Name = "TempleLODProxies"
+proxyFolder.Parent = workspace
 
 local function qualityScale()
     local ok, level = pcall(function()
@@ -85,18 +104,84 @@ local function setLightParked(state, light, parked)
     end
 end
 
+local function coveredByProxy(state, part)
+    return state.proxyActive and state.proxy.covered[part] == true
+end
+
 -- Applies `level` to one classified instance.
 local function applyOne(state, instance, level)
     local bucket = state.bucket[instance]
     if bucket == "light" then
         setLightParked(state, instance, level >= 1)
     elseif bucket == "fine" then
-        setPartHidden(instance, level >= 1)
+        setPartHidden(instance, level >= 1 or coveredByProxy(state, instance))
     elseif bucket == "small" then
-        setPartHidden(instance, level >= 2)
+        setPartHidden(instance, level >= 2 or coveredByProxy(state, instance))
     elseif bucket == "shadow" then
         setShadowCut(state, instance, level >= 2)
+        setPartHidden(instance, coveredByProxy(state, instance))
     end
+end
+
+-- Shows the proxy instead of the parts it covers, or the parts again.
+local function setProxyActive(state, active)
+    active = active and state.proxy ~= nil
+    if (state.proxyActive or false) == active then
+        return
+    end
+    state.proxyActive = active
+    for _, part in state.proxy.parts do
+        part.Parent = active and proxyFolder or nil
+    end
+    for part in pairs(state.proxy.covered) do
+        if part.Parent then
+            if state.bucket[part] then
+                applyOne(state, part, state.level)
+            else
+                setPartHidden(part, active)
+            end
+        end
+    end
+end
+
+local function dropProxy(state)
+    if state.proxy then
+        setProxyActive(state, false)
+        TempleProxy.Destroy(state.proxy)
+        state.proxy = nil
+    end
+end
+
+-- The temple changed (parts added / removed, theme): the proxy is stale.
+local function templeChanged(state)
+    state.changedAt = os.clock()
+    state.proxyVersion = (state.proxyVersion or 0) + 1
+    dropProxy(state)
+end
+
+local function ensureProxy(state)
+    if not TempleProxy or state.proxy or state.proxyBuilding or os.clock() - (state.changedAt or 0) < PROXY_SETTLE then
+        return
+    end
+    state.proxyBuilding = true
+    local version = state.proxyVersion or 0
+    task.spawn(function()
+        local ok, proxy = pcall(TempleProxy.Build, state.model)
+        state.proxyBuilding = false
+        if not ok then
+            warn("[TempleLOD] proxy build failed:", proxy)
+            state.changedAt = os.clock() + 30 -- don't retry every tick
+            return
+        end
+        if temples[state.model] ~= state or (state.proxyVersion or 0) ~= version then
+            TempleProxy.Destroy(proxy) -- the temple changed or went away while building
+            return
+        end
+        state.proxy = proxy
+        if state.level >= 2 then
+            setProxyActive(state, true)
+        end
+    end)
 end
 
 local function classify(state, instance)
@@ -172,6 +257,7 @@ local function unregister(model)
     for _, connection in state.connections do
         connection:Disconnect()
     end
+    dropProxy(state)
     applyLevel(state, 0)
     -- Lights whose temple went away while parked would otherwise linger outside the DataModel.
     for light in pairs(state.lightParent) do
@@ -201,6 +287,9 @@ local function register(model)
         model.DescendantAdded:Connect(function(descendant)
             state.boundsDirty = true
             classify(state, descendant)
+            if not descendant:IsA("Light") then -- lights come back from parking; they are not in the proxy
+                templeChanged(state)
+            end
         end)
     )
     table.insert(
@@ -211,6 +300,15 @@ local function register(model)
             end
             state.bucket[descendant] = nil
             state.shadowCast[descendant] = nil
+            if not descendant:IsA("Light") then
+                templeChanged(state)
+            end
+        end)
+    )
+    table.insert(
+        state.connections,
+        model:GetAttributeChangedSignal("TempleAppearance"):Connect(function()
+            templeChanged(state)
         end)
     )
     table.insert(
@@ -260,6 +358,22 @@ while true do
                 level = (level >= 1 and distance > near - HYSTERESIS) and 1 or 0
             end
             applyLevel(state, level)
+            if level >= 2 then
+                ensureProxy(state)
+                setProxyActive(state, true)
+            else
+                setProxyActive(state, false)
+            end
         end
+        -- debug: StarterPlayerScripts.TempleLOD attributes
+        local active, triangles = 0, 0
+        for _, state in pairs(temples) do
+            if state.proxyActive then
+                active += 1
+                triangles += state.proxy.triangles
+            end
+        end
+        script:SetAttribute("ProxiesActive", active)
+        script:SetAttribute("ProxyTriangles", triangles)
     end
 end

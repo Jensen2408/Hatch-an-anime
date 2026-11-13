@@ -76,6 +76,9 @@
         "TempleLOD": {
           "$path": "src/client/Temple/TempleLOD.client.luau"
         },
+        "ParticleBudget": {
+          "$path": "src/client/Effects/ParticleBudget.client.luau"
+        },
         "GoldenLuffyIdle": {
           "$path": "src/client/Characters/GoldenLuffyIdle.client.luau"
         },
@@ -3491,6 +3494,9 @@
       },
       "TempleAppearanceThemes": {
         "$path": "src/shared/Config/TempleAppearanceThemes.luau"
+      },
+      "TempleProxy": {
+        "$path": "src/shared/Temple/TempleProxy.luau"
       },
       "GoldCharacterFX": {
         "$path": "src/shared/Effects/GoldCharacterFX.luau"
