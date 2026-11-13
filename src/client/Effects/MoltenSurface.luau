@@ -80,7 +80,9 @@ local surface = Assets:CreateSurfaceAppearanceAsync({
 surface.Name = "LavaFlow"
 surface.EmissiveStrength = 1.4
 
-local X_SPEED, Y_SPEED = 9, 2 -- pixels per second: mostly along the horizontal flow seams
+-- pixels per second. Frame row y shows source row y + offset, so a growing Y offset moves the lava UP the model;
+-- X adds the sideways component, so it rises at an angle (~50 degrees)
+local X_SPEED, Y_SPEED = 6, 7
 local lastX, lastY = -1, -1
 local nextFrame = 0
 local function update(now)

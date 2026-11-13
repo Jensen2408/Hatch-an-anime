@@ -5,10 +5,10 @@ Used by Molten (lava coat, eyes/mouth glow hot orange through it) and Galaxy (co
 Works from the CURRENT (re-unwrapped) atlas of any V2 character, so it never drifts out of sync with the meshes
 the way hand-made face images did.
 
-How the face is found: the meshes are read as EditableMeshes; triangles facing the model's front in the upper
-half of the model are candidates. A candidate cube face counts as DRAWN when its texels have strong contrast (eyes,
-mouth, brows on skin); its dark texels become the glow. Flat one-colour faces (black hair, hat bands) are skipped.
-Results are cached per character tag and style.
+How the face is found: front-facing triangles in the upper half of the model are grouped into voxel cells on the
+front surface. Drawn detail cells (mixed light/dark) glow on their dark texels; solid dark cells glow only when skin
+surrounds them (eyes, mouth), so hair and hat bands that run to the head outline stay dark. The glow is grown into the
+tiles' padding texels so it has no gaps at cube edges. Results are cached per character tag and style.
 
 GlowFace.Surface(model, styleName, style) -> SurfaceAppearance template (clone it) or nil, set of face part names. Yields.
 style = {
@@ -25,7 +25,7 @@ local GlowFace = {}
 local FRONT_DOT = 0.8 -- how squarely a triangle must face the model's front to count as face
 local FACE_LOW = 0.5 -- only the upper half of the model (the head)
 local DARK = 0.30 -- luminance below this on a drawn face is a feature
-local CONTRAST = 0.35 -- a cube face is "drawn" when its brightest and darkest texels differ by this much
+local MIN_CELLS = 3 -- glow islands smaller than this many voxel cells are specks, not features
 
 local masks, surfaces, building = {}, {}, {}
 
@@ -75,16 +75,17 @@ local function faceMask(model, tag, w, h, px)
 	if masks[tag] then
 		return masks[tag], masks[tag .. "/parts"]
 	end
-	local look = model:GetPivot().LookVector
+	local pivot = model:GetPivot()
+	local look, right, up = pivot.LookVector, pivot.RightVector, pivot.UpVector
 	local box, size = model:GetBoundingBox()
 	local low = box.Position.Y - size.Y / 2 + size.Y * FACE_LOW
-	local mask = buffer.create(w * h)
-	local parts = {}
+	local origin = box.Position - size / 2
 	local lum = function(i)
 		local p = i * 4
 		return (buffer.readu8(px, p) * 0.3 + buffer.readu8(px, p + 1) * 0.59 + buffer.readu8(px, p + 2) * 0.11) / 255
 	end
-	local count = 0
+	-- 1. front-facing triangles of the upper half, with their texels
+	local tris, edges, count = {}, {}, 0
 	for _, part in model:GetDescendants() do
 		if not part:IsA("MeshPart") or part.Transparency >= 1 or not part.Name:match(" Part %d+$") then
 			continue
@@ -115,25 +116,156 @@ local function faceMask(model, tag, w, h, px)
 			end
 			local texels = {}
 			raster(texels, w, h, em:GetUV(uv[1]), em:GetUV(uv[2]), em:GetUV(uv[3]))
-			local lo, hi = 1, 0
-			for _, t in texels do
-				local l = lum(t)
-				lo, hi = math.min(lo, l), math.max(hi, l)
-			end
-			if hi - lo >= CONTRAST then
-				for _, t in texels do
-					if lum(t) < DARK then
-						buffer.writeu8(mask, t, 1)
-						parts[part.Name] = true
-					end
-				end
-			end
+			local r1, r2, r3 = (p1 - origin):Dot(right), (p2 - origin):Dot(right), (p3 - origin):Dot(right)
+			local u1, u2, u3 = (p1 - origin):Dot(up), (p2 - origin):Dot(up), (p3 - origin):Dot(up)
+			table.insert(edges, math.min((p2 - p1).Magnitude, (p3 - p2).Magnitude, (p1 - p3).Magnitude))
+			table.insert(tris, {
+				part = part.Name, texels = texels,
+				r = math.min(r1, r2, r3), u = math.min(u1, u2, u3),
+				depth = ((p1 + p2 + p3) / 3 - origin):Dot(look),
+			})
 			count += 1
 			if count % 300 == 0 then
 				task.wait()
 			end
 		end
 		em:Destroy()
+	end
+	local mask = buffer.create(w * h)
+	local parts = {}
+	if #tris == 0 then
+		masks[tag], masks[tag .. "/parts"] = mask, parts
+		return mask, parts
+	end
+	-- 2. group the triangles into voxel cells on the front surface (both halves of a cube face share one bounding box)
+	table.sort(edges)
+	local vox = edges[math.max(1, math.floor(#edges / 2))]
+	local cells = {}
+	for _, t in tris do
+		local key = math.round(t.r / vox) .. "," .. math.round(t.u / vox)
+		local c = cells[key]
+		if not c or t.depth > c.depth + vox * 0.25 then
+			cells[key] = { depth = t.depth, tris = { t }, x = math.round(t.r / vox), y = math.round(t.u / vox) }
+		elseif math.abs(t.depth - c.depth) <= vox * 0.25 then
+			table.insert(c.tris, t)
+		end
+	end
+	-- 3. classify cells: dark (solid feature colour or hair), light (skin etc.), mixed (drawn detail)
+	for _, c in cells do
+		local dark, total = 0, 0
+		for _, t in c.tris do
+			for _, i in t.texels do
+				total += 1
+				if lum(i) < DARK then
+					dark += 1
+				end
+			end
+		end
+		local f = total > 0 and dark / total or 0
+		c.kind = f >= 0.8 and "dark" or f <= 0.1 and "light" or "mixed"
+	end
+	local function at(x, y)
+		return cells[x .. "," .. y]
+	end
+	local function around(c)
+		return { at(c.x + 1, c.y), at(c.x - 1, c.y), at(c.x, c.y + 1), at(c.x, c.y - 1) }
+	end
+	-- 4. solid dark cells are features when skin surrounds them (eyes, mouth); dark areas that run off into more dark
+	-- or past the head outline (hair, hat bands) are not. Seeds need 2 light neighbours, then grow through dark cells
+	-- that have 3 light-or-feature neighbours (fills thick eyes without leaking into hair).
+	for _, c in cells do
+		if c.kind == "dark" then
+			local light = 0
+			for _, nb in around(c) do
+				if nb and (nb.kind == "light" or nb.kind == "mixed") then
+					light += 1
+				end
+			end
+			c.feature = light >= 2
+		end
+	end
+	for _ = 1, 3 do
+		for _, c in cells do
+			if c.kind == "dark" and not c.feature then
+				local good = 0
+				for _, nb in around(c) do
+					if nb and (nb.kind ~= "dark" or nb.feature) then
+						good += 1
+					end
+				end
+				c.grow = good >= 3
+			end
+		end
+		for _, c in cells do
+			if c.grow then
+				c.feature, c.grow = true, nil
+			end
+		end
+	end
+	-- 5. drop stray specks: glowing cells (feature dark cells and drawn mixed cells) are grouped into islands; islands of
+	-- fewer than MIN_CELLS cells, or touching the edge of the front surface (bang tips, brim and collar outlines), go
+	for _, c in cells do
+		c.glow = c.feature or c.kind == "mixed"
+	end
+	local seen = {}
+	for _, c in cells do
+		if c.glow and not seen[c] then
+			local island, queue, edge = {}, { c }, false
+			seen[c] = true
+			while #queue > 0 do
+				local cur = table.remove(queue)
+				table.insert(island, cur)
+				for _, d in { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } } do
+					local nb = at(cur.x + d[1], cur.y + d[2])
+					if not nb then
+						edge = true
+					elseif nb.glow and not seen[nb] then
+						seen[nb] = true
+						table.insert(queue, nb)
+					end
+				end
+			end
+			if edge or #island < MIN_CELLS then
+				for _, cell in island do
+					cell.glow = false
+				end
+			end
+		end
+	end
+	-- 6. write the mask: whole tile for feature cells, dark texels only for mixed cells
+	local covered = buffer.create(w * h)
+	for _, c in cells do
+		for _, t in c.tris do
+			for _, i in t.texels do
+				buffer.writeu8(covered, i, 1)
+				if c.glow and (c.feature or lum(i) < DARK) then
+					buffer.writeu8(mask, i, 1)
+					parts[t.part] = true
+				end
+			end
+		end
+	end
+	-- 7. grow 2 texels into the uncovered tile borders (padding) that carry the same dark colour, so the glow has no
+	-- gaps along cube edges (those gaps read as cracks)
+	for _ = 1, 2 do
+		local add = {}
+		for y = 1, h - 2 do
+			for x = 1, w - 2 do
+				local i = y * w + x
+				if buffer.readu8(mask, i) == 0 and buffer.readu8(covered, i) == 0 and lum(i) < DARK then
+					if buffer.readu8(mask, i - 1) == 1 or buffer.readu8(mask, i + 1) == 1
+						or buffer.readu8(mask, i - w) == 1 or buffer.readu8(mask, i + w) == 1 then
+						table.insert(add, i)
+					end
+				end
+			end
+			if y % 128 == 0 then
+				task.wait()
+			end
+		end
+		for _, i in add do
+			buffer.writeu8(mask, i, 1)
+		end
 	end
 	masks[tag], masks[tag .. "/parts"] = mask, parts
 	return mask, parts
