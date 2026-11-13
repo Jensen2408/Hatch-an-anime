@@ -8,7 +8,7 @@ local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 
 local TAG = "RainbowMutation"
-local CYCLE_SECONDS = 4 -- one full trip around the colour wheel
+local CYCLE_SECONDS = 10 -- one full trip around the colour wheel (2026-11-12: was 4, Jacob asked for a slower strobe)
 local SATURATION = 0.8
 local RANGE = 200
 

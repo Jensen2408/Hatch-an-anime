@@ -847,7 +847,7 @@ function Roll.play(res, onDone)
         end
 
         if st.rainbow then
-            local c = Color3.fromHSV((t * 0.22) % 1, 0.8, 1)
+            local c = Color3.fromHSV((t * 0.1) % 1, 0.8, 1) -- 2026-11-12: slower (was 0.22)
             burst.ImageColor3 = c
             if st.heroLine then
                 st.heroLine.OutlineColor = c
@@ -1484,7 +1484,10 @@ function Roll.play(res, onDone)
                     mScale.Scale = v
                 end)
                 mPop.to = 1
+                -- 2026-11-12: Molten has no seal art yet; skip the stamp instead of showing a blank paper square
+                local hasSeal = K.Art.Ids["seal_" .. res.mutation:lower()] ~= nil
                 local seal = Instance.new("Frame")
+                seal.Visible = hasSeal
                 seal.BorderSizePixel = 0
                 seal.BackgroundColor3 = PAPER
                 seal.AnchorPoint = Vector2.new(0.5, 0.5)

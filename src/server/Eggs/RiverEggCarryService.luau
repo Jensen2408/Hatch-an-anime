@@ -27,6 +27,9 @@ local CarryConfig = require(ReplicatedStorage:WaitForChild("EggCarryConfig"))
 local StealRules = require(ReplicatedStorage:WaitForChild("EggSteal"):WaitForChild("EggStealConfig")).Rules
 local CAPTURE_HALF = StealRules.CaptureHalfSize or 6
 local CAPTURE_HEIGHT = StealRules.CaptureHeight or 14
+local PROXIMITY = 20 -- studs (flat) from the PlotSpawn pad centre that also count as home
+local BASE_MIN = StealRules.BaseMin or Vector3.new(-58, -15, -32)
+local BASE_MAX = StealRules.BaseMax or Vector3.new(32, 60, 48)
 local Service = {}
 local activeCarries = {} -- [Player] = { tool, enabled, plot, char, started, id, humanoid?, walkSpeed?, slowSpeed?, visual? }
 local carryStateEvent = ReplicatedStorage:WaitForChild("RiverEggCarryState")
@@ -51,14 +54,23 @@ local function finish(player, state)
     if carry.humanoid and carry.humanoid.Parent and carry.humanoid.WalkSpeed == carry.slowSpeed then
         carry.humanoid.WalkSpeed = carry.walkSpeed
     end
-    if carry.tool and carry.tool.Parent then
-        carry.tool.Enabled = carry.enabled
-        carry.tool:SetAttribute("ReturningToBase", nil)
+    -- 2026-11-12: an egg put into an incubator mid-carry lives in player.IncubatorHeldEggs. It must stay there,
+    -- disabled: re-enabling / equipping it below handed the player a second copy of the incubating egg.
+    local tool = carry.tool
+    local inHand = tool
+        and tool.Parent ~= nil
+        and (tool.Parent == player.Character or tool.Parent == player:FindFirstChildOfClass("Backpack"))
+        and not tool:GetAttribute("Incubating")
+    if tool and tool.Parent then
+        if inHand then
+            tool.Enabled = carry.enabled
+        end
+        tool:SetAttribute("ReturningToBase", nil)
     end
     player:SetAttribute("RiverEggCarryBase", nil)
     player:SetAttribute("RiverEggCarryId", nil)
     player:SetAttribute("RiverEggCarryType", nil)
-    if state == "Secured" and carry.tool and carry.tool.Parent then
+    if state == "Secured" and inHand then
         local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
         if humanoid and humanoid.Health > 0 then
             humanoid:EquipTool(carry.tool)
@@ -134,20 +146,36 @@ RunService.Heartbeat:Connect(function()
             or carry.plot:GetAttribute("OwnerUserId") ~= player.UserId
         then
             finish(player, "Cancelled")
+        elseif carry.tool:GetAttribute("Incubating") then
+            -- delivered straight into a hatchery: that is home
+            finish(player, "Secured")
         elseif os.clock() - carry.started > 0.5 then
             -- capture square on the plot's spawn pad (EggStealConfig CaptureHalfSize, drawn by StolenEggBanner);
             -- plots without a PlotSpawn fall back to the old home box in TempleAnchor space
+            -- 2026-11-12: also secured on reaching the base itself (temple, chamber yard, fence; the EggSteal
+            -- BaseMin/BaseMax box) or coming within PROXIMITY studs of the pad, so walking up to your
+            -- hatchery completes the return without stepping exactly onto the square.
             local spawnPad = carry.plot:FindFirstChild("PlotSpawn")
+            local secured = false
             if spawnPad then
                 local pad = spawnPad.CFrame:PointToObjectSpace(root.Position)
-                if math.abs(pad.X) <= CAPTURE_HALF and math.abs(pad.Z) <= CAPTURE_HALF and pad.Y >= -4 and pad.Y <= CAPTURE_HEIGHT then
-                    finish(player, "Secured")
-                end
-            else
-                local rel = carry.plot.TempleAnchor.CFrame:PointToObjectSpace(root.Position)
-                if rel.X >= -58 and rel.X <= 32 and rel.Z >= -32 and rel.Z <= 48 and rel.Y >= -15 and rel.Y <= 60 then
-                    finish(player, "Secured")
-                end
+                local flat = Vector2.new(pad.X, pad.Z).Magnitude
+                secured = pad.Y >= -4
+                    and pad.Y <= CAPTURE_HEIGHT
+                    and ((math.abs(pad.X) <= CAPTURE_HALF and math.abs(pad.Z) <= CAPTURE_HALF) or flat <= PROXIMITY)
+            end
+            local anchor = carry.plot:FindFirstChild("TempleAnchor")
+            if not secured and anchor then
+                local rel = anchor.CFrame:PointToObjectSpace(root.Position)
+                secured = rel.X >= BASE_MIN.X
+                    and rel.X <= BASE_MAX.X
+                    and rel.Z >= BASE_MIN.Z
+                    and rel.Z <= BASE_MAX.Z
+                    and rel.Y >= BASE_MIN.Y
+                    and rel.Y <= BASE_MAX.Y
+            end
+            if secured then
+                finish(player, "Secured")
             end
         end
     end

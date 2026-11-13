@@ -1383,7 +1383,10 @@ RunService.RenderStepped:Connect(function(dt)
         slow = 0
         locate()
     end
-    if Config.Cinematic and volcano and started ~= cinematicFor and t < 3 and not inArena then
+    -- 2026-11-12: never over a hatch reveal: the cutscene disables every visible ScreenGui (the summon's COLLECT
+    -- included) and takes the camera, so a hatch that ends as the eruption starts lost its COLLECT button.
+    local summonOpen = player.PlayerGui:FindFirstChild("SummonHatchUI") ~= nil
+    if Config.Cinematic and volcano and started ~= cinematicFor and t < 3 and not inArena and not summonOpen then
         cinematicFor = started
         cinematic = Cinematic.new({ Config = Config, volcano = volcano, opening = volcano.opening, templates = templates })
         cinematic:Start(started)

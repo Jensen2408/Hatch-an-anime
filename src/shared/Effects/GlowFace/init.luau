@@ -25,7 +25,7 @@ local GlowFace = {}
 local FRONT_DOT = 0.8 -- how squarely a triangle must face the model's front to count as face
 local FACE_LOW = 0.5 -- only the upper half of the model (the head)
 local DARK = 0.30 -- luminance below this on a drawn face is a feature
-local MIN_CELLS = 3 -- glow islands smaller than this many voxel cells are specks, not features
+local MIN_CELLS = 4 -- glow islands smaller than this many voxel cells are specks, not features (2026-11-12: was 3)
 
 local masks, surfaces, building = {}, {}, {}
 

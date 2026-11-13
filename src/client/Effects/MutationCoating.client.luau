@@ -4,7 +4,7 @@ local textures={Silver="rbxassetid://96228988315926",Gold="rbxassetid://11084005
 -- Molten v3 is an opaque lava coat over the whole body (the old half-out head fade was dropped). On the head the
 -- lava is MOLTEN_HEAD_ALPHA transparent over a GlowFace base, so the eyes and mouth glow through it like Galaxy.
 local opacity={Silver=.28,Gold=.5,Diamond=.58,Rainbow=.48,Molten=0}
-local MOLTEN_HEAD_ALPHA=.45
+local MOLTEN_HEAD_ALPHA=.58 -- 2026-11-12: was .45; less lava crust over the face so it reads less cracked
 local GlowFace=require(game.ReplicatedStorage:WaitForChild("GlowFace"))
 local MOLTEN_FACE={
  -- basalt: the character's own shading kept as dark rock with a faint red heat
@@ -13,7 +13,9 @@ local MOLTEN_FACE={
 }
 -- Tiers that get a projected layer. Gold and Silver have their pattern baked into the character texture
 -- (MutationFinish/bake_metal_atlas.js), so they get no layer.
-local coated={Rainbow=true,Molten=true,Diamond=true}
+-- 2026-11-12: Rainbow dropped (Jacob: the flickering overlay on Rainbow reveals); RainbowMutationClient still turns the
+-- character's own pearl map through the colours.
+local coated={Molten=true,Diamond=true}
 local active,pending={},{}
 local moltenSurface
 -- Style "LiquidMetal": seamless wave textures + closed meshes (smoothed-normal offset, no cracks at cube edges).
@@ -48,6 +50,7 @@ local function build(m)
  if active[m] or pending[m] then return end pending[m]=true
  local s={folder=Instance.new("Folder"),parts={},tier=m:GetAttribute("Mutation")}
  s.folder.Name="MutationCoating"
+ s.folder.Archivable=false -- client copies of the character (reveal, icons) must not take stale shells along
  local ok,err=pcall(function()
  local finish
  if s.tier == "Molten" then
@@ -86,13 +89,18 @@ local function build(m)
  local path={} local p=b while p~=part do table.insert(path,1,p.Name) p=p.Parent end
  local target=shell for _,name in path do target=target and target:FindFirstChild(name) end
  if target then table.insert(rec.bones,{b,target}) end
- end end shell.Parent=s.folder
+ end end
+ -- the shells live inside the character (below), so rename their bones: pose / move scripts find bones by name
+ for _,pair in rec.bones do pair[2].Name="Coat"..pair[2].Name end
+ shell.Parent=s.folder
  end end)
  pending[m]=nil
  if not ok or not m:IsDescendantOf(workspace) then
  s.folder:Destroy() active[m]=s remove(m)
  if not ok then warn("[MutationCoating] "..tostring(err)) end return end
- active[m]=s s.folder.Parent=workspace
+ -- 2026-11-12: inside the model (was workspace), so a Highlight on the character (reveal, placed outline,
+ -- hatchery aura) outlines the coat too. Before, Molten hides its base meshes and the outline only went round the head.
+ active[m]=s s.folder.Parent=m
 end
 -- Event-driven candidate list instead of a whole-workspace GetDescendants() every second.
 local candidates={}

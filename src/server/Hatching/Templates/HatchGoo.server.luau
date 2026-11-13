@@ -271,11 +271,41 @@ local function runCycle(player, resumeTool, resumeLeft)
                 descendant.CanQuery = false
             end
         end
-        local _, eggSize = visual:GetBoundingBox()
-        visual:ScaleTo(visual:GetScale() * math.min(2.5 / eggSize.Y, 2.6 / eggSize.X, 2.6 / eggSize.Z))
-        local eggBox = visual:GetBoundingBox()
+        -- 2026-11-12: size and centre by the VISIBLE parts only. Mutated eggs carry an invisible RarityAura part
+        -- (3.16 studs tall on the Rainbow God egg) that made the real egg ~1.1 studs tall, and wide eggs were
+        -- limited by a 2.6-stud width cap (God: 9.75 studs of wings). Now: 3.1 tall, at most 4.4 wide (the
+        -- chamber interior is ~5.2 wide, side glass at +-2.62).
+        local function visibleBox()
+            local lo, hi
+            for _, part in visual:GetDescendants() do
+                if part:IsA("BasePart") and part.Transparency < 0.95 then
+                    local half = part.Size / 2
+                    for _, corner in
+                        {
+                            Vector3.new(-1, -1, -1), Vector3.new(1, -1, -1), Vector3.new(-1, 1, -1), Vector3.new(1, 1, -1),
+                            Vector3.new(-1, -1, 1), Vector3.new(1, -1, 1), Vector3.new(-1, 1, 1), Vector3.new(1, 1, 1),
+                        }
+                    do
+                        local p = part.CFrame:PointToWorldSpace(half * corner)
+                        lo = lo and lo:Min(p) or p
+                        hi = hi and hi:Max(p) or p
+                    end
+                end
+            end
+            if not lo then
+                local cf, size = visual:GetBoundingBox()
+                return cf.Position, size
+            end
+            return (lo + hi) / 2, hi - lo
+        end
+        local _, eggSize = visibleBox()
+        visual:ScaleTo(
+            visual:GetScale()
+                * math.min(3.1 / math.max(eggSize.Y, 0.01), 4.4 / math.max(eggSize.X, eggSize.Z, 0.01))
+        )
+        local eggCentre = visibleBox()
         visual.PrimaryPart = nil
-        visual.WorldPivot = CFrame.new(eggBox.Position)
+        visual.WorldPivot = CFrame.new(eggCentre)
         local inside = chamberPivot * CFrame.new(0, 3.5, -1.5)
         visual:PivotTo(inside)
         visual:SetAttribute("ChamberHome", inside)
