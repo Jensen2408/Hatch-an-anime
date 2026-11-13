@@ -82,9 +82,10 @@ Config.UI = {
     SecureHold = 1.15, -- "EGG SECURED!" stays this long before the egg flies to the backpack
     ShowValue = true, -- show the egg's value on the card
     VignetteOpacityLow = 0.10, -- danger edge pulse, 0 = invisible, 1 = solid. Kept subtle on purpose.
-    VignetteOpacityHigh = 0.36,
-    PulseSlow = 1.5, -- seconds per pulse right after the steal ...
-    PulseFast = 0.8, -- ... easing to this over PulseRampSeconds
+    VignetteOpacityHigh = 0.28,
+    -- 2026-11-13: steady heartbeat (soft "lub-dub" then rest) instead of a sine that sped up to 0.8 s per pulse.
+    PulseSlow = 1.7, -- seconds per heartbeat right after the steal ...
+    PulseFast = 1.7, -- ... and later (same value = steady; lower it to make the beat quicken over PulseRampSeconds)
     PulseRampSeconds = 25,
     MetersPerStud = 1, -- distance shown = studs * this. 0.28 would be "real" Roblox metres.
     Sparks = 14,
@@ -105,7 +106,7 @@ Config.Alarm = {
     BeepVolume = 0.4,
     BeepSpeed = 1.3,
     PulseInterval = 3.6, -- quiet reminder beep while carrying ...
-    PulseMinInterval = 2.0, -- ... easing to this the longer the run takes
+    PulseMinInterval = 3.6, -- ... easing (2026-11-13: was 2.0; kept steady) to this the longer the run takes
     PulseVolume = 0.16,
     VictimVolume = 0.35,
     VictimRepeat = 5, -- owner is reminded every few seconds while their egg is out

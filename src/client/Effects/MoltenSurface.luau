@@ -83,6 +83,7 @@ surface.EmissiveStrength = 1.4
 -- pixels per second. Frame row y shows source row y + offset, so a growing Y offset moves the lava UP the model;
 -- X adds the sideways component, so it rises at an angle (~50 degrees)
 local X_SPEED, Y_SPEED = 6, 7
+local UPDATE_HZ = 8
 local lastX, lastY = -1, -1
 local nextFrame = 0
 local function update(now)
@@ -92,7 +93,9 @@ local function update(now)
     if now < nextFrame then
         return glow
     end
-    nextFrame = now + 1 / 24
+    -- 2026-11-12: 8 updates/s (was up to 24). Each update re-uploads three 384px maps (~1.8 MB); at 24/s two Molten
+    -- characters on screen cost ~12 ms a frame. At 6-7 px/s the lava still moves about one pixel per update.
+    nextFrame = now + 1 / UPDATE_HZ
     local xPixels = math.floor(now * X_SPEED) % size
     local yPixels = math.floor(now * Y_SPEED) % size
     if xPixels == lastX and yPixels == lastY then

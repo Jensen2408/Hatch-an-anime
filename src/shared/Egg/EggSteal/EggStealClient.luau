@@ -701,7 +701,10 @@ local function step(dt)
     if pulseState.level > 0.001 then
         local ramp = math.clamp((now - pulseState.since) / UI.PulseRampSeconds, 0, 1)
         pulseState.phase += dt * math.pi * 2 / lerp(UI.PulseSlow, UI.PulseFast, ramp) -- pulses get quicker the longer you run
-        local pulse = isReducedMotion() and 0.5 or (0.5 + 0.5 * math.sin(pulseState.phase))
+        -- heartbeat shape: a soft "lub", a weaker "dub", then rest (smooth bumps, no hard flash)
+        local f = (pulseState.phase / (math.pi * 2)) % 1
+        local beat = math.max(math.exp(-((f - 0.14) / 0.09) ^ 2), 0.6 * math.exp(-((f - 0.4) / 0.09) ^ 2))
+        local pulse = isReducedMotion() and 0.5 or beat
         local opacity = lerp(UI.VignetteOpacityLow, UI.VignetteOpacityHigh, pulse)
         vignette.Visible = true
         vignette.GroupTransparency = 1 - opacity * pulseState.level

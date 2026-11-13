@@ -234,8 +234,30 @@ end
 -- Galaxy models are found when they are added (attribute or "GalaxyPrototype" tag); attribute removal is caught by the scan.
 local CollectionService = game:GetService("CollectionService")
 local candidates = {}
+-- 2026-11-12: also galaxy when the flag is on the owning Tool (the preview tool carries GalaxyPrototype / Mutation on
+-- the Tool, not on its model) or, for the visible held copy (Character.HeldItemCarry.Character), on the equipped Tool.
+-- The model-only check made held galaxy characters show their plain texture.
+local function flagged(inst)
+	return inst:GetAttribute("GalaxyPrototype") == true
+		or inst:GetAttribute("Mutation") == "GalaxyPrototype"
+		or CollectionService:HasTag(inst, "GalaxyPrototype")
+end
 local function isGalaxy(inst)
-	return inst:GetAttribute("GalaxyPrototype") == true or CollectionService:HasTag(inst, "GalaxyPrototype")
+	if flagged(inst) then
+		return true
+	end
+	local tool = inst:FindFirstAncestorOfClass("Tool")
+	if tool and flagged(tool) then
+		return true
+	end
+	local holder = inst.Parent
+	if holder and holder.Name == "HeldItemCarry" and holder.Parent then
+		local held = holder.Parent:FindFirstChildOfClass("Tool")
+		if held and flagged(held) then
+			return true
+		end
+	end
+	return false
 end
 local function watchInstance(inst)
 	if inst:IsA("Model") and not inst:IsA("Tool") and isGalaxy(inst) then
@@ -250,6 +272,9 @@ local addedConn = workspace.DescendantAdded:Connect(function(inst)
 	watchInstance(inst)
 	if inst:IsA("Model") then
 		task.defer(watchInstance, inst)
+		if inst.Parent and inst.Parent.Name == "HeldItemCarry" then
+			task.delay(0.5, watchInstance, inst) -- the Tool may finish equipping after the carry copy appears
+		end
 	end
 end)
 local removingConn = workspace.DescendantRemoving:Connect(function(inst)
@@ -315,9 +340,20 @@ local connection = Run.RenderStepped:Connect(function()
 		end
 		for _, r in rec.parts do
 			if r.source.Parent then
-				r.shell.CFrame = r.source.CFrame
-				r.shell.LocalTransparencyModifier = r.source.LocalTransparencyModifier
-				r.shell.Transparency = r.source.Transparency >= 1 and 1 or r.opacity
+				local cf = r.source.CFrame -- only write what changed (static displays re-set identical values every frame)
+				if r.lastCf ~= cf then
+					r.lastCf = cf
+					r.shell.CFrame = cf
+				end
+				local ltm = r.source.LocalTransparencyModifier
+				if r.shell.LocalTransparencyModifier ~= ltm then
+					r.shell.LocalTransparencyModifier = ltm
+				end
+				local alpha = r.source.Transparency >= 1 and 1 or r.opacity
+				if r.lastAlpha ~= alpha then
+					r.lastAlpha = alpha
+					r.shell.Transparency = alpha
+				end
 				for _, pair in r.bones do
 					if pair[1].Parent and pair[2].Parent then
 						pair[2].Transform = pair[1].Transform

@@ -13,9 +13,9 @@ local MOLTEN_FACE={
 }
 -- Tiers that get a projected layer. Gold and Silver have their pattern baked into the character texture
 -- (MutationFinish/bake_metal_atlas.js), so they get no layer.
--- 2026-11-12: Rainbow dropped (Jacob: the flickering overlay on Rainbow reveals); RainbowMutationClient still turns the
--- character's own pearl map through the colours.
-local coated={Molten=true,Diamond=true}
+-- Rainbow keeps its moving diagonal gradient (briefly removed on 2026-11-12, restored at Jacob's request).
+local coated={Rainbow=true,Molten=true,Diamond=true}
+local RAINBOW_SPEED=.15 -- colour-wheel turns per second of the gradient (was .36; slower strobe)
 local active,pending={},{}
 local moltenSurface
 -- Style "LiquidMetal": seamless wave textures + closed meshes (smoothed-normal offset, no cracks at cube edges).
@@ -124,7 +124,7 @@ task.spawn(function()
  for m in active do if not keep[m] then remove(m) end end
  end
 end)
-local nextImage=0
+local nextImage,nextGlow=0,0
 Run.RenderStepped:Connect(function()
  local now=os.clock()
  local hasRainbow,hasMolten=false,false
@@ -136,21 +136,29 @@ Run.RenderStepped:Connect(function()
  -- the rainbow texture only needs regenerating while a Rainbow coat is on screen
  if hasRainbow and now>=nextImage then nextImage=now+.05
  for y=0,63 do for x=0,63 do
- local c=Color3.fromHSV(((x+y)/64-now*.36)%1,.75,1) local p=(y*64+x)*4
+ local c=Color3.fromHSV(((x+y)/64-now*RAINBOW_SPEED)%1,.75,1) local p=(y*64+x)*4
  buffer.writeu8(pixels,p,math.floor(c.R*255)) buffer.writeu8(pixels,p+1,math.floor(c.G*255))
  buffer.writeu8(pixels,p+2,math.floor(c.B*255)) buffer.writeu8(pixels,p+3,255)
  end end image:WritePixelsBuffer(Vector2.zero,Vector2.new(64,64),pixels) end
  local glow=hasMolten and moltenSurface and moltenSurface.Update(now)
+ -- 2026-11-12 perf: properties are only written when their value changes, and the breathing glow at most 8x/s.
+ -- Writing EmissiveStrength on every shell's SurfaceAppearance every frame (plus CFrame / transparency on static
+ -- displays) cost ~10 ms a frame with two Molten characters on screen.
+ local glowStep=nil
+ if glow and now>=nextGlow then nextGlow=now+1/8 glowStep=math.floor(glow*40+.5)/40 end
  for m,s in active do
  if not m:IsDescendantOf(workspace) then remove(m) continue end
  for _,p in s.parts do if p.shell and p.source.Parent then
- p.shell.CFrame=p.source.CFrame p.shell.Transparency=p.source.Transparency>=1 and 1 or p.alpha
- if glow and p.surface and s.tier=="Molten" then p.surface.EmissiveStrength=glow end
+ local cf=p.source.CFrame if p.lastCf~=cf then p.lastCf=cf p.shell.CFrame=cf end
+ local alpha=p.source.Transparency>=1 and 1 or p.alpha
+ if p.lastAlpha~=alpha then p.lastAlpha=alpha p.shell.Transparency=alpha end
+ if glowStep and p.surface and s.tier=="Molten" and p.lastGlow~=glowStep then p.lastGlow=glowStep p.surface.EmissiveStrength=glowStep end
  if p.hideBase then
  -- opaque Molten coat: hide the base mesh locally so it can't poke through the shell as black specks
- p.source.LocalTransparencyModifier=1
+ if p.source.LocalTransparencyModifier~=1 then p.source.LocalTransparencyModifier=1 end
  else
- p.shell.LocalTransparencyModifier=p.source.LocalTransparencyModifier
+ local ltm=p.source.LocalTransparencyModifier
+ if p.shell.LocalTransparencyModifier~=ltm then p.shell.LocalTransparencyModifier=ltm end
  end
  for _,b in p.bones do if b[1].Parent then b[2].Transform=b[1].Transform end end
  end end end
