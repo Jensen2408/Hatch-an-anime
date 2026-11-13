@@ -103,6 +103,7 @@ local function remove(m)
 	local rec = active[m]
 	if not rec then return end
 	rec.folder:Destroy()
+	if rec.layers then rec.layers:Destroy() end
 	for _, r in rec.parts do
 		if r.source.Parent then
 			local s = r.source:FindFirstChild("GalaxyBase")
@@ -138,14 +139,27 @@ end
 
 local function build(m)
 	if active[m] or pending[m] then return end
+	-- 2026-11-13: the layers are skinned meshes; they bind to the character's bones only inside the model, and only
+	-- once those bones exist. In workspace (as before) they stayed in the rest pose while the character animated.
+	-- Wait for the bones (placed characters stream the rig part in last); DescendantAdded rebuilds if more arrive.
+	local skinned, hasBone = false, false
+	for _, d in m:GetDescendants() do
+		if d:IsA("Bone") then hasBone = true break end
+		if d:IsA("MeshPart") and d.HasSkinnedMesh then skinned = true end
+	end
+	if skinned and not hasBone then return end
 	pending[m] = true
-	local folder = Instance.new("Folder")
-	folder.Name = "GalaxyLayersLocal"
+	local folder = Instance.new("Folder") -- the aura stays in workspace (inside the model it would widen outlines and bounds)
+	folder.Name = "GalaxyAuraLocal"
+	local layers = Instance.new("Folder")
+	layers.Name = "GalaxyLayersLocal"
+	layers.Archivable = false -- client copies of the character must not take the layers along
 	local records = {}
 	local baseSurface, faceParts = GlowFace.Surface(m, "Galaxy", GALAXY_STYLE)
 	if not m:IsDescendantOf(workspace) then
 		pending[m] = nil
 		folder:Destroy()
+		layers:Destroy()
 		return
 	end
 	for _, p in m:GetDescendants() do
@@ -207,13 +221,23 @@ local function build(m)
 				end
 			end
 		end
+		-- inside the character: rename any bones the shell carries so pose / move scripts finding bones by name skip them
+		for _, pair in rec.bones do
+			pair[2].Name = "Galaxy" .. pair[2].Name
+		end
 		shell.CFrame = p.CFrame
-		shell.Parent = folder
+		shell.Parent = layers
 		table.insert(records, rec)
 	end
 	pending[m] = nil
-	if #records == 0 then
+	if #records == 0 or not m:IsDescendantOf(workspace) then
 		folder:Destroy()
+		layers:Destroy()
+		for _, r in records do -- put the original textures back on a model that left mid-build
+			local s = r.source:FindFirstChild("GalaxyBase")
+			if s then s:Destroy() end
+			if r.original then r.original.Parent = r.source end
+		end
 		return
 	end
 	local aura, offset
@@ -226,7 +250,8 @@ local function build(m)
 		aura.Parent = folder
 	end
 	folder.Parent = workspace
-	active[m] = { folder = folder, parts = records, aura = aura, auraOffset = offset }
+	layers.Parent = m
+	active[m] = { folder = folder, layers = layers, parts = records, aura = aura, auraOffset = offset }
 end
 
 -- Event-driven candidate tracking (eliminates expensive workspace:GetDescendants() scans in RenderStepped!)
@@ -268,8 +293,20 @@ end
 for _, inst in workspace:GetDescendants() do
 	watchInstance(inst)
 end
+-- a bone (or the rig part holding them) arriving after the layers were built: rebuild so they bind to it
+local function rigChanged(inst)
+	if not (inst:IsA("Bone") or inst:FindFirstChildWhichIsA("Bone", true)) or inst:FindFirstAncestor("GalaxyLayersLocal") then
+		return
+	end
+	local m = inst:FindFirstAncestorWhichIsA("Model")
+	while m and not active[m] do
+		m = m:FindFirstAncestorWhichIsA("Model")
+	end
+	if m then remove(m) end -- the 0.5 s scan builds it again
+end
 local addedConn = workspace.DescendantAdded:Connect(function(inst)
 	watchInstance(inst)
+	if next(active) then rigChanged(inst) end
 	if inst:IsA("Model") then
 		task.defer(watchInstance, inst)
 		if inst.Parent and inst.Parent.Name == "HeldItemCarry" then

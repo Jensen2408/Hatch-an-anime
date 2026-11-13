@@ -47,7 +47,18 @@ local function remove(m)
  end active[m]=nil
 end
 local function build(m)
- if active[m] or pending[m] then return end pending[m]=true
+ if active[m] or pending[m] then return end
+ -- 2026-11-13: the shells are skinned meshes that bind to the model's bones by name when they are parented.
+ -- A placed character streams in parts first and its rig part (RootPart with the bones) later; a coat built
+ -- before the bones arrived stayed frozen in the rest pose while the hidden body animated (broken coat and an
+ -- outline tracing the moving body). Wait for the bones; DescendantAdded below rebuilds if more arrive later.
+ local skinned,hasBone=false,false
+ for _,d in m:GetDescendants() do
+ if d:IsA("Bone") then hasBone=true break end
+ if d:IsA("MeshPart") and d.HasSkinnedMesh then skinned=true end
+ end
+ if skinned and not hasBone then return end
+ pending[m]=true
  local s={folder=Instance.new("Folder"),parts={},tier=m:GetAttribute("Mutation")}
  s.folder.Name="MutationCoating"
  s.folder.Archivable=false -- client copies of the character (reveal, icons) must not take stale shells along
@@ -108,7 +119,17 @@ local function consider(m)
  if m:IsA("Model") and not m:IsA("Tool") and coated[m:GetAttribute("Mutation")] then candidates[m]=true end
 end
 for _,m in workspace:GetDescendants() do consider(m) end
-workspace.DescendantAdded:Connect(function(m) consider(m) if m:IsA("Model") then task.defer(consider,m) end end)
+-- a bone (or the rig part holding them) arriving after the coat was built: rebuild so the shells bind to it
+local function rigChanged(d)
+ if not (d:IsA("Bone") or d:FindFirstChildWhichIsA("Bone",true)) or d:FindFirstAncestor("MutationCoating") then return end
+ local m=d:FindFirstAncestorWhichIsA("Model")
+ while m and not active[m] do m=m:FindFirstAncestorWhichIsA("Model") end
+ if m then remove(m) end -- the 1 s loop builds it again with the bones in place
+end
+workspace.DescendantAdded:Connect(function(m)
+ consider(m) if m:IsA("Model") then task.defer(consider,m) end
+ if next(active) then rigChanged(m) end
+end)
 workspace.DescendantRemoving:Connect(function(m) candidates[m]=nil end)
 task.spawn(function()
  while task.wait(1) do
